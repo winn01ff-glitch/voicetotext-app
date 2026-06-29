@@ -1,0 +1,17 @@
+{
+  "name": "Antigravity Voice",
+  "short_name": "AgVoice",
+  "description": "Trợ lý Họp Đa Ngôn Ngữ - Voice-to-Text & Translation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
