@@ -7,7 +7,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { 
   Plus, Search, Settings, Calendar, Pin, Star, Trash2, Mic, Volume2, 
-  RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight 
+  RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight,
+  Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([
     { source: "NG", target: "不良", source_language: "en", target_language: "ja" },
   ]);
+  const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
 
   // Audio configuration
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -260,7 +262,9 @@ export default function Dashboard() {
     }
   };
 
-  // Pre-meeting Mic Test
+  // Pre-meeting
+  const micBarRef = useRef<HTMLDivElement>(null);
+
   const startMicTest = async () => {
     if (isTestingMic) {
       stopMicTest();
@@ -279,28 +283,40 @@ export default function Dashboard() {
       testStreamRef.current = stream;
 
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioContextRef.current = audioContext;
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-
       const bufferLength = analyser.frequencyBinCount;
       const dataArray = new Uint8Array(bufferLength);
+      
+      let currentLevel = 0; // For LERP smoothing
 
       const draw = () => {
         if (!analyserRef.current) return;
         analyserRef.current.getByteFrequencyData(dataArray);
+
         let sum = 0;
         for (let i = 0; i < bufferLength; i++) {
           sum += dataArray[i];
         }
         const average = sum / bufferLength;
-        setMicLevel(Math.min(100, Math.round((average / 128) * 100)));
+        const targetLevel = Math.min(100, (average / 128) * 100);
+        
+        // Mathematical smoothing (Linear Interpolation)
+        currentLevel += (targetLevel - currentLevel) * 0.2;
+        
+        // Direct DOM manipulation bypasses React render for 60fps performance
+        if (micBarRef.current) {
+          micBarRef.current.style.width = `${Math.max(0, currentLevel)}%`;
+        }
+
         animationFrameRef.current = requestAnimationFrame(draw);
       };
+      
+      analyserRef.current = analyser;
       draw();
     } catch (err) {
       console.error("Mic test error:", err);
@@ -316,7 +332,10 @@ export default function Dashboard() {
       testStreamRef.current.getTracks().forEach((track) => track.stop());
     }
     if (audioContextRef.current) {
-      audioContextRef.current.close();
+      audioContextRef.current.close().catch(console.error);
+    }
+    if (micBarRef.current) {
+      micBarRef.current.style.width = '0%';
     }
     setMicLevel(0);
   };
@@ -641,7 +660,7 @@ export default function Dashboard() {
                 {filteredMeetings.map((m) => (
                   <div
                     key={m.id}
-                    className="flex flex-col glass rounded-2xl overflow-hidden shadow-sm hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1 transition-all duration-300 group border border-indigo-500/5 hover:border-indigo-500/20"
+                    className="flex flex-col bg-white/70 dark:bg-slate-900/50 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-2xl hover:shadow-blue-500/10 hover:-translate-y-1.5 transition-all duration-500 ease-out group border border-white/50 dark:border-slate-800 hover:border-blue-500/30"
                   >
                     <div
                       className="p-6 flex-1 cursor-pointer space-y-4"
@@ -649,12 +668,12 @@ export default function Dashboard() {
                     >
                       <div className="flex items-start justify-between">
                         <span
-                          className={`px-2 py-0.5 rounded text-[11px] font-semibold tracking-wider ${
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold tracking-wider ${
                             m.status === "recording"
-                              ? "bg-red-50 text-red-600 dark:bg-red-950/20 dark:text-red-400 pulse"
+                              ? "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 pulse"
                               : m.status === "completed"
-                              ? "bg-green-50 text-green-600 dark:bg-green-950/20 dark:text-green-400"
-                              : "bg-amber-50 text-amber-600 dark:bg-amber-950/20 dark:text-amber-400"
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                              : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
                           }`}
                         >
                           {m.status === "recording" ? "ĐANG HỌP" : m.status === "completed" ? "ĐÃ XONG" : "ĐANG XỬ LÝ"}
@@ -662,51 +681,51 @@ export default function Dashboard() {
                         <div className="flex space-x-2 no-print" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => togglePin(m.id, m.is_pinned)}
-                            className={`p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors ${
                               m.is_pinned ? "text-blue-500" : "text-slate-400 hover:text-slate-600"
                             }`}
                           >
-                            <Pin className="w-3.5 h-3.5 fill-current" />
+                            <Pin className="w-4 h-4 fill-current" />
                           </button>
                           <button
                             onClick={() => toggleFavorite(m.id, m.is_favorite)}
-                            className={`p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${
+                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors ${
                               m.is_favorite ? "text-amber-500" : "text-slate-400 hover:text-slate-600"
                             }`}
                           >
-                            <Star className="w-3.5 h-3.5 fill-current" />
+                            <Star className="w-4 h-4 fill-current" />
                           </button>
                         </div>
                       </div>
 
-                      <div className="space-y-1">
-                        <h4 className="font-semibold text-lg leading-tight text-slate-900 group-hover:text-blue-500 dark:text-slate-100 dark:group-hover:text-blue-400">
+                      <div className="space-y-1.5">
+                        <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
                           {m.title}
                         </h4>
-                        <div className="text-xs text-slate-400 flex items-center space-x-2">
+                        <div className="text-[13px] font-medium text-slate-400 flex items-center space-x-2">
                           <span>{new Date(m.created_at).toLocaleDateString("vi-VN")}</span>
                           <span>•</span>
                           <span>{formatDuration(m.duration_ms)}</span>
                         </div>
                       </div>
 
-                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">
+                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
                         {m.ai_summaries?.executive_summary || "(Biên bản họp chưa được tóm tắt)"}
                       </p>
                     </div>
 
-                    <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 dark:bg-slate-900/50 dark:border-slate-800 flex justify-between items-center text-xs">
-                      <span className="text-slate-400 font-medium">
-                        {m.source_language.toUpperCase()} ➔ {m.target_language.toUpperCase()}
+                    <div className="px-6 py-4 bg-slate-100/50 border-t border-slate-200/50 dark:bg-slate-950/50 dark:border-slate-800/50 flex justify-between items-center text-xs">
+                      <span className="text-slate-400 font-bold uppercase tracking-wider">
+                        {m.source_language} ➔ {m.target_language}
                       </span>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           deleteMeeting(m.id);
                         }}
-                        className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800"
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
@@ -719,297 +738,390 @@ export default function Dashboard() {
 
       {/* CREATE MEETING MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-800 p-8 flex flex-col gap-6 animate-in fade-in zoom-in-95 duration-200">
-            {/* Modal Title */}
-            <div className="flex justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center space-x-2">
-                <Mic className="w-5 h-5 text-blue-500" />
-                <h3 className="font-bold text-xl">Cấu hình Cuộc họp Mới</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8 bg-black/40 backdrop-blur-sm">
+          {/* Main Modal Container - Bento Edition */}
+          <div className="max-w-7xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[830px] max-h-[95vh]">
+            
+            {/* Header */}
+            <header className="flex justify-between items-center px-8 py-5 shrink-0 bg-white">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
+                  <LayoutGrid className="w-7 h-7" />
+                </div>
+                <div>
+                  <h1 className="text-[24px] leading-none font-extrabold text-slate-900 tracking-tight">Cấu hình Cuộc họp</h1>
+                  <p className="text-sm text-slate-500 font-medium mt-1">Thiết lập các thông số trước khi bắt đầu</p>
+                </div>
               </div>
-              <button
+              <button 
                 onClick={() => setShowCreateModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+                className="w-10 h-10 flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 rounded-full transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
-            </div>
+            </header>
 
-            {/* Content Fields */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 overflow-y-auto pr-2">
-              {/* Left Column: Device & Settings */}
-              <div className="space-y-6">
-                <div>
-                  <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400 mb-3">1. Thiết bị &amp; Âm thanh</h4>
-                  
-                  {/* Select mic device */}
-                  <div className="space-y-3">
-                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Chọn Microphone</label>
-                    <select
-                      value={selectedDevice}
-                      onChange={(e) => setSelectedDevice(e.target.value)}
-                      className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    >
-                      {audioDevices.map((d) => (
-                        <option key={d.deviceId} value={d.deviceId}>
-                          {d.label || `Microphone ${d.deviceId.substr(0, 5)}`}
-                        </option>
-                      ))}
-                      {audioDevices.length === 0 && <option value="">Không tìm thấy thiết bị Microphone</option>}
-                    </select>
+            {/* Main Content Area - Bento Grid */}
+            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-0 bg-white">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 auto-rows-auto">
+                
+                {/* Block 1: Audio (Span 4 cols, Row span 2) */}
+                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] rounded-3xl p-4 flex flex-col gap-4 border border-blue-100/50">
+                  <div className="flex items-center gap-2">
+                    <div className="text-blue-600 bg-blue-100 p-2 rounded-xl flex items-center justify-center">
+                      <Mic className="w-5 h-5" />
+                    </div>
+                    <h2 className="text-[16px] font-bold text-blue-900 uppercase tracking-wide">Thiết bị & Âm thanh</h2>
+                  </div>
 
-                    {/* Microphone Tester */}
-                    <div className="flex items-center space-x-3 pt-2">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-[12px] font-bold text-blue-700 uppercase tracking-wide">Chọn Microphone</label>
+                    <div className="relative">
+                      <select
+                        value={selectedDevice}
+                        onChange={(e) => setSelectedDevice(e.target.value)}
+                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                      >
+                        {audioDevices.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>
+                            {d.label || `Microphone ${d.deviceId.substr(0, 5)}`}
+                          </option>
+                        ))}
+                        {audioDevices.length === 0 && <option value="">Không tìm thấy thiết bị Microphone</option>}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-400 pointer-events-none" />
+                    </div>
+                  </div>
+
+                  <div className="bg-white/60 p-4 rounded-2xl border border-white flex flex-col gap-4">
+                    <div className="flex items-center gap-4">
                       <button
                         onClick={startMicTest}
-                        className={`flex items-center space-x-1.5 px-3 h-8 text-xs font-semibold border rounded-md transition-all ${
+                        className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-md active:scale-95 shrink-0 cursor-pointer ${
                           isTestingMic
-                            ? "bg-red-500 text-white border-red-500 hover:bg-red-600"
-                            : "bg-slate-50 text-slate-700 hover:bg-slate-100 border-slate-200 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:border-slate-800"
+                            ? "bg-red-600 text-white hover:bg-red-700 shadow-red-500/20"
+                            : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/20"
                         }`}
                       >
-                        <Volume2 className="w-3.5 h-3.5" />
-                        <span>{isTestingMic ? "Dừng kiểm tra" : "Thử Microphone"}</span>
+                        <Mic className="w-5 h-5" />
                       </button>
-
-                      {/* Decibel Indicator */}
-                      <div className="flex-1 h-2.5 bg-slate-100 dark:bg-slate-950 rounded-full overflow-hidden relative">
+                      <div className="flex-1 h-3 bg-blue-100 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-75"
-                          style={{ width: `${micLevel}%` }}
+                          ref={micBarRef}
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{ width: "0%" }}
                         ></div>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Audio parameters */}
-                <div className="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800/50">
-                  <h5 className="font-semibold text-xs text-slate-500">Xử lý tín hiệu phần cứng</h5>
-                  <div className="grid grid-cols-2 gap-4">
-                    <label className="flex items-center space-x-2 text-sm cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={echoCancellation}
-                        onChange={(e) => setEchoCancellation(e.target.checked)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                      />
-                      <span>Hủy tiếng vọng</span>
+                  <div className="flex flex-col gap-4 bg-white/60 p-4 rounded-2xl border border-white flex-1">
+                    <label className="flex items-center gap-4 cursor-pointer group">
+                      <input type="checkbox" checked={echoCancellation} onChange={(e) => setEchoCancellation(e.target.checked)} className="hidden" />
+                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-4 h-4 stroke-[3]" />
+                      </div>
+                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Hủy tiếng vọng</span>
                     </label>
-                    <label className="flex items-center space-x-2 text-sm cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={noiseSuppression}
-                        onChange={(e) => setNoiseSuppression(e.target.checked)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                      />
-                      <span>Chống ồn</span>
+                    <label className="flex items-center gap-4 cursor-pointer group">
+                      <input type="checkbox" checked={noiseSuppression} onChange={(e) => setNoiseSuppression(e.target.checked)} className="hidden" />
+                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-4 h-4 stroke-[3]" />
+                      </div>
+                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Chống ồn</span>
                     </label>
-                    <label className="flex items-center space-x-2 text-sm cursor-pointer select-none col-span-2">
-                      <input
-                        type="checkbox"
-                        checked={autoGainControl}
-                        onChange={(e) => setAutoGainControl(e.target.checked)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4"
-                      />
-                      <span>Tự động chỉnh âm lượng (AGC)</span>
+                    <label className="flex items-center gap-4 cursor-pointer group">
+                      <input type="checkbox" checked={autoGainControl} onChange={(e) => setAutoGainControl(e.target.checked)} className="hidden" />
+                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-4 h-4 stroke-[3]" />
+                      </div>
+                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Tự động chỉnh âm (AGC)</span>
                     </label>
                   </div>
 
-                  <div className="flex items-center justify-between pt-2">
-                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">Deepgram Chunk Size (ms)</span>
-                    <input
-                      type="number"
-                      min={80}
-                      max={150}
-                      value={chunkSize}
-                      onChange={(e) => setChunkSize(parseInt(e.target.value) || 100)}
-                      className="w-16 h-8 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 text-center"
-                    />
-                  </div>
-                </div>
-
-                {/* General Settings */}
-                <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800/50">
-                  <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400">2. Cấu hình Cuộc họp</h4>
-                  <div className="space-y-3">
-                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Tiêu đề cuộc họp</label>
-                    <input
-                      type="text"
-                      placeholder="Tiêu đề cuộc họp..."
-                      value={meetingTitle}
-                      onChange={(e) => setMeetingTitle(e.target.value)}
-                      className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-3">
-                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Ngữ cảnh cuộc họp (Context)</label>
-                    <select
-                      value={meetingContext}
-                      onChange={(e) => setMeetingContext(e.target.value)}
-                      className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    >
-                      <option value="general">Họp chung (Giao tiếp thường nhật)</option>
-                      <option value="factory">Nhà máy sản xuất (Cơ khí, quy trình, QC)</option>
-                      <option value="it">Công nghệ thông tin (IT, code, phát triển)</option>
-                      <option value="business">Kinh doanh / Thương thảo (Hợp đồng, giá cả)</option>
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-3">
-                      <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Ngôn ngữ chính</label>
-                      <select
-                        value={sourceLanguage}
-                        onChange={(e) => setSourceLanguage(e.target.value)}
-                        className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                      >
-                        <option value="auto">Tự động phát hiện (Auto)</option>
-                        <option value="vi">Tiếng Việt (vi)</option>
-                        <option value="ja">Tiếng Nhật (ja)</option>
-                        <option value="en">Tiếng Anh (en)</option>
-                      </select>
+                  <div className="flex items-center justify-between bg-white/80 p-4 rounded-2xl border border-white mt-auto">
+                    <div>
+                      <span className="text-[14px] font-bold text-blue-900 block">Deepgram Chunk</span>
+                      <span className="text-[12px] font-medium text-blue-600/70">Độ trễ phân tích</span>
                     </div>
-
-                    <div className="space-y-3">
-                      <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Dịch sang ngôn ngữ</label>
-                      <select
-                        value={targetLanguage}
-                        onChange={(e) => setTargetLanguage(e.target.value)}
-                        className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                    <div className="flex items-center bg-white/80 rounded-xl border border-blue-100/50 overflow-hidden shadow-sm">
+                      <button 
+                        onClick={() => setChunkSize(Math.max(80, chunkSize - 10))}
+                        className="w-8 h-10 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                       >
-                        <option value="vi">Tiếng Việt (vi)</option>
-                        <option value="ja">Tiếng Nhật (ja)</option>
-                        <option value="en">Tiếng Anh (en)</option>
-                      </select>
+                        <Minus className="w-4 h-4" />
+                      </button>
+                      <input
+                        type="number"
+                        min={80}
+                        max={150}
+                        value={chunkSize}
+                        onChange={(e) => setChunkSize(parseInt(e.target.value) || 100)}
+                        className="w-12 text-center bg-transparent border-none focus:ring-0 p-0 text-[15px] font-bold text-blue-700 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <button 
+                        onClick={() => setChunkSize(Math.min(150, chunkSize + 10))}
+                        className="w-8 h-10 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-                </div>
-              </div>
+                </section>
 
-              {/* Right Column: Speakers & Glossary */}
-              <div className="space-y-6 border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 md:pl-8">
-                {/* Speakers Config */}
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400">3. Danh sách Người nói</h4>
-                    <button
-                      onClick={addSpeakerField}
-                      className="text-xs font-semibold text-blue-500 hover:text-blue-600 flex items-center space-x-0.5"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Thêm</span>
-                    </button>
+                {/* Block 2: Meeting Info (Span 8 cols, Row span 1) */}
+                <section className="lg:col-span-8 bg-[#F0FDF4] rounded-3xl p-4 flex flex-col gap-4 border border-emerald-100/50">
+                  <div className="flex items-center gap-2">
+                    <div className="text-emerald-600 bg-emerald-100 p-2 rounded-xl flex items-center justify-center">
+                      <Info className="w-5 h-5" />
+                    </div>
+                    <h2 className="text-[16px] font-bold text-emerald-900 uppercase tracking-wide">Thông tin Cuộc họp</h2>
                   </div>
 
-                  <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
-                    {expectedSpeakers.map((sp, idx) => (
-                      <div key={idx} className="flex items-center space-x-2">
-                        <span className="text-xs font-medium text-slate-400 select-none shrink-0 w-16">
-                          Mã {sp.speaker_tag.replace("speaker_", "")}
-                        </span>
-                        <input
-                          type="text"
-                          placeholder="Tên người nói..."
-                          value={sp.display_name}
-                          onChange={(e) => updateSpeaker(idx, "display_name", e.target.value)}
-                          className="flex-1 h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Tiêu đề cuộc họp</label>
+                      <input
+                        type="text"
+                        value={meetingTitle}
+                        onChange={(e) => setMeetingTitle(e.target.value)}
+                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl px-4 py-3 text-[15px] font-semibold text-slate-800"
+                      />
+                    </div>
+                    
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Ngữ cảnh (Context)</label>
+                      <div className="relative">
                         <select
-                          value={sp.language_code}
-                          onChange={(e) => updateSpeaker(idx, "language_code", e.target.value)}
-                          className="w-20 h-9 px-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                          value={meetingContext}
+                          onChange={(e) => setMeetingContext(e.target.value)}
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
                         >
-                          <option value="auto">Auto</option>
-                          <option value="vi">Tiếng Việt</option>
-                          <option value="ja">Tiếng Nhật</option>
-                          <option value="en">Tiếng Anh</option>
+                          <option value="general">Họp chung (Giao tiếp thường nhật)</option>
+                          <option value="factory">Nhà máy sản xuất (Cơ khí, quy trình, QC)</option>
+                          <option value="it">Công nghệ thông tin (IT, lập trình, phần mềm)</option>
+                          <option value="business">Kinh doanh / Hợp đồng (Pháp lý, giá cả)</option>
                         </select>
-                        <button
-                          disabled={expectedSpeakers.length <= 1}
-                          onClick={() => removeSpeakerField(idx)}
-                          className="p-1.5 text-slate-400 hover:text-red-500 disabled:opacity-30 disabled:hover:text-slate-400"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
                       </div>
-                    ))}
-                  </div>
-                </div>
+                    </div>
 
-                {/* Glossary Config */}
-                <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Ngôn ngữ chính</label>
+                      <div className="relative">
+                        <select
+                          value={sourceLanguage}
+                          onChange={(e) => setSourceLanguage(e.target.value)}
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                        >
+                          <option value="auto">Tự động (Auto)</option>
+                          <option value="vi">Tiếng Việt (vi)</option>
+                          <option value="ja">Tiếng Nhật (ja)</option>
+                          <option value="en">Tiếng Anh (en)</option>
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
+                      <div className="relative">
+                        <select
+                          value={targetLanguage}
+                          onChange={(e) => setTargetLanguage(e.target.value)}
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-2.5 text-[14px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                        >
+                          <option value="vi">Tiếng Việt (vi)</option>
+                          <option value="ja">Tiếng Nhật (ja)</option>
+                          <option value="en">Tiếng Anh (en)</option>
+                        </select>
+                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Block 3: People (Span 4 cols, Row span 1) */}
+                <section className="lg:col-span-4 bg-[#FAF5FF] rounded-3xl flex flex-col gap-4 border border-purple-100/50 p-4 h-[350px]">
                   <div className="flex justify-between items-center">
-                    <h4 className="font-semibold text-sm uppercase tracking-wider text-slate-400">4. Từ điển tên riêng / Glossary</h4>
-                    <button
-                      onClick={addGlossaryField}
-                      className="text-xs font-semibold text-blue-500 hover:text-blue-600 flex items-center space-x-0.5"
+                    <div className="flex items-center gap-2">
+                      <div className="text-purple-600 bg-purple-100 p-2 rounded-xl flex items-center justify-center">
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <h2 className="text-[14px] font-bold text-purple-900 uppercase tracking-wide">Người nói</h2>
+                    </div>
+                    <button 
+                      onClick={addSpeakerField}
+                      className="w-8 h-8 flex items-center justify-center bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm shadow-purple-500/20 cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Thêm</span>
+                      <Plus className="w-5 h-5" />
                     </button>
                   </div>
 
-                  <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+                  <div className="flex flex-col gap-2 flex-1 min-h-0">
+                    <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar pr-2 flex-1">
+                      {expectedSpeakers.map((sp, idx) => (
+                        <div key={idx} className={`flex items-center gap-3 bg-white/80 p-1.5 pr-9 rounded-xl border border-white shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
+                          <div className={`w-8 h-8 rounded-lg font-extrabold flex items-center justify-center text-[12px] shrink-0 ${idx === 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
+                            {idx}
+                          </div>
+                          <div className="flex-1 min-w-0 flex items-center justify-between">
+                            <input
+                              type="text"
+                              value={sp.display_name}
+                              onChange={(e) => updateSpeaker(idx, "display_name", e.target.value)}
+                              className="bg-transparent border-none focus:ring-0 p-0 text-[14px] font-bold text-slate-800 w-[55%] outline-none"
+                            />
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setOpenSpeakerDropdown(openSpeakerDropdown === idx ? null : idx)}
+                                className={`bg-transparent border-none p-0 text-[12px] font-bold uppercase text-right cursor-pointer flex items-center justify-end gap-0.5 outline-none ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}
+                              >
+                                {sp.language_code === 'auto' ? 'AUTO' : sp.language_code === 'vi' ? 'TIẾNG VIỆT' : sp.language_code === 'ja' ? 'TIẾNG NHẬT' : 'TIẾNG ANH'}
+                                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                              </button>
+                              
+                              {openSpeakerDropdown === idx && (
+                                <>
+                                  <div className="fixed inset-0 z-40 cursor-default" onClick={() => setOpenSpeakerDropdown(null)} />
+                                  <div className="absolute right-0 mt-2 w-32 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-1 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                                    {[
+                                      { code: 'auto', label: 'AUTO' },
+                                      { code: 'vi', label: 'TIẾNG VIỆT' },
+                                      { code: 'ja', label: 'TIẾNG NHẬT' },
+                                      { code: 'en', label: 'TIẾNG ANH' }
+                                    ].map((lang) => (
+                                      <button
+                                        key={lang.code}
+                                        type="button"
+                                        onClick={() => {
+                                          updateSpeaker(idx, "language_code", lang.code);
+                                          setOpenSpeakerDropdown(null);
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-[12px] font-bold transition-colors cursor-pointer hover:bg-slate-50 ${sp.language_code === lang.code ? 'text-purple-600 bg-purple-50' : 'text-slate-600'}`}
+                                      >
+                                        {lang.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => removeSpeakerField(idx)}
+                            disabled={expectedSpeakers.length <= 1}
+                            className="w-6 h-6 flex items-center justify-center rounded-full bg-red-100 text-red-500 opacity-0 group-hover:opacity-100 disabled:opacity-0 hover:bg-red-200 transition-all absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      <div 
+                        onClick={addSpeakerField}
+                        className="flex items-center gap-3 bg-white/50 p-1.5 pr-3 rounded-xl border border-white/50 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 font-extrabold flex items-center justify-center text-[12px] shrink-0">
+                          <Plus className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0 flex items-center justify-between">
+                          <span className="text-[13px] font-medium text-slate-400 italic">Thêm người nói...</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Block 4: Glossary (Span 4 cols, Row span 1) */}
+                <section className="lg:col-span-4 bg-[#FFFBEB] rounded-3xl flex flex-col gap-4 border border-amber-100/50 p-4 h-[350px]">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className="text-amber-600 bg-amber-100 p-2 rounded-xl flex items-center justify-center">
+                        <BookOpen className="w-5 h-5" />
+                      </div>
+                      <h2 className="text-[14px] font-bold text-amber-900 uppercase tracking-wide">Từ điển riêng</h2>
+                    </div>
+                    <button 
+                      onClick={addGlossaryField}
+                      className="w-8 h-8 flex items-center justify-center bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors shadow-sm shadow-amber-500/20 cursor-pointer"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 w-full flex-1 overflow-y-auto custom-scrollbar pr-2 content-start">
                     {glossary.map((g, idx) => (
-                      <div key={idx} className="flex items-center space-x-2">
-                        <input
-                          type="text"
-                          placeholder="Từ gốc (ví dụ: NG)..."
-                          value={g.source}
-                          onChange={(e) => updateGlossary(idx, "source", e.target.value)}
-                          className="flex-1 h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
-                        <span className="text-slate-400 text-xs select-none">➔</span>
-                        <input
-                          type="text"
-                          placeholder="Từ chuẩn (ví dụ: Không đạt)..."
-                          value={g.target}
-                          onChange={(e) => updateGlossary(idx, "target", e.target.value)}
-                          className="flex-1 h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                        />
-                        <button
+                      <div key={idx} className="flex items-center justify-between bg-white/80 px-3 py-1.5 rounded-lg border border-white shadow-sm">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <textarea
+                            rows={1}
+                            value={g.source}
+                            placeholder="Gốc"
+                            onChange={(e) => {
+                              e.target.style.height = 'auto';
+                              e.target.style.height = e.target.scrollHeight + 'px';
+                              updateGlossary(idx, "source", e.target.value);
+                            }}
+                            className="font-bold text-slate-800 text-[13px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            style={{ minHeight: '20px' }}
+                          />
+                          <ArrowRight className="text-amber-300 w-4 h-4 shrink-0" />
+                          <textarea
+                            rows={1}
+                            value={g.target}
+                            placeholder="Dịch"
+                            onChange={(e) => {
+                              e.target.style.height = 'auto';
+                              e.target.style.height = e.target.scrollHeight + 'px';
+                              updateGlossary(idx, "target", e.target.value);
+                            }}
+                            className="font-bold text-amber-700 text-[13px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            style={{ minHeight: '20px' }}
+                          />
+                        </div>
+                        <button 
                           onClick={() => removeGlossaryField(idx)}
-                          className="p-1.5 text-slate-400 hover:text-red-500"
+                          className="w-5 h-5 shrink-0 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600 transition-colors ml-2 cursor-pointer"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     ))}
-                    {glossary.length === 0 && (
-                      <p className="text-xs text-slate-400 italic text-center py-4">Chưa có từ điển glossary nào được thêm.</p>
-                    )}
                   </div>
-                </div>
-              </div>
-            </div>
 
-            {/* Modal Actions */}
-            <div className="flex justify-between items-center pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                  <div className="mt-auto bg-amber-100/50 p-3 rounded-2xl flex gap-2 items-start">
+                    <Lightbulb className="text-amber-600 w-5 h-5 shrink-0" />
+                    <p className="text-[12px] font-medium text-amber-900/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
+                  </div>
+                </section>
+              </div>
+            </main>
+
+            {/* Footer */}
+            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-5 bg-white shrink-0 border-t border-slate-100">
               <button
                 onClick={resetSetupDefaults}
-                className="flex items-center space-x-1.5 px-3 h-10 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-md transition-colors"
+                className="flex items-center gap-2 text-slate-500 font-bold text-[14px] hover:text-slate-800 hover:bg-slate-100 px-4 py-3 rounded-2xl transition-all active:scale-95 cursor-pointer"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Đặt lại mặc định</span>
+                <RotateCcw className="w-5 h-5" /> ĐẶT LẠI
               </button>
-              <div className="flex space-x-3">
+              
+              <div className="flex gap-3 w-full sm:w-auto mt-4 sm:mt-0">
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 h-10 border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-md transition-colors"
+                  className="flex-1 sm:flex-none bg-slate-100 text-slate-700 rounded-2xl px-8 py-4 font-bold text-[15px] hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
                 >
-                  Hủy bỏ
+                  HỦY BỎ
                 </button>
                 <button
                   onClick={handleStartMeeting}
-                  className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-500 text-white px-5 h-10 rounded-md font-medium text-sm transition-all shadow-sm"
+                  className="flex-1 sm:flex-none bg-[#005bbf] text-white rounded-2xl px-8 py-4 font-bold text-[15px] flex items-center justify-center gap-2 hover:bg-blue-700 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] cursor-pointer"
                 >
-                  <Mic className="w-4 h-4" />
-                  <span>Vào Phòng họp</span>
+                  VÀO PHÒNG HỌP <ArrowRight className="w-5 h-5" />
                 </button>
               </div>
-            </div>
+            </footer>
           </div>
         </div>
       )}

@@ -576,32 +576,43 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       {/* CORE MEETING SECTION: PC 2-Column Split */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         {/* Left Column: Side Controls & Speaker Config */}
-        <aside className="w-full md:w-[320px] glass border-b md:border-b-0 md:border-r border-slate-200 dark:border-slate-800 p-6 flex flex-col gap-6 shrink-0 overflow-y-auto z-10">
+        <aside className="w-full md:w-[360px] bg-white/60 dark:bg-slate-900/40 backdrop-blur-md border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-7 flex flex-col gap-8 shrink-0 overflow-y-auto z-10 shadow-[2px_0_15px_-3px_rgba(0,0,0,0.05)] dark:shadow-none custom-scrollbar">
           {/* Ghi âm control */}
           <div className="space-y-4">
-            <h4 className="font-semibold text-xs uppercase tracking-wider text-slate-400">Trạng thái ghi âm</h4>
+            <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Trạng thái ghi âm</h4>
             <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between p-3 border border-slate-100 dark:border-slate-800 rounded-lg">
-                <div className="flex items-center space-x-2">
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full ${
-                      status === "recording" ? "bg-red-500 animate-pulse" : "bg-slate-300"
-                    }`}
-                  ></span>
-                  <span className="text-sm font-semibold capitalize">{status === "recording" ? "Đang ghi âm" : "Tạm dừng"}</span>
+              <div className="flex flex-col bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between p-4">
+                  <div className="flex items-center space-x-2.5">
+                    <span
+                      className={`w-3 h-3 rounded-full ${
+                        status === "recording" ? "bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]" : "bg-slate-300"
+                      }`}
+                    ></span>
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-300 capitalize">{status === "recording" ? "Đang ghi âm" : "Tạm dừng"}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Volume2 className="w-4 h-4 text-slate-400" />
+                    <span className="text-xs font-bold text-slate-500 w-8 text-right">{micLevel}%</span>
+                  </div>
                 </div>
-                <div className="flex items-center space-x-1.5">
-                  <Volume2 className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-medium w-8 text-right">{micLevel}%</span>
+                
+                <div className="px-4 pb-4">
+                  <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 transition-all duration-75" 
+                      style={{ width: `${Math.max(2, micLevel)}%` }}
+                    ></div>
+                  </div>
                 </div>
               </div>
 
               {/* Controls */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3 mt-1">
                 {status === "recording" ? (
                   <button
                     onClick={pauseRecording}
-                    className="flex items-center justify-center space-x-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-950/20 dark:text-blue-400 rounded-lg h-10 text-sm font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] pulse-glow-blue cursor-pointer"
+                    className="flex items-center justify-center space-x-2 bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] pulse-glow-blue cursor-pointer shadow-sm"
                   >
                     <Pause className="w-4 h-4" />
                     <span>Tạm dừng</span>
@@ -609,7 +620,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 ) : (
                   <button
                     onClick={startRecording}
-                    className="flex items-center justify-center space-x-1.5 bg-mesh hover:bg-mesh-hover text-white rounded-lg h-10 text-sm font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-md shadow-indigo-500/10 cursor-pointer"
+                    className="flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-md shadow-indigo-500/30 cursor-pointer"
                   >
                     <Mic className="w-4 h-4" />
                     <span>Ghi âm</span>
@@ -618,7 +629,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
                 <button
                   onClick={handleEndMeeting}
-                  className="flex items-center justify-center space-x-1.5 bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/20 dark:text-red-400 rounded-lg h-10 text-sm font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                  className="flex items-center justify-center space-x-2 bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
                 >
                   <Square className="w-4 h-4" />
                   <span>Kết thúc</span>
@@ -628,12 +639,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           </div>
 
           {/* Speakers mappings */}
-          <div className="space-y-3 flex-1">
+          <div className="space-y-4 flex-1">
             <div className="flex justify-between items-center">
-              <h4 className="font-semibold text-xs uppercase tracking-wider text-slate-400">Người phát biểu</h4>
+              <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Người phát biểu</h4>
               <button
                 onClick={() => setShowMergeModal(true)}
-                className="text-xs font-semibold text-blue-500 hover:text-blue-600 flex items-center space-x-0.5"
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-2 py-1 rounded-md flex items-center space-x-1 transition-colors"
               >
                 <Merge className="w-3.5 h-3.5" />
                 <span>Gộp người</span>
@@ -642,19 +653,19 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
             <div className="space-y-3">
               {speakers.map((s) => (
-                <div key={s.id} className="space-y-1.5">
-                  <div className="flex items-center space-x-2">
+                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-3 shadow-sm transition-all hover:shadow-md">
+                  <div className="flex items-center space-x-3">
                     <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      className="w-3 h-3 rounded-full shrink-0 shadow-sm"
                       style={{ backgroundColor: s.color_hex }}
                     ></span>
                     <input
                       type="text"
                       value={s.display_name}
                       onChange={(e) => handleRenameSpeaker(s.speaker_tag, e.target.value)}
-                      className="flex-1 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-500 font-semibold text-sm focus:outline-none py-0.5"
+                      className="flex-1 bg-transparent border-b border-transparent hover:border-slate-200 focus:border-blue-500 font-bold text-sm focus:outline-none py-1 text-slate-700 dark:text-slate-200 transition-colors"
                     />
-                    <span className="text-[10px] uppercase font-bold text-slate-400 select-none">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 select-none bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-md">
                       {s.speaker_tag.replace("speaker_", "")}
                     </span>
                   </div>
@@ -664,15 +675,15 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           </div>
 
           {/* Target language & Voice playback settings */}
-          <div className="space-y-4 pt-4 border-t border-slate-100 dark:border-slate-800">
-            <h4 className="font-semibold text-xs uppercase tracking-wider text-slate-400">Cấu hình Dịch &amp; Đọc</h4>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-500">Dịch sang</label>
+          <div className="space-y-4 pt-6 border-t border-slate-200/60 dark:border-slate-800">
+            <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Cấu hình Dịch &amp; Đọc</h4>
+            <div className="space-y-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 shadow-sm">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Dịch sang ngôn ngữ</label>
                 <select
                   value={selectedTargetLang}
                   onChange={(e) => setSelectedTargetLang(e.target.value)}
-                  className="w-full h-9 px-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all"
                 >
                   <option value="vi">Tiếng Việt (vi)</option>
                   <option value="ja">Tiếng Nhật (ja)</option>
@@ -680,12 +691,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 </select>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-500">Giọng đọc (TTS)</label>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Giọng đọc (Phát âm)</label>
                 <select
                   value={selectedVoice}
                   onChange={(e) => setSelectedVoice(e.target.value)}
-                  className="w-full h-9 px-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                  className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all"
                 >
                   <option value="aura-asteria-en">Aura Asteria (Nữ Mỹ)</option>
                   <option value="aura-athena-en">Aura Athena (Nữ Anh)</option>
@@ -697,10 +708,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         </aside>
 
         {/* Right Column: Real-time Transcript Virtualized Feed */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950 p-6">
+        <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950 p-6 relative">
           <div
             ref={parentRef}
-            className="flex-1 overflow-y-auto pr-2 space-y-4"
+            className="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-4"
           >
             <div
               style={{
@@ -724,36 +735,39 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       width: "100%",
                       transform: `translateY(${virtualItem.start}px)`,
                     }}
-                    className="pb-4"
+                    className="pb-5"
                   >
-                    <div className="flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-3 relative group">
+                    <div className="flex flex-col bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all duration-300 space-y-3 relative group">
                       {/* Bubble Header */}
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-2.5">
                           <span
-                            className="w-2.5 h-2.5 rounded-full"
+                            className="w-3 h-3 rounded-full shadow-sm"
                             style={{ backgroundColor: speakerColor }}
                           ></span>
-                          <span className="font-semibold text-sm">{item.speakerName}</span>
-                          <span className="text-[10px] text-slate-400 font-medium">
-                            [{new Date(item.startMs).toISOString().substr(14, 5)}]
+                          <span className="font-bold text-sm text-slate-800 dark:text-slate-200">{item.speakerName}</span>
+                          <span className="text-[11px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
+                            {new Date(item.startMs).toISOString().substr(14, 5)}
                           </span>
                         </div>
 
                         {/* Status/Badge */}
                         <div className="flex items-center space-x-2">
                           {item.confidence < 0.7 && (
-                            <span className="flex items-center space-x-0.5 text-xs text-amber-500 font-medium" title="Độ tin cậy nhận diện thấp">
+                            <span className="flex items-center space-x-1 text-[11px] font-bold text-amber-500 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-md" title="Độ tin cậy nhận diện thấp">
                               <AlertCircle className="w-3.5 h-3.5" />
-                              <span>Độ tin cậy thấp</span>
+                              <span>Cần soát lại</span>
                             </span>
                           )}
                           {item.status === "Final" ? (
-                            <span className="text-xs text-slate-400 italic">Translating...</span>
+                            <span className="text-xs text-blue-400 dark:text-blue-500 font-medium italic flex items-center space-x-1.5 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-md">
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              <span>Translating</span>
+                            </span>
                           ) : item.status === "Failed" ? (
                             <button
                               onClick={() => handleRetryAI(item)}
-                              className="text-xs text-red-500 hover:underline flex items-center space-x-1"
+                              className="text-xs text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 px-2 py-1 rounded-md flex items-center space-x-1.5 transition-colors font-medium"
                             >
                               <RefreshCw className="w-3 h-3 animate-spin" />
                               <span>Dịch lỗi - Thử lại</span>
@@ -761,7 +775,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                           ) : (
                             <button
                               onClick={() => playTtsText(item.translatedText)}
-                              className="p-1 text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors"
+                              className="p-1.5 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
                               title="Nghe giọng đọc dịch"
                             >
                               <Volume2 className="w-4 h-4" />
@@ -771,18 +785,22 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       </div>
 
                       {/* Bubble Body */}
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         {/* Original corrected text */}
-                        <p className="text-slate-900 dark:text-slate-100 text-sm font-semibold">
+                        <p className="text-slate-800 dark:text-slate-100 text-[15px] font-semibold leading-relaxed">
                           {item.correctedText || item.text}
                         </p>
                         
                         {/* Translated text */}
                         {item.status === "Final" ? (
-                          <div className="h-4 bg-slate-100 dark:bg-slate-800 rounded animate-pulse w-[150px]"></div>
+                          <div className="flex items-center space-x-1.5 pt-1 h-6">
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce"></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                          </div>
                         ) : (
                           item.translatedText && (
-                            <p className="text-slate-400 dark:text-slate-400 text-sm italic">
+                            <p className="text-slate-500 dark:text-slate-400 text-[15px] italic leading-relaxed">
                               {item.translatedText}
                             </p>
                           )
@@ -796,8 +814,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
             {/* Render Interim Partial result */}
             {partialTranscript && (
-              <div className="flex flex-col bg-white/60 dark:bg-slate-900/40 border border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-2 opacity-75">
-                <div className="flex items-center space-x-2">
+              <div className="flex flex-col bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-2 opacity-80 animate-in fade-in zoom-in-95 duration-200">
+                <div className="flex items-center space-x-2.5">
                   <span
                     className="w-2 h-2 rounded-full bg-slate-400 animate-ping"
                   ></span>

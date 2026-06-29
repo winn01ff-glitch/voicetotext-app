@@ -61,7 +61,11 @@ export function useDeepgramLive({
       const devices = await navigator.mediaDevices.enumerateDevices();
       const audioDevices = devices.filter((d) => d.kind === "audioinput");
       setInputDevices(audioDevices);
-      if (audioDevices.length > 0 && !selectedDeviceId) {
+      
+      const savedDevice = localStorage.getItem("meeting_device_id");
+      if (savedDevice && audioDevices.some(d => d.deviceId === savedDevice)) {
+        setSelectedDeviceId(savedDevice);
+      } else if (audioDevices.length > 0 && !selectedDeviceId) {
         setSelectedDeviceId(audioDevices[0].deviceId);
       }
     } catch (err) {
@@ -89,21 +93,23 @@ export function useDeepgramLive({
 
   // 2. Microphone Level Visualizer
   const startVolumeAnalysis = useCallback((stream: MediaStream) => {
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      audioContextRef.current.close().catch(err => console.error("AudioContext close error:", err));
     }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
 
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
 
-    audioContextRef.current = audioContext;
-    analyserRef.current = analyser;
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
 
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
@@ -125,6 +131,9 @@ export function useDeepgramLive({
     };
 
     draw();
+    } catch (err) {
+      console.error("AudioContext initialization error:", err);
+    }
   }, []);
 
   // Initialize preview stream (for test mic level in preparing state)
@@ -218,9 +227,8 @@ export function useDeepgramLive({
           },
         };
         audioStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+        startVolumeAnalysis(audioStreamRef.current);
       }
-
-      startVolumeAnalysis(audioStreamRef.current);
 
       // Start MediaRecorder (sending raw audio bytes to WebSocket)
       const options = { mimeType: "audio/webm;codecs=opus" };
