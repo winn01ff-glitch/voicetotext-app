@@ -30,7 +30,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [transcripts, setTranscripts] = useState<any[]>([]); // Contains finalized and processed transcripts
   const [partialTranscript, setPartialTranscript] = useState<{ text: string; speakerTag: string } | null>(null);
-  const [activeSpeech, setActiveSpeech] = useState<any | null>(null);
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -158,7 +157,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         }
       });
     }
-  }, [transcripts.length, activeSpeech?.text, activeSpeech?.interimText, isFullScreen]);
+  }, [transcripts.length, isFullScreen]);
 
   // Toast helper
   const addToast = (title: string, desc: string) => {
@@ -191,34 +190,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
-  const finalizeActiveSpeech = useCallback(
-    async (speechToFinalize: any) => {
-      if (!speechToFinalize || !speechToFinalize.text.trim()) return;
-
-      const newBlock = {
-        id: speechToFinalize.id,
-        text: speechToFinalize.text,
-        interimText: "",
-        correctedText: "",
-        translatedText: "",
-        speakerTag: speechToFinalize.speakerTag,
-        speakerName: speechToFinalize.speakerName,
-        startMs: speechToFinalize.startMs,
-        endMs: Date.now(),
-        confidence: 0.99,
-        status: "Chờ dịch..." as any,
-      };
-
-      // 1. Instantly append to finalized transcripts
-      setTranscripts((prev) => [...prev, newBlock]);
-
-      // 2. Call Gemini for punctuation check and translation
-      processTranscriptBlock(newBlock);
-    },
-    [meetingId]
-  );
-
-  // Hook Callback when Deepgram yields transcript
+// Hook Callback when Deepgram yields transcript
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
       // Allocate speaker color immediately on frontend if not exists
@@ -233,7 +205,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
       // Detect language from finalized text to autocorrect speaker tag mapping
       if (dgData.isFinal && dgData.text.trim()) {
-        const isJp = isJapaneseText(dgData.text);
+        const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
         const detectedLang = isJp ? "ja" : "vi";
         
         const currentSpeaker = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
@@ -275,84 +247,39 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If speaker changed, immediately finalize previous speaker's speech
-      setActiveSpeech((prev: any) => {
-        if (prev && prev.speakerTag !== dgData.speakerTag) {
-          // Clear any active timeout for old speaker
-          if (activeSpeakerTimeouts.current[prev.speakerTag]) {
-            clearTimeout(activeSpeakerTimeouts.current[prev.speakerTag]);
-            delete activeSpeakerTimeouts.current[prev.speakerTag];
-          }
-          // Finalize old speech
-          finalizeActiveSpeech(prev);
-          
-          // Clear active speech first so we start a new one below
-          return null;
-        }
-        return prev;
-      });
-
-      // Clear previous safety timeout for current speaker
-      if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
-        clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
-        delete activeSpeakerTimeouts.current[dgData.speakerTag];
-      }
-
-      // 2. Process based on isFinal
+      // 1. If interim (not final): update the realtime card state and return
       if (!dgData.isFinal) {
-        // Update activeSpeech with interim text
-        setActiveSpeech((prev: any) => {
-          if (prev && prev.speakerTag === dgData.speakerTag) {
-            return {
-              ...prev,
-              interimText: dgData.text
-            };
-          } else {
-            return {
-              id: Math.random().toString(36).substr(2, 9),
-              speakerTag: dgData.speakerTag,
-              speakerName,
-              color: speakerColorsRef.current[dgData.speakerTag] || "#3b82f6",
-              text: "",
-              interimText: dgData.text,
-              startMs: dgData.startMs || Date.now(),
-            };
-          }
-        });
-      } else {
-        // Finalized text segment
-        setActiveSpeech((prev: any) => {
-          let currentSpeech;
-          if (prev && prev.speakerTag === dgData.speakerTag) {
-            const updatedText = joinWithPunctuation(prev.text, dgData.text, isJapaneseText(dgData.text));
-            currentSpeech = {
-              ...prev,
-              text: updatedText,
-              interimText: ""
-            };
-          } else {
-            currentSpeech = {
-              id: Math.random().toString(36).substr(2, 9),
-              speakerTag: dgData.speakerTag,
-              speakerName,
-              color: speakerColorsRef.current[dgData.speakerTag] || "#3b82f6",
-              text: dgData.text,
-              interimText: "",
-              startMs: dgData.startMs || Date.now(),
-            };
-          }
-
-          // Set 5-second silence safety timeout to finalize this speech block
-          activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-            finalizeActiveSpeech(currentSpeech);
-            setActiveSpeech(null);
-          }, 5000);
-
-          return currentSpeech;
-        });
+        if (dgData.text.trim()) {
+          setPartialTranscript({
+            text: dgData.text,
+            speakerTag: dgData.speakerTag,
+          });
+        }
+        return;
       }
+
+      // 2. If final: clear the realtime card state and create a new main card
+      setPartialTranscript(null);
+      if (!dgData.text.trim()) return;
+
+      const newBlock = {
+        id: Math.random().toString(36).substr(2, 9),
+        text: dgData.text,
+        interimText: "",
+        correctedText: "",
+        translatedText: "",
+        speakerTag: dgData.speakerTag,
+        speakerName,
+        startMs: dgData.startMs || Date.now(),
+        endMs: dgData.endMs || Date.now(),
+        confidence: dgData.confidence,
+        status: "Đang sửa AI..." as any,
+      };
+
+      setTranscripts((prev) => [...prev, newBlock]);
+      processTranscriptBlock(newBlock);
     },
-    [speakers, meetingId, finalizeActiveSpeech]
+    [speakers, meetingId]
   );
 
   const processTranscriptBlock = async (block: any) => {
@@ -443,16 +370,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [meeting]);
 
-  // Clear partial transcript and finalize active speech when paused or stopped
+  // Clear partial transcript when paused or stopped
   useEffect(() => {
     if (status !== "recording") {
       setPartialTranscript(null);
-      if (activeSpeech) {
-        finalizeActiveSpeech(activeSpeech);
-        setActiveSpeech(null);
-      }
     }
-  }, [status, activeSpeech, finalizeActiveSpeech]);
+  }, [status]);
 
   // Audio Playback using Deepgram Aura TTS Route
   const playTtsText = (text: string) => {
@@ -669,8 +592,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         <div className="max-w-5xl mx-auto w-full space-y-12">
           {lastTxs.map((t) => (
             <div key={t.id} className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">
-                {t.speakerName}
+              <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5" style={{ color: speakerColorsRef.current[t.speakerTag] || "#60a5fa" }}>
+                <span>●</span>
+                <span>{t.speakerName}</span>
               </span>
               <p className="text-3xl md:text-5xl font-bold leading-tight">
                 {t.correctedText || t.text}
@@ -684,8 +608,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           ))}
           {partialTranscript && (
             <div className="space-y-3 opacity-60">
-              <span className="text-xs font-bold text-slate-500 uppercase">
-                {speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag)?.display_name || "Phát biểu..."}
+              <span className="text-xs font-bold uppercase flex items-center gap-1.5" style={{ color: speakerColorsRef.current[partialTranscript.speakerTag] || "#64748b" }}>
+                <span>●</span>
+                <span>{speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag)?.display_name || "Phát biểu..."}</span>
               </span>
               <p className="text-2xl md:text-4xl italic text-slate-300">
                 "{partialTranscript.text}..."
@@ -888,11 +813,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       {/* Bubble Header */}
                       <div className="flex items-center justify-between mb-2.5">
                         <div className="flex items-center space-x-2">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full shadow-sm"
-                            style={{ backgroundColor: speakerColor }}
-                          ></span>
-                          <span className="font-bold text-xs" style={{ color: speakerColor }}>{group.speakerName}</span>
+                          <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
+                            <span>●</span>
+                            <span>{group.speakerName}</span>
+                          </span>
                           <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
                             {new Date(group.startMs).toISOString().substr(14, 5)}
                           </span>
@@ -997,42 +921,39 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </div>
                 );
               })}
-              {/* Active Listening Card (Real-time transcription at the bottom) */}
-              {activeSpeech && (activeSpeech.text || activeSpeech.interimText) && (
-                <div 
-                  className="flex flex-col bg-slate-50/40 dark:bg-slate-900/30 border-2 border-dashed rounded-xl p-3.5 shadow-sm transition-all duration-300 relative group animate-pulse"
-                  style={{ borderColor: `${activeSpeech.color}40` }}
-                >
-                  {/* Bubble Header */}
-                  <div className="flex items-center justify-between mb-2.5">
-                    <div className="flex items-center space-x-2">
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shadow-sm animate-ping shrink-0"
-                        style={{ backgroundColor: activeSpeech.color }}
-                      ></span>
-                      <span className="font-bold text-xs" style={{ color: activeSpeech.color }}>
-                        {activeSpeech.speakerName} (Đang nghe...)
-                      </span>
+
+              {/* Thẻ realtime hiển thị nội dung đang nhận dạng (interim transcript) */}
+              {partialTranscript && partialTranscript.text.trim() && (() => {
+                const speakerColor = speakerColorsRef.current[partialTranscript.speakerTag] || "#3b82f6";
+                const sp = speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag);
+                const speakerName = sp ? sp.display_name : partialTranscript.speakerTag.replace("speaker_", "Speaker ");
+
+                return (
+                  <div className="flex flex-col bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group animate-[pulse_2.5s_infinite]">
+                    {/* Bubble Header */}
+                    <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
+                          <span>●</span>
+                          <span>{speakerName}</span>
+                        </span>
+                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
+                          <span>Đang lắng nghe...</span>
+                        </span>
+                      </div>
+                    </div>
+                    {/* Bubble Body */}
+                    <div className="text-slate-500 dark:text-slate-400 text-sm font-normal italic leading-relaxed">
+                      "{partialTranscript.text}..."
                     </div>
                   </div>
-
-                  {/* Bubble Body */}
-                  <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
-                    {activeSpeech.text && (
-                      <span className="text-slate-800 dark:text-slate-100 mr-1">{activeSpeech.text}</span>
-                    )}
-                    {activeSpeech.interimText && (
-                      <span className="text-slate-400 dark:text-slate-500 font-normal italic">
-                        {activeSpeech.interimText}...
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Empty Room Instruction */}
-            {transcripts.length === 0 && (!activeSpeech || (!activeSpeech.text && !activeSpeech.interimText)) && (
+            {transcripts.length === 0 && !partialTranscript && (
               <div className="h-full flex flex-col items-center justify-center text-center p-8">
                 <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
                 <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>

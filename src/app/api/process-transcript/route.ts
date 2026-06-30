@@ -45,14 +45,23 @@ export async function POST(request: Request) {
     const context = meeting.meeting_context;
 
     const systemPrompt = `
-Bạn là một trợ lý dịch thuật thông minh thời gian thực.
-Nhiệm vụ của bạn là nhận câu thoại thô, sửa lỗi, dịch và trích xuất Action Item.
+Bạn là một trợ lý chỉnh sửa và dịch thuật hội thoại thông minh.
+Nhiệm vụ của bạn là nhận câu thoại gốc từ hệ thống Speech-to-Text, chèn thêm dấu câu phù hợp, và dịch sang ngôn ngữ đích.
+
+QUY TẮC BẤT BIẾN CHO CORRECTED TEXT (---CORRECTED---):
+1. Bạn CHỈ ĐƯỢC PHÉP thêm các dấu câu (chấm, phẩy, hỏi, chấm than...) và viết hoa chữ cái đầu câu hoặc danh từ riêng (nếu cần).
+2. Bạn TUYỆT ĐỐI KHÔNG ĐƯỢC sửa bất kỳ từ ngữ nào, không tự ý thay đổi cách viết, không đảo thứ tự từ, không sửa chính tả, không diễn đạt lại, không thêm/bớt từ, không tối ưu hóa câu văn. Bạn phải giữ nguyên 100% từ ngữ do Deepgram trả về.
+3. Ví dụ:
+   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Hôm nay tôi muốn đi Tokyo ngày mai." (Đúng quy tắc)
+   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Ngày mai tôi muốn đi Tokyo." (SAI QUY TẮC - vi phạm do đổi thứ tự từ và cấu trúc)
+   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Tôi dự định sẽ đi Tokyo vào ngày mai." (SAI QUY TẮC - vi phạm do diễn đạt lại)
+
 BẠN BẮT BUỘC PHẢI TRẢ VỀ ĐÚNG ĐỊNH DẠNG TEXT DƯỚI ĐÂY (không dùng JSON, không dùng Markdown code block):
 
 ---CORRECTED---
-(Văn bản gốc của Deepgram. QUAN TRỌNG: Bạn TUYỆT ĐỐI KHÔNG ĐƯỢC thay đổi, sửa đổi, thêm bớt hay cải biên bất kỳ từ ngữ nào từ văn bản gốc của Deepgram. Hãy giữ nguyên 100% tất cả các từ của văn bản gốc. Nhiệm vụ duy nhất của bạn ở phần này là dựa vào ngữ cảnh câu nói để thêm các dấu chấm câu thích hợp như dấu chấm ".", dấu phẩy ",", dấu hỏi "?" hoặc dấu ngắt câu tiếng Nhật "。", "、" tại các vị trí ngắt nghỉ tự nhiên giúp câu cú rõ ràng hơn)
+(văn bản đã chèn dấu câu gốc. TUYỆT ĐỐI GIỮ NGUYÊN 100% TỪ NGỮ GỐC, CHỈ THÊM DẤU CÂU VÀ VIẾT HOA ĐẦU CÂU)
 ---TRANSLATED---
-(văn bản dịch sát nghĩa sang ${targetLang})
+(văn bản dịch sát nghĩa sang ${targetLang}. Sử dụng Glossary dưới đây nếu có)
 ---ACTION_ITEMS---
 (danh sách action item dạng JSON array hợp lệ: [{"description": "...", "owner": "...", "deadline": "..."}]. Nếu không có thì trả về [])
 ---CONFIDENCE---
