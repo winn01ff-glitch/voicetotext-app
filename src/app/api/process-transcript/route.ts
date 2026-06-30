@@ -26,164 +26,160 @@ export async function POST(request: Request) {
       .single();
 
     if (meetingError || !meeting) {
-      console.error("Fetch meeting error:", meetingError);
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
     }
 
     // 2. Fetch glossary
-    const { data: glossaryList, error: glossaryError } = await supabase
+    const { data: glossaryList } = await supabase
       .from("glossary")
       .select("source, target, source_language, target_language")
       .eq("meeting_id", meeting_id);
 
-    if (glossaryError) {
-      console.error("Fetch glossary error:", glossaryError);
-    }
-
     // 3. Setup Gemini Client & Call API
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const fastModelName = process.env.AI_FAST_MODEL || "gemini-1.5-flash";
-    const model = genAI.getGenerativeModel({
-      model: fastModelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
+    const fastModelName = process.env.AI_FAST_MODEL || "gemini-flash-latest";
+    const model = genAI.getGenerativeModel({ model: fastModelName });
 
     const targetLang = meeting.target_language;
     const sourceLang = meeting.source_language;
     const context = meeting.meeting_context;
 
     const systemPrompt = `
-Bạn là một trợ lý dịch thuật và biên bản cuộc họp thông minh.
-Nhiệm vụ của bạn là nhận một câu thoại thô từ máy nhận dạng giọng nói, thực hiện các tác vụ sau cùng một lúc và trả về một đối tượng JSON duy nhất:
-1. Sửa lỗi chính tả và chuẩn hóa ngữ pháp (corrected_text). Nếu câu thoại đã chuẩn, hãy giữ nguyên.
-2. Dịch câu thoại sang ngôn ngữ đích: "${targetLang}" (translated_text).
-3. Tra cứu Glossary (từ điển chuyên ngành được cấp) và chuẩn hóa tên riêng hoặc thuật ngữ kỹ thuật.
-4. Phát hiện xem câu thoại này có chứa Action Item (công việc được phân công) nào không. Nếu có, trích xuất mô tả (description), người thực hiện (owner), và thời hạn hoàn thành (deadline) dạng ISO 8601 (nếu có nhắc đến mốc thời gian cụ thể) hoặc null.
-5. Đánh giá độ tự tin dịch thuật của chính bạn từ 0.0 đến 1.0 (confidence_score).
+Bạn là một trợ lý dịch thuật thông minh thời gian thực.
+Nhiệm vụ của bạn là nhận câu thoại thô, sửa lỗi, dịch và trích xuất Action Item.
+BẠN BẮT BUỘC PHẢI TRẢ VỀ ĐÚNG ĐỊNH DẠNG TEXT DƯỚI ĐÂY (không dùng JSON, không dùng Markdown code block):
 
-Thông tin ngữ cảnh cuộc họp:
-- Ngữ cảnh: "${context}"
-- Ngôn ngữ nguồn chính của cuộc họp: "${sourceLang}"
-- Danh sách Glossary: ${JSON.stringify(glossaryList || [])}
+---CORRECTED---
+(văn bản đã sửa lỗi chính tả bằng ngôn ngữ gốc ${sourceLang}. QUAN TRỌNG: Chỉ sửa lỗi chính tả thực sự nghiêm trọng hoặc từ vô nghĩa. Nếu câu gốc đã chuẩn và có nghĩa, BẠN BẮT BUỘC PHẢI GIỮ NGUYÊN 100% câu gốc, không được tự ý thay đổi từ vựng, hành văn hoặc cấu trúc câu)
+---TRANSLATED---
+(văn bản dịch sát nghĩa sang ${targetLang})
+---ACTION_ITEMS---
+(danh sách action item dạng JSON array hợp lệ: [{"description": "...", "owner": "...", "deadline": "..."}]. Nếu không có thì trả về [])
+---CONFIDENCE---
+(điểm tự tin từ 0.0 đến 1.0, ví dụ 0.95)
+
+Ngữ cảnh: "${context}"
+Glossary: ${JSON.stringify(glossaryList || [])}
 
 Câu thoại cần xử lý:
 "${original_text}"
-
-Hãy trả về một đối tượng JSON duy nhất khớp với cấu trúc sau:
-{
-  "corrected_text": "văn bản đã sửa lỗi chính tả bằng ngôn ngữ gốc",
-  "translated_text": "văn bản dịch sang ${targetLang}",
-  "action_items": [
-    {
-      "description": "mô tả công việc cần làm",
-      "owner": "tên người thực hiện hoặc null",
-      "deadline": "mốc thời gian dạng ISO 8601 hoặc null"
-    }
-  ],
-  "glossary_matches": ["danh sách các từ trong glossary khớp trong câu"],
-  "confidence_score": 0.95
-}
 `;
 
-    const aiResponse = await model.generateContent(systemPrompt);
-    const responseText = aiResponse.response.text();
-    const aiResult = JSON.parse(responseText);
-
-    // 4. Resolve Speaker ID (create one if not exists)
-    let speakerId = null;
-    if (speaker_tag) {
-      const { data: speaker, error: speakerError } = await supabase
-        .from("speakers")
-        .select("id")
-        .eq("meeting_id", meeting_id)
-        .eq("speaker_tag", speaker_tag)
-        .maybeSingle();
-
-      if (speaker) {
-        speakerId = speaker.id;
-      } else {
-        // Auto create speaker if missing
-        const { data: newSpeaker, error: createSpeakerError } = await supabase
-          .from("speakers")
-          .insert({
-            meeting_id: meeting_id,
-            speaker_tag: speaker_tag,
-            display_name: speaker_tag.replace("speaker_", "Speaker "),
-            color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
-          })
-          .select()
-          .single();
-
-        if (!createSpeakerError && newSpeaker) {
-          speakerId = newSpeaker.id;
-        }
-      }
-    }
-
-    // 5. Insert transcript record
-    const { data: transcriptRecord, error: insertError } = await supabase
-      .from("transcripts")
-      .insert({
-        meeting_id,
-        speaker_id: speakerId,
-        original_text,
-        corrected_text: aiResult.corrected_text || original_text,
-        translated_text: aiResult.translated_text || "",
-        translation_language: targetLang,
-        translation_provider: "Gemini",
-        start_ms: start_ms || 0,
-        end_ms: end_ms || 0,
-        confidence: confidence || aiResult.confidence_score || 1.0,
-      })
-      .select()
-      .single();
-
-    if (insertError) throw insertError;
-
-    // 6. Insert Action Items if detected
-    if (aiResult.action_items && aiResult.action_items.length > 0) {
-      const actionItemsToInsert = aiResult.action_items.map((item: any) => {
-        let parsedDeadline = null;
-        if (item.deadline) {
-          const d = new Date(item.deadline);
-          if (!isNaN(d.getTime())) {
-            parsedDeadline = d.toISOString();
+    // We will use a TransformStream to send SSE back to the client
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const resultStream = await model.generateContentStream(systemPrompt);
+          let fullText = "";
+          
+          for await (const chunk of resultStream.stream) {
+            fullText += chunk.text();
+            
+            // Parse current state
+            const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
+            const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
+            
+            const payload = {
+              type: "chunk",
+              corrected: correctedMatch ? correctedMatch[1].trim() : "",
+              translated: translatedMatch ? translatedMatch[1].trim() : ""
+            };
+            
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
           }
+
+          // Stream finished, send done signal
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
+          controller.close();
+
+          // BACKGROUND TASKS: Parse the final text and save to Supabase
+          try {
+            const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
+            const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
+            const actionItemsMatch = fullText.match(/---ACTION_ITEMS---\s*([\s\S]*?)(?=\s*---|$)/);
+            const confidenceMatch = fullText.match(/---CONFIDENCE---\s*([\s\S]*?)(?=\s*---|$)/);
+
+            const finalCorrected = correctedMatch ? correctedMatch[1].trim() : original_text;
+            const finalTranslated = translatedMatch ? translatedMatch[1].trim() : "";
+            const finalConfidence = confidenceMatch ? parseFloat(confidenceMatch[1].trim()) : confidence;
+            
+            let finalActionItems = [];
+            try {
+              if (actionItemsMatch) finalActionItems = JSON.parse(actionItemsMatch[1].trim());
+            } catch (e) {}
+
+            // Resolve Speaker ID
+            let speakerId = null;
+            if (speaker_tag) {
+              const { data: speaker } = await supabase
+                .from("speakers")
+                .select("id")
+                .eq("meeting_id", meeting_id)
+                .eq("speaker_tag", speaker_tag)
+                .maybeSingle();
+
+              if (speaker) {
+                speakerId = speaker.id;
+              } else {
+                const { data: newSpeaker } = await supabase
+                  .from("speakers")
+                  .insert({
+                    meeting_id,
+                    speaker_tag,
+                    display_name: speaker_tag.replace("speaker_", "Speaker "),
+                    color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+                  })
+                  .select().single();
+                if (newSpeaker) speakerId = newSpeaker.id;
+              }
+            }
+
+            // Insert Transcript
+            await supabase.from("transcripts").insert({
+              meeting_id,
+              speaker_id: speakerId,
+              original_text,
+              corrected_text: finalCorrected,
+              translated_text: finalTranslated,
+              translation_language: targetLang,
+              translation_provider: "Gemini",
+              start_ms: start_ms || 0,
+              end_ms: end_ms || 0,
+              confidence: finalConfidence || 1.0,
+            });
+
+            // Insert Action Items
+            if (finalActionItems.length > 0) {
+              const itemsToInsert = finalActionItems.map((item: any) => ({
+                meeting_id,
+                description: item.description,
+                owner: item.owner || null,
+                deadline: !isNaN(new Date(item.deadline).getTime()) ? new Date(item.deadline).toISOString() : null,
+                is_completed: false,
+              }));
+              await supabase.from("action_items").insert(itemsToInsert);
+            }
+          } catch (dbErr) {
+            console.error("Background DB Save Error:", dbErr);
+          }
+        } catch (error) {
+          console.error("Stream generation error:", error);
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", error: String(error) })}\n\n`));
+          controller.close();
         }
-        return {
-          meeting_id,
-          description: item.description,
-          owner: item.owner || null,
-          deadline: parsedDeadline,
-          is_completed: false,
-        };
-      });
-
-      const { error: insertActionError } = await supabase
-        .from("action_items")
-        .insert(actionItemsToInsert);
-
-      if (insertActionError) {
-        console.error("Insert Action Items error:", insertActionError);
       }
-    }
+    });
 
-    return NextResponse.json({
-      status: "success",
-      transcript_id: transcriptRecord.id,
-      result: {
-        corrected_text: aiResult.corrected_text || original_text,
-        translated_text: aiResult.translated_text || "",
-        action_items: aiResult.action_items || [],
-        glossary_matches: aiResult.glossary_matches || [],
-        confidence_score: aiResult.confidence_score || confidence || 1.0,
-      },
+    return new NextResponse(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      }
     });
   } catch (error) {
     console.error("Process transcript error:", error);
-    return NextResponse.json(
-      { error: String(error) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

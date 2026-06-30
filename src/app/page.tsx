@@ -32,7 +32,7 @@ export default function Dashboard() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingContext, setMeetingContext] = useState("general");
-  const [sourceLanguage, setSourceLanguage] = useState("auto");
+  const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
     { speaker_tag: "speaker_0", display_name: "Tôi (Chủ tọa)", language_code: "vi" },
@@ -738,49 +738,49 @@ export default function Dashboard() {
 
       {/* CREATE MEETING MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8 bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-sm">
           {/* Main Modal Container - Bento Edition */}
-          <div className="max-w-7xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[830px] max-h-[95vh]">
+          <div className="max-w-6xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]">
             
             {/* Header */}
-            <header className="flex justify-between items-center px-8 py-5 shrink-0 bg-white">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center">
-                  <LayoutGrid className="w-7 h-7" />
+            <header className="flex justify-between items-center px-8 py-5.5 shrink-0 bg-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+                  <LayoutGrid className="w-5 h-5" />
                 </div>
                 <div>
-                  <h1 className="text-[24px] leading-none font-extrabold text-slate-900 tracking-tight">Cấu hình Cuộc họp</h1>
-                  <p className="text-sm text-slate-500 font-medium mt-1">Thiết lập các thông số trước khi bắt đầu</p>
+                  <h1 className="text-[20px] leading-none font-extrabold text-slate-900 tracking-tight">Cấu hình Cuộc họp</h1>
+                  <p className="text-[12px] text-slate-500 font-medium mt-1">Thiết lập các thông số trước khi bắt đầu</p>
                 </div>
               </div>
               <button 
                 onClick={() => setShowCreateModal(false)}
-                className="w-10 h-10 flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 rounded-full transition-colors cursor-pointer"
+                className="w-8 h-8 flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 rounded-full transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </header>
 
             {/* Main Content Area - Bento Grid */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-0 bg-white">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 auto-rows-auto">
+            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-3 bg-white">
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 auto-rows-auto">
                 
                 {/* Block 1: Audio (Span 4 cols, Row span 2) */}
-                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] rounded-3xl p-4 flex flex-col gap-4 border border-blue-100/50">
+                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50">
                   <div className="flex items-center gap-2">
-                    <div className="text-blue-600 bg-blue-100 p-2 rounded-xl flex items-center justify-center">
-                      <Mic className="w-5 h-5" />
+                    <div className="text-blue-600 bg-blue-100 p-1.5 rounded-lg flex items-center justify-center">
+                      <Mic className="w-4 h-4" />
                     </div>
-                    <h2 className="text-[16px] font-bold text-blue-900 uppercase tracking-wide">Thiết bị & Âm thanh</h2>
+                    <h2 className="text-[13px] font-bold text-blue-900 uppercase tracking-wide">Thiết bị & Âm thanh</h2>
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[12px] font-bold text-blue-700 uppercase tracking-wide">Chọn Microphone</label>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">Chọn Microphone</label>
                     <div className="relative">
                       <select
                         value={selectedDevice}
                         onChange={(e) => setSelectedDevice(e.target.value)}
-                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-xl pl-3.5 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
                       >
                         {audioDevices.map((d) => (
                           <option key={d.deviceId} value={d.deviceId}>
@@ -789,23 +789,23 @@ export default function Dashboard() {
                         ))}
                         {audioDevices.length === 0 && <option value="">Không tìm thấy thiết bị Microphone</option>}
                       </select>
-                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-blue-400 pointer-events-none" />
+                      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-blue-400 pointer-events-none" />
                     </div>
                   </div>
 
-                  <div className="bg-white/60 p-4 rounded-2xl border border-white flex flex-col gap-4">
-                    <div className="flex items-center gap-4">
+                  <div className="bg-white/60 p-3 rounded-xl border border-white flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
                       <button
                         onClick={startMicTest}
-                        className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-md active:scale-95 shrink-0 cursor-pointer ${
+                        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all shadow-md active:scale-95 shrink-0 cursor-pointer ${
                           isTestingMic
                             ? "bg-red-600 text-white hover:bg-red-700 shadow-red-500/20"
                             : "bg-blue-600 text-white hover:bg-blue-700 shadow-blue-500/20"
                         }`}
                       >
-                        <Mic className="w-5 h-5" />
+                        <Mic className="w-4 h-4" />
                       </button>
-                      <div className="flex-1 h-3 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="flex-1 h-2 bg-blue-100 rounded-full overflow-hidden">
                         <div
                           ref={micBarRef}
                           className="h-full bg-blue-500 rounded-full"
@@ -815,39 +815,39 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-4 bg-white/60 p-4 rounded-2xl border border-white flex-1">
-                    <label className="flex items-center gap-4 cursor-pointer group">
+                  <div className="flex flex-col gap-3 bg-white/60 p-3 rounded-xl border border-white flex-1">
+                    <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={echoCancellation} onChange={(e) => setEchoCancellation(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
-                        <Check className="w-4 h-4 stroke-[3]" />
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Hủy tiếng vọng</span>
+                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Hủy tiếng vọng</span>
                     </label>
-                    <label className="flex items-center gap-4 cursor-pointer group">
+                    <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={noiseSuppression} onChange={(e) => setNoiseSuppression(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
-                        <Check className="w-4 h-4 stroke-[3]" />
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Chống ồn</span>
+                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Chống ồn</span>
                     </label>
-                    <label className="flex items-center gap-4 cursor-pointer group">
+                    <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={autoGainControl} onChange={(e) => setAutoGainControl(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-6 h-6 rounded-lg transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
-                        <Check className="w-4 h-4 stroke-[3]" />
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[15px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Tự động chỉnh âm (AGC)</span>
+                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Tự động chỉnh âm (AGC)</span>
                     </label>
                   </div>
 
-                  <div className="flex items-center justify-between bg-white/80 p-4 rounded-2xl border border-white mt-auto">
+                  <div className="flex items-center justify-between bg-white/80 p-3 rounded-xl border border-white mt-auto">
                     <div>
-                      <span className="text-[14px] font-bold text-blue-900 block">Deepgram Chunk</span>
-                      <span className="text-[12px] font-medium text-blue-600/70">Độ trễ phân tích</span>
+                      <span className="text-[13px] font-bold text-blue-900 block">Deepgram Chunk</span>
+                      <span className="text-[11px] font-medium text-blue-600/70">Độ trễ phân tích</span>
                     </div>
-                    <div className="flex items-center bg-white/80 rounded-xl border border-blue-100/50 overflow-hidden shadow-sm">
+                    <div className="flex items-center bg-white/80 rounded-lg border border-blue-100/50 overflow-hidden shadow-sm">
                       <button 
                         onClick={() => setChunkSize(Math.max(80, chunkSize - 10))}
-                        className="w-8 h-10 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                       >
                         <Minus className="w-4 h-4" />
                       </button>
@@ -857,11 +857,11 @@ export default function Dashboard() {
                         max={150}
                         value={chunkSize}
                         onChange={(e) => setChunkSize(parseInt(e.target.value) || 100)}
-                        className="w-12 text-center bg-transparent border-none focus:ring-0 p-0 text-[15px] font-bold text-blue-700 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-10 text-center bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-blue-700 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <button 
                         onClick={() => setChunkSize(Math.min(150, chunkSize + 10))}
-                        className="w-8 h-10 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
                       </button>
@@ -870,99 +870,98 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 2: Meeting Info (Span 8 cols, Row span 1) */}
-                <section className="lg:col-span-8 bg-[#F0FDF4] rounded-3xl p-4 flex flex-col gap-4 border border-emerald-100/50">
+                <section className="lg:col-span-8 bg-[#F0FDF4] rounded-3xl p-3.5 flex flex-col gap-3 border border-emerald-100/50">
                   <div className="flex items-center gap-2">
-                    <div className="text-emerald-600 bg-emerald-100 p-2 rounded-xl flex items-center justify-center">
-                      <Info className="w-5 h-5" />
+                    <div className="text-emerald-600 bg-emerald-100 p-1.5 rounded-lg flex items-center justify-center">
+                      <Info className="w-4 h-4" />
                     </div>
-                    <h2 className="text-[16px] font-bold text-emerald-900 uppercase tracking-wide">Thông tin Cuộc họp</h2>
+                    <h2 className="text-[13px] font-bold text-emerald-900 uppercase tracking-wide">Thông tin Cuộc họp</h2>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Tiêu đề cuộc họp</label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Tiêu đề cuộc họp</label>
                       <input
                         type="text"
                         value={meetingTitle}
                         onChange={(e) => setMeetingTitle(e.target.value)}
-                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl px-4 py-3 text-[15px] font-semibold text-slate-800"
+                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl px-3 py-2 text-[13px] font-semibold text-slate-800"
                       />
                     </div>
                     
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Ngữ cảnh (Context)</label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Ngữ cảnh (Context)</label>
                       <div className="relative">
                         <select
                           value={meetingContext}
                           onChange={(e) => setMeetingContext(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
                         >
                           <option value="general">Họp chung (Giao tiếp thường nhật)</option>
                           <option value="factory">Nhà máy sản xuất (Cơ khí, quy trình, QC)</option>
                           <option value="it">Công nghệ thông tin (IT, lập trình, phần mềm)</option>
                           <option value="business">Kinh doanh / Hợp đồng (Pháp lý, giá cả)</option>
                         </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
+                        <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Ngôn ngữ chính</label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Ngôn ngữ chính</label>
                       <div className="relative">
                         <select
                           value={sourceLanguage}
                           onChange={(e) => setSourceLanguage(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-3 text-[15px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
                         >
-                          <option value="auto">Tự động (Auto)</option>
-                          <option value="vi">Tiếng Việt (vi)</option>
                           <option value="ja">Tiếng Nhật (ja)</option>
+                          <option value="vi">Tiếng Việt (vi)</option>
                           <option value="en">Tiếng Anh (en)</option>
                         </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
+                        <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-2">
-                      <label className="text-[12px] font-bold text-emerald-700 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
                       <div className="relative">
                         <select
                           value={targetLanguage}
                           onChange={(e) => setTargetLanguage(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-2xl pl-4 pr-10 py-2.5 text-[14px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
                         >
                           <option value="vi">Tiếng Việt (vi)</option>
                           <option value="ja">Tiếng Nhật (ja)</option>
                           <option value="en">Tiếng Anh (en)</option>
                         </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-emerald-500 pointer-events-none" />
+                        <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
                   </div>
                 </section>
 
                 {/* Block 3: People (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FAF5FF] rounded-3xl flex flex-col gap-4 border border-purple-100/50 p-4 h-[350px]">
+                <section className="lg:col-span-4 bg-[#FAF5FF] rounded-3xl flex flex-col gap-3 border border-purple-100/50 p-3.5 h-[280px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
-                      <div className="text-purple-600 bg-purple-100 p-2 rounded-xl flex items-center justify-center">
-                        <Users className="w-5 h-5" />
+                      <div className="text-purple-600 bg-purple-100 p-1.5 rounded-lg flex items-center justify-center">
+                        <Users className="w-4 h-4" />
                       </div>
-                      <h2 className="text-[14px] font-bold text-purple-900 uppercase tracking-wide">Người nói</h2>
+                      <h2 className="text-[13px] font-bold text-purple-900 uppercase tracking-wide">Người nói</h2>
                     </div>
                     <button 
                       onClick={addSpeakerField}
-                      className="w-8 h-8 flex items-center justify-center bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors shadow-sm shadow-purple-500/20 cursor-pointer"
+                      className="w-7 h-7 flex items-center justify-center bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors shadow-sm shadow-purple-500/20 cursor-pointer"
                     >
-                      <Plus className="w-5 h-5" />
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <div className="flex flex-col gap-2 flex-1 min-h-0">
-                    <div className="flex flex-col gap-2 overflow-y-auto custom-scrollbar pr-2 flex-1">
+                  <div className="flex flex-col gap-1.5 flex-1 min-h-0">
+                    <div className="flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-2 flex-1">
                       {expectedSpeakers.map((sp, idx) => (
-                        <div key={idx} className={`flex items-center gap-3 bg-white/80 p-1.5 pr-9 rounded-xl border border-white shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
-                          <div className={`w-8 h-8 rounded-lg font-extrabold flex items-center justify-center text-[12px] shrink-0 ${idx === 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
+                        <div key={idx} className={`flex items-center gap-3 bg-white/80 p-1.5 pr-9 rounded-lg border border-white shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
+                          <div className={`w-7 h-7 rounded-md font-extrabold flex items-center justify-center text-[11px] shrink-0 ${idx === 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
                             {idx}
                           </div>
                           <div className="flex-1 min-w-0 flex items-center justify-between">
@@ -970,22 +969,22 @@ export default function Dashboard() {
                               type="text"
                               value={sp.display_name}
                               onChange={(e) => updateSpeaker(idx, "display_name", e.target.value)}
-                              className="bg-transparent border-none focus:ring-0 p-0 text-[14px] font-bold text-slate-800 w-[55%] outline-none"
+                              className="bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-slate-800 w-[55%] outline-none"
                             />
                             <div className="relative">
                               <button
                                 type="button"
                                 onClick={() => setOpenSpeakerDropdown(openSpeakerDropdown === idx ? null : idx)}
-                                className={`bg-transparent border-none p-0 text-[12px] font-bold uppercase text-right cursor-pointer flex items-center justify-end gap-0.5 outline-none ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}
+                                className={`bg-transparent border-none p-0 text-[11px] font-bold uppercase text-right cursor-pointer flex items-center justify-end gap-0.5 outline-none ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}
                               >
                                 {sp.language_code === 'auto' ? 'AUTO' : sp.language_code === 'vi' ? 'TIẾNG VIỆT' : sp.language_code === 'ja' ? 'TIẾNG NHẬT' : 'TIẾNG ANH'}
-                                <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+                                <ChevronDown className="w-2.5 h-2.5 text-slate-400 shrink-0" />
                               </button>
                               
                               {openSpeakerDropdown === idx && (
                                 <>
                                   <div className="fixed inset-0 z-40 cursor-default" onClick={() => setOpenSpeakerDropdown(null)} />
-                                  <div className="absolute right-0 mt-2 w-32 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-1 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                                  <div className="absolute right-0 mt-2 w-28 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-0.5 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
                                     {[
                                       { code: 'auto', label: 'AUTO' },
                                       { code: 'vi', label: 'TIẾNG VIỆT' },
@@ -999,7 +998,7 @@ export default function Dashboard() {
                                           updateSpeaker(idx, "language_code", lang.code);
                                           setOpenSpeakerDropdown(null);
                                         }}
-                                        className={`w-full text-left px-3 py-2 text-[12px] font-bold transition-colors cursor-pointer hover:bg-slate-50 ${sp.language_code === lang.code ? 'text-purple-600 bg-purple-50' : 'text-slate-600'}`}
+                                        className={`w-full text-left px-2 py-1.5 text-[11px] font-bold transition-colors cursor-pointer hover:bg-slate-50 ${sp.language_code === lang.code ? 'text-purple-600 bg-purple-50' : 'text-slate-600'}`}
                                       >
                                         {lang.label}
                                       </button>
@@ -1012,21 +1011,21 @@ export default function Dashboard() {
                           <button
                             onClick={() => removeSpeakerField(idx)}
                             disabled={expectedSpeakers.length <= 1}
-                            className="w-6 h-6 flex items-center justify-center rounded-full bg-red-100 text-red-500 opacity-0 group-hover:opacity-100 disabled:opacity-0 hover:bg-red-200 transition-all absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer disabled:cursor-not-allowed"
+                            className="w-5 h-5 flex items-center justify-center rounded-full bg-red-100 text-red-500 opacity-0 group-hover:opacity-100 disabled:opacity-0 hover:bg-red-200 transition-all absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer disabled:cursor-not-allowed"
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className="w-3 h-3" />
                           </button>
                         </div>
                       ))}
                       <div 
                         onClick={addSpeakerField}
-                        className="flex items-center gap-3 bg-white/50 p-1.5 pr-3 rounded-xl border border-white/50 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
+                        className="flex items-center gap-3 bg-white/50 p-1.5 pr-3 rounded-lg border border-white/50 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
                       >
-                        <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-500 font-extrabold flex items-center justify-center text-[12px] shrink-0">
-                          <Plus className="w-4 h-4" />
+                        <div className="w-7 h-7 rounded-md bg-slate-100 text-slate-500 font-extrabold flex items-center justify-center text-[11px] shrink-0">
+                          <Plus className="w-3 h-3" />
                         </div>
                         <div className="flex-1 min-w-0 flex items-center justify-between">
-                          <span className="text-[13px] font-medium text-slate-400 italic">Thêm người nói...</span>
+                          <span className="text-[12px] font-medium text-slate-400 italic">Thêm người nói...</span>
                         </div>
                       </div>
                     </div>
@@ -1034,25 +1033,25 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 4: Glossary (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FFFBEB] rounded-3xl flex flex-col gap-4 border border-amber-100/50 p-4 h-[350px]">
+                <section className="lg:col-span-4 bg-[#FFFBEB] rounded-3xl flex flex-col gap-3 border border-amber-100/50 p-3.5 h-[280px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
-                      <div className="text-amber-600 bg-amber-100 p-2 rounded-xl flex items-center justify-center">
-                        <BookOpen className="w-5 h-5" />
+                      <div className="text-amber-600 bg-amber-100 p-1.5 rounded-lg flex items-center justify-center">
+                        <BookOpen className="w-4 h-4" />
                       </div>
-                      <h2 className="text-[14px] font-bold text-amber-900 uppercase tracking-wide">Từ điển riêng</h2>
+                      <h2 className="text-[13px] font-bold text-amber-900 uppercase tracking-wide">Từ điển riêng</h2>
                     </div>
                     <button 
                       onClick={addGlossaryField}
-                      className="w-8 h-8 flex items-center justify-center bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors shadow-sm shadow-amber-500/20 cursor-pointer"
+                      className="w-7 h-7 flex items-center justify-center bg-amber-500 text-white rounded-md hover:bg-amber-600 transition-colors shadow-sm shadow-amber-500/20 cursor-pointer"
                     >
-                      <Plus className="w-5 h-5" />
+                      <Plus className="w-4 h-4" />
                     </button>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 w-full flex-1 overflow-y-auto custom-scrollbar pr-2 content-start">
+                  <div className="flex flex-col gap-1 w-full flex-1 overflow-y-auto custom-scrollbar pr-2 content-start">
                     {glossary.map((g, idx) => (
-                      <div key={idx} className="flex items-center justify-between bg-white/80 px-3 py-1.5 rounded-lg border border-white shadow-sm">
+                      <div key={idx} className="flex items-center justify-between bg-white/80 px-2.5 py-1 rounded-md border border-white shadow-sm">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           <textarea
                             rows={1}
@@ -1063,10 +1062,10 @@ export default function Dashboard() {
                               e.target.style.height = e.target.scrollHeight + 'px';
                               updateGlossary(idx, "source", e.target.value);
                             }}
-                            className="font-bold text-slate-800 text-[13px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
-                            style={{ minHeight: '20px' }}
+                            className="font-bold text-slate-800 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            style={{ minHeight: '18px' }}
                           />
-                          <ArrowRight className="text-amber-300 w-4 h-4 shrink-0" />
+                          <ArrowRight className="text-amber-300 w-3.5 h-3.5 shrink-0" />
                           <textarea
                             rows={1}
                             value={g.target}
@@ -1076,49 +1075,49 @@ export default function Dashboard() {
                               e.target.style.height = e.target.scrollHeight + 'px';
                               updateGlossary(idx, "target", e.target.value);
                             }}
-                            className="font-bold text-amber-700 text-[13px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
-                            style={{ minHeight: '20px' }}
+                            className="font-bold text-amber-700 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            style={{ minHeight: '18px' }}
                           />
                         </div>
                         <button 
                           onClick={() => removeGlossaryField(idx)}
-                          className="w-5 h-5 shrink-0 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600 transition-colors ml-2 cursor-pointer"
+                          className="w-4.5 h-4.5 shrink-0 flex items-center justify-center rounded-full text-slate-400 hover:bg-red-100 hover:text-red-600 transition-colors ml-2 cursor-pointer"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <X className="w-3 h-3" />
                         </button>
                       </div>
                     ))}
                   </div>
 
-                  <div className="mt-auto bg-amber-100/50 p-3 rounded-2xl flex gap-2 items-start">
-                    <Lightbulb className="text-amber-600 w-5 h-5 shrink-0" />
-                    <p className="text-[12px] font-medium text-amber-900/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
+                  <div className="mt-auto bg-amber-100/50 p-2.5 rounded-xl flex gap-2 items-start">
+                    <Lightbulb className="text-amber-600 w-4.5 h-4.5 shrink-0" />
+                    <p className="text-[11px] font-medium text-amber-900/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
                   </div>
                 </section>
               </div>
             </main>
 
             {/* Footer */}
-            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-5 bg-white shrink-0 border-t border-slate-100">
+            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-4 bg-white shrink-0 border-t border-slate-100">
               <button
                 onClick={resetSetupDefaults}
-                className="flex items-center gap-2 text-slate-500 font-bold text-[14px] hover:text-slate-800 hover:bg-slate-100 px-4 py-3 rounded-2xl transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 text-slate-500 font-bold text-[12px] hover:text-slate-800 hover:bg-slate-100 px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
               >
-                <RotateCcw className="w-5 h-5" /> ĐẶT LẠI
+                <RotateCcw className="w-4.5 h-4.5" /> ĐẶT LẠI
               </button>
               
               <div className="flex gap-3 w-full sm:w-auto mt-4 sm:mt-0">
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 sm:flex-none bg-slate-100 text-slate-700 rounded-2xl px-8 py-4 font-bold text-[15px] hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
+                  className="flex-1 sm:flex-none bg-slate-100 text-slate-700 rounded-xl px-5 py-2.5 font-bold text-[13px] hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
                 >
                   HỦY BỎ
                 </button>
                 <button
                   onClick={handleStartMeeting}
-                  className="flex-1 sm:flex-none bg-[#005bbf] text-white rounded-2xl px-8 py-4 font-bold text-[15px] flex items-center justify-center gap-2 hover:bg-blue-700 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] cursor-pointer"
+                  className="flex-1 sm:flex-none bg-[#005bbf] text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] cursor-pointer"
                 >
-                  VÀO PHÒNG HỌP <ArrowRight className="w-5 h-5" />
+                  VÀO PHÒNG HỌP <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
             </footer>

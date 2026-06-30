@@ -17,6 +17,7 @@ interface UseDeepgramLiveProps {
   onTranscript: (data: {
     text: string;
     isFinal: boolean;
+    speechFinal: boolean;
     speakerTag: string;
     startMs: number;
     endMs: number;
@@ -93,26 +94,32 @@ export function useDeepgramLive({
 
   // 2. Microphone Level Visualizer
   const startVolumeAnalysis = useCallback((stream: MediaStream) => {
-    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
-      audioContextRef.current.close().catch(err => console.error("AudioContext close error:", err));
-    }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
 
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      let audioContext = audioContextRef.current;
+      if (!audioContext || audioContext.state === "closed") {
+        audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        audioContextRef.current = audioContext;
+      } else if (audioContext.state === "suspended") {
+        audioContext.resume().catch(err => console.error("AudioContext resume error:", err));
+      }
+
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      audioContextRef.current = audioContext;
       analyserRef.current = analyser;
 
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
+    
+    let lastDrawTime = 0;
+    let currentLevel = 0;
 
     const draw = () => {
       if (!analyserRef.current) return;
@@ -123,9 +130,25 @@ export function useDeepgramLive({
         sum += dataArray[i];
       }
       const average = sum / bufferLength;
-      // Map to 0-100 scale
-      const mappedVal = Math.min(100, Math.round((average / 128) * 100));
-      setMicLevel(mappedVal);
+      
+      // Calculate target level and smooth it
+      // Noise gate: if average is very low (background hum), ignore it
+      let mapped = (average / 128) * 100;
+      if (mapped < 15) {
+        mapped = 0;
+      } else {
+        mapped = ((mapped - 15) / 85) * 100;
+      }
+      
+      const targetLevel = Math.min(100, mapped);
+      currentLevel += (targetLevel - currentLevel) * 0.2;
+
+      // Throttle React state updates to ~20fps to prevent lag
+      const now = Date.now();
+      if (now - lastDrawTime > 50) {
+        setMicLevel(Math.round(currentLevel));
+        lastDrawTime = now;
+      }
 
       animationFrameRef.current = requestAnimationFrame(draw);
     };
@@ -136,37 +159,8 @@ export function useDeepgramLive({
     }
   }, []);
 
-  // Initialize preview stream (for test mic level in preparing state)
-  const initPreviewStream = useCallback(async (deviceId: string) => {
-    try {
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      const constraints: MediaStreamConstraints = {
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          echoCancellation,
-          noiseSuppression,
-          autoGainControl,
-        },
-      };
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      audioStreamRef.current = stream;
-      startVolumeAnalysis(stream);
-    } catch (err) {
-      console.error("Preview stream error:", err);
-      onError("Không thể kết nối thiết bị microphone đã chọn.");
-    }
-  }, [echoCancellation, noiseSuppression, autoGainControl, startVolumeAnalysis, onError]);
+  // Initialize preview stream removed to prevent mic being active when not recording.
 
-  useEffect(() => {
-    if (status === "preparing" && selectedDeviceId) {
-      initPreviewStream(selectedDeviceId);
-    }
-    return () => {
-      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-    };
-  }, [status, selectedDeviceId, initPreviewStream]);
 
   // 3. Connect to Deepgram WebSocket
   const connectDeepgram = useCallback(async (): Promise<WebSocket> => {
@@ -180,22 +174,28 @@ export function useDeepgramLive({
       smart_format: "true",
       diarize: "true",
       interim_results: "true",
+      endpointing: "5000", // Wait 5000ms of silence before splitting sentences
     });
 
     if (sourceLanguage !== "auto") {
       queryParams.set("language", sourceLanguage);
+    } else {
+      // Deepgram live streaming requires `language=multi` for automatic language detection.
+      queryParams.set("language", "multi");
     }
 
     const wsUrl = `wss://api.deepgram.com/v1/listen?${queryParams.toString()}`;
+    console.log("[Deepgram WS] Connecting to URL:", wsUrl);
     const ws = new WebSocket(wsUrl, ["token", token]);
 
     return new Promise((resolve, reject) => {
       ws.onopen = () => {
-        console.log("Deepgram WS connected");
+        console.log("[Deepgram WS] WebSocket connected successfully");
         reconnectCountRef.current = 0;
         resolve(ws);
       };
       ws.onerror = (err) => {
+        console.error("[Deepgram WS] WebSocket connection error:", err);
         reject(err);
       };
     });
@@ -211,13 +211,23 @@ export function useDeepgramLive({
     setStatus("recording");
     onStatusChange("recording");
 
+    let ws;
     try {
-      // Connect Deepgram WebSocket
-      const ws = await connectDeepgram();
+      console.log("[Deepgram WS] Initiating connection...");
+      ws = await connectDeepgram();
       webSocketRef.current = ws;
+    } catch (err) {
+      console.error("[Deepgram WS] Connection failed in startRecording:", err);
+      setStatus("failed");
+      onStatusChange("failed");
+      onError("Không thể kết nối đến máy chủ ghi âm Deepgram. Vui lòng kiểm tra lại kết nối mạng hoặc API key.");
+      return;
+    }
 
+    try {
       // Ensure audio stream is active (use selected device constraints)
       if (!audioStreamRef.current) {
+        console.log("[Deepgram WS] Creating new audio stream since current stream is inactive");
         const constraints: MediaStreamConstraints = {
           audio: {
             deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -228,8 +238,18 @@ export function useDeepgramLive({
         };
         audioStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
         startVolumeAnalysis(audioStreamRef.current);
+      } else {
+        console.log("[Deepgram WS] Reusing existing audio stream from preview");
       }
+    } catch (err) {
+      console.error("[MediaRecorder] Microphone stream capture failed:", err);
+      setStatus("failed");
+      onStatusChange("failed");
+      onError("Không thể thu âm từ microphone đã chọn. Vui lòng kiểm tra quyền thiết bị.");
+      return;
+    }
 
+    try {
       // Start MediaRecorder (sending raw audio bytes to WebSocket)
       const options = { mimeType: "audio/webm;codecs=opus" };
       let mediaRecorder: MediaRecorder;
@@ -237,6 +257,7 @@ export function useDeepgramLive({
         mediaRecorder = new MediaRecorder(audioStreamRef.current, options);
       } catch (e) {
         // Fallback if mimeType is not supported on this browser
+        console.warn("[MediaRecorder] mimeType 'audio/webm;codecs=opus' not supported, falling back to default recorder options");
         mediaRecorder = new MediaRecorder(audioStreamRef.current);
       }
 
@@ -249,6 +270,7 @@ export function useDeepgramLive({
       };
 
       // Start capturing in chunks (configurable chunk size, e.g. 100ms)
+      console.log(`[MediaRecorder] Starting recorder with timeslice: ${chunkSize}ms`);
       mediaRecorder.start(chunkSize);
 
       // Setup WebSocket event handlers
@@ -280,6 +302,7 @@ export function useDeepgramLive({
           onTranscript({
             text: transcript,
             isFinal,
+            speechFinal: data.speech_final || false,
             speakerTag,
             startMs,
             endMs,
@@ -288,8 +311,8 @@ export function useDeepgramLive({
         }
       };
 
-      ws.onclose = () => {
-        console.log("Deepgram WS closed");
+      ws.onclose = (event) => {
+        console.log(`[Deepgram WS] Connection closed. Code: ${event.code}, Reason: ${event.reason || "None"}`);
         if (!isIntentionalStop.current && reconnectCountRef.current < maxReconnects) {
           reconnectCountRef.current++;
           console.warn(`WebSocket disconnected. Retrying reconnection ${reconnectCountRef.current}/${maxReconnects} in 2s...`);
@@ -303,20 +326,37 @@ export function useDeepgramLive({
         }
       };
     } catch (err) {
-      console.error("Start recording error:", err);
+      console.error("[MediaRecorder] Initialization or recording failed:", err);
       setStatus("failed");
       onStatusChange("failed");
-      onError("Không thể kết nối đến máy chủ ghi âm hoặc microphone.");
+      onError("Lỗi khởi tạo bộ ghi âm hoặc kết nối luồng.");
     }
   }, [meetingId, selectedDeviceId, echoCancellation, noiseSuppression, autoGainControl, chunkSize, connectDeepgram, startVolumeAnalysis, onTranscript, onStatusChange, onError]);
 
   // 5. Pause recording
   const pauseRecording = useCallback(() => {
+    isIntentionalStop.current = true;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
-      mediaRecorderRef.current.pause();
-      setStatus("preparing");
-      onStatusChange("preparing");
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
     }
+    if (webSocketRef.current) {
+      if (webSocketRef.current.readyState === WebSocket.OPEN) {
+        webSocketRef.current.send(JSON.stringify({ type: "CloseStream" }));
+      }
+      webSocketRef.current.close();
+      webSocketRef.current = null;
+    }
+    
+    // Stop mic stream completely when paused
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach((track) => track.stop());
+      audioStreamRef.current = null;
+    }
+    
+    setMicLevel(0);
+    setStatus("preparing");
+    onStatusChange("preparing");
   }, [onStatusChange]);
 
   // 6. Stop recording

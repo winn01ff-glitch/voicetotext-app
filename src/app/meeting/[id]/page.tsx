@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, useRef, use, useCallback } from "react";
+import { useState, useEffect, useRef, use, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useDeepgramLive } from "@/hooks/useDeepgramLive";
@@ -61,6 +61,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Refs for auto-scroll
   const parentRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
+  const translationDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const bufferedBlockRef = useRef<any>(null);
 
   // Load meeting configs on mount
   useEffect(() => {
@@ -149,7 +151,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Re-scroll to bottom on new transcripts
   useEffect(() => {
     if (parentRef.current && !isFullScreen) {
-      parentRef.current.scrollTop = parentRef.current.scrollHeight;
+      const scrollContainer = parentRef.current;
+      setTimeout(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        }
+      }, 50);
     }
   }, [transcripts, partialTranscript, isFullScreen]);
 
@@ -162,10 +169,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }, 5000);
   };
 
-  // Hook Callback when Deepgram yields transcript
+// Hook Callback when Deepgram yields transcript
   const handleTranscript = useCallback(
-    async (dgData: { text: string; isFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
-      // 1. If partial (interim results), just display it at the bottom
+    async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
+      // 1. If partial (interim results), display at the bottom of the list
       if (!dgData.isFinal) {
         setPartialTranscript({
           text: dgData.text,
@@ -174,37 +181,70 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 2. Once finalized, remove partial block and append final block immediately
+      // 2. Once finalized, clear partial block
       setPartialTranscript(null);
 
       // Find speaker display name
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      const tempId = Math.random().toString(36).substr(2, 9);
-      const newBlock = {
-        id: tempId,
-        text: dgData.text,
-        correctedText: "",
-        translatedText: "",
-        speakerTag: dgData.speakerTag,
-        speakerName,
-        startMs: dgData.startMs,
-        endMs: dgData.endMs,
-        confidence: dgData.confidence,
-        status: "Final" as const, // Finalized by Deepgram, waiting for Gemini
-      };
+      setTranscripts((prev) => {
+         const lastBlock = prev.length > 0 ? prev[prev.length - 1] : null;
+         let newPrev = [...prev];
 
-      setTranscripts((prev) => [...prev, newBlock]);
+         // If the speaker changed and the last block was waiting, flush it immediately!
+         if (lastBlock && lastBlock.speakerTag !== dgData.speakerTag && lastBlock.status === "Chờ dịch...") {
+            processTranscriptBlock(lastBlock);
+            newPrev[newPrev.length - 1] = { ...lastBlock, status: "Đang xử lý..." };
+         }
 
-      // 3. Trigger Async Gemini Correction & Translation Pipeline
-      processTranscriptBlock(newBlock);
+         const currentLastBlock = newPrev.length > 0 ? newPrev[newPrev.length - 1] : null;
+
+         // Check if we can merge with the last block (same speaker and waiting for translation)
+         if (currentLastBlock && currentLastBlock.speakerTag === dgData.speakerTag && currentLastBlock.status === "Chờ dịch...") {
+            const updatedBlock = {
+               ...currentLastBlock,
+               text: (currentLastBlock.text + " " + dgData.text).trim(),
+               endMs: dgData.endMs,
+               confidence: (currentLastBlock.confidence + dgData.confidence) / 2
+            };
+            
+            // If Deepgram says this is the end of the speech (speechFinal is true), trigger translation!
+            if (dgData.speechFinal) {
+               updatedBlock.status = "Đang xử lý...";
+               processTranscriptBlock(updatedBlock);
+            }
+
+            return [...newPrev.slice(0, -1), updatedBlock];
+         }
+
+         // Otherwise create a NEW block
+         const newBlock = {
+           id: Math.random().toString(36).substr(2, 9),
+           text: dgData.text,
+           correctedText: "",
+           translatedText: "",
+           speakerTag: dgData.speakerTag,
+           speakerName,
+           startMs: dgData.startMs,
+           endMs: dgData.endMs,
+           confidence: dgData.confidence,
+           status: (dgData.speechFinal ? "Đang xử lý..." : "Chờ dịch...") as any,
+         };
+
+         if (dgData.speechFinal) {
+            processTranscriptBlock(newBlock);
+         }
+
+         return [...newPrev, newBlock];
+      });
     },
     [speakers, meetingId]
   );
 
   const processTranscriptBlock = async (block: any) => {
     try {
+      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang xử lý..." } : t));
       const res = await fetch("/api/process-transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -218,44 +258,61 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || data.status !== "success") {
-        throw new Error(data.error || "Gemini processing failed");
+      if (!res.ok) {
+        throw new Error("Gemini processing failed");
       }
 
-      const result = data.result;
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      if (!reader) return;
 
-      // Update block in transcripts state
-      setTranscripts((prev) =>
-        prev.map((t) =>
-          t.id === block.id
-            ? {
-                ...t,
-                id: data.transcript_id, // Replace temporary client ID with real Supabase UUID
-                correctedText: result.corrected_text,
-                translatedText: result.translated_text,
-                confidence: result.confidence_score,
-                status: "Translated",
+      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang dịch..." } : t));
+
+      let done = false;
+      let buffer = "";
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          
+          let eolIndex;
+          while ((eolIndex = buffer.indexOf("\n\n")) >= 0) {
+            const chunkString = buffer.slice(0, eolIndex);
+            buffer = buffer.slice(eolIndex + 2);
+            
+            if (chunkString.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(chunkString.slice(6));
+                if (data.type === "chunk") {
+                  setTranscripts(prev =>
+                    prev.map(t =>
+                      t.id === block.id
+                        ? {
+                            ...t,
+                            correctedText: data.corrected || t.correctedText,
+                            translatedText: data.translated || t.translatedText,
+                          }
+                        : t
+                    )
+                  );
+                } else if (data.type === "done") {
+                  setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Translated" } : t));
+                } else if (data.type === "error") {
+                  setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Dịch lỗi - Thử lại" } : t));
+                }
+              } catch (e) {
+                // Parse error
               }
-            : t
-        )
-      );
-
-      // Trigger action item toast if detected
-      if (result.action_items && result.action_items.length > 0) {
-        result.action_items.forEach((item: any) => {
-          addToast("✅ Phát hiện Action Item mới", `${item.owner ? `[${item.owner}]` : ""} ${item.description}`);
-          setActionItems((prev) => [...prev, item]);
-        });
+            }
+          }
+        }
       }
-
-      // Update auto-save indicator
-      setLastSavedTime(new Date().toLocaleTimeString("vi-VN"));
     } catch (err) {
-      console.error("Gemini pipeline error:", err);
-      // Mark block as failed
+      console.error(err);
       setTranscripts((prev) =>
-        prev.map((t) => (t.id === block.id ? { ...t, status: "Failed" } : t))
+        prev.map((t) => (t.id === block.id ? { ...t, status: "Dịch lỗi - Thử lại" } : t))
       );
     }
   };
@@ -306,6 +363,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       checkMicPermission();
     }
   }, [meeting]);
+
+  // Clear partial transcript when paused or stopped
+  useEffect(() => {
+    if (status !== "recording") {
+      setPartialTranscript(null);
+    }
+  }, [status]);
 
   // Audio Playback using Deepgram Aura TTS Route
   const playTtsText = (text: string) => {
@@ -434,11 +498,30 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
+  // Group transcripts by speaker
+  const groupedTranscripts = useMemo(() => {
+    const result: any[] = [];
+    for (const t of transcripts) {
+      if (result.length > 0 && result[result.length - 1].speakerTag === t.speakerTag) {
+        result[result.length - 1].items.push(t);
+      } else {
+        result.push({
+          id: t.id,
+          speakerTag: t.speakerTag,
+          speakerName: t.speakerName,
+          startMs: t.startMs,
+          items: [t]
+        });
+      }
+    }
+    return result;
+  }, [transcripts]);
+
   // Virtualized List Configuration
   const rowVirtualizer = useVirtualizer({
-    count: transcripts.length,
+    count: groupedTranscripts.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 95,
+    estimateSize: () => 140,
     overscan: 6,
   });
 
@@ -548,7 +631,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center space-x-2">
-            <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-ping"></span>
             <h1 className="font-bold text-lg leading-none">{meeting.title}</h1>
           </div>
         </div>
@@ -601,7 +683,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   <div className="w-full h-2.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden shadow-inner">
                     <div 
                       className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 transition-all duration-75" 
-                      style={{ width: `${Math.max(2, micLevel)}%` }}
+                      style={{ width: `${micLevel}%` }}
                     ></div>
                   </div>
                 </div>
@@ -612,7 +694,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 {status === "recording" ? (
                   <button
                     onClick={pauseRecording}
-                    className="flex items-center justify-center space-x-2 bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] pulse-glow-blue cursor-pointer shadow-sm"
+                    className="flex items-center justify-center space-x-2 bg-blue-50 hover:bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
                   >
                     <Pause className="w-4 h-4" />
                     <span>Tạm dừng</span>
@@ -623,7 +705,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     className="flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-md shadow-indigo-500/30 cursor-pointer"
                   >
                     <Mic className="w-4 h-4" />
-                    <span>Ghi âm</span>
+                    <span>{transcripts.length > 0 ? "Tiếp tục" : "Ghi âm"}</span>
                   </button>
                 )}
 
@@ -653,7 +735,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
             <div className="space-y-3">
               {speakers.map((s) => (
-                <div key={s.id} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-3 shadow-sm transition-all hover:shadow-md">
+                <div key={s.id} className={`bg-white dark:bg-slate-900 border ${partialTranscript?.speakerTag === s.speaker_tag ? "border-blue-300 dark:border-blue-700 shadow-md ring-2 ring-blue-100 dark:ring-blue-900/30" : "border-slate-100 dark:border-slate-800 shadow-sm"} rounded-xl p-3 transition-all hover:shadow-md`}>
                   <div className="flex items-center space-x-3">
                     <span
                       className="w-3 h-3 rounded-full shrink-0 shadow-sm"
@@ -713,121 +795,129 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             ref={parentRef}
             className="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-4"
           >
-            <div
-              style={{
-                height: `${rowVirtualizer.getTotalSize()}px`,
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              {rowVirtualizer.getVirtualItems().map((virtualItem) => {
-                const item = transcripts[virtualItem.index];
-                const speakerColor = speakerColorsRef.current[item.speakerTag] || "#64748b";
+            <div className="flex flex-col gap-3">
+              {groupedTranscripts.map((group, index) => {
+                const speakerColor = speakerColorsRef.current[group.speakerTag] || "#64748b";
 
                 return (
-                  <div
-                    key={virtualItem.key}
-                    ref={rowVirtualizer.measureElement}
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      width: "100%",
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                    className="pb-5"
-                  >
-                    <div className="flex flex-col bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all duration-300 space-y-3 relative group">
+                  <div key={`${group.startMs}-${index}`}>
+                    <div className="flex flex-col bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group">
                       {/* Bubble Header */}
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2.5">
+                      <div className="flex items-center justify-between mb-2.5">
+                        <div className="flex items-center space-x-2">
                           <span
-                            className="w-3 h-3 rounded-full shadow-sm"
+                            className="w-2.5 h-2.5 rounded-full shadow-sm"
                             style={{ backgroundColor: speakerColor }}
                           ></span>
-                          <span className="font-bold text-sm text-slate-800 dark:text-slate-200">{item.speakerName}</span>
-                          <span className="text-[11px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
-                            {new Date(item.startMs).toISOString().substr(14, 5)}
+                          <span className="font-bold text-xs" style={{ color: speakerColor }}>{group.speakerName}</span>
+                          <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
+                            {new Date(group.startMs).toISOString().substr(14, 5)}
                           </span>
                         </div>
 
-                        {/* Status/Badge */}
-                        <div className="flex items-center space-x-2">
-                          {item.confidence < 0.7 && (
-                            <span className="flex items-center space-x-1 text-[11px] font-bold text-amber-500 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-md" title="Độ tin cậy nhận diện thấp">
-                              <AlertCircle className="w-3.5 h-3.5" />
-                              <span>Cần soát lại</span>
-                            </span>
-                          )}
-                          {item.status === "Final" ? (
-                            <span className="text-xs text-blue-400 dark:text-blue-500 font-medium italic flex items-center space-x-1.5 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-md">
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              <span>Translating</span>
-                            </span>
-                          ) : item.status === "Failed" ? (
-                            <button
-                              onClick={() => handleRetryAI(item)}
-                              className="text-xs text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100 dark:bg-red-900/20 dark:hover:bg-red-900/40 px-2 py-1 rounded-md flex items-center space-x-1.5 transition-colors font-medium"
-                            >
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              <span>Dịch lỗi - Thử lại</span>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => playTtsText(item.translatedText)}
-                              className="p-1.5 text-slate-400 hover:text-blue-600 bg-slate-50 hover:bg-blue-50 dark:bg-slate-800 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                              title="Nghe giọng đọc dịch"
-                            >
-                              <Volume2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </div>
+                        {/* Group Status (Right side of the Header) */}
+                        {(() => {
+                          const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
+                          const needsReview = group.items.some((i: any) => i.confidence < 0.7);
+                          const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final"].includes(i.status));
+
+                          return (
+                            <div className="flex items-center space-x-2">
+                              {needsReview && (
+                                <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>Cần soát lại</span>
+                                </span>
+                              )}
+                              {hasError ? (
+                                <button
+                                  onClick={() => { group.items.filter((i: any) => i.status === "Dịch lỗi - Thử lại").forEach(handleRetryAI) }}
+                                  className="text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 px-2.5 py-0.5 rounded-full flex items-center space-x-1 border border-red-150 dark:border-red-900/50 shadow-sm transition-all cursor-pointer"
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" />
+                                  <span>Thử lại</span>
+                                </button>
+                              ) : processingItem ? (() => {
+                                let statusText = "Đang xử lý";
+                                if (processingItem.status === "Đang dịch...") {
+                                  statusText = "Đang dịch";
+                                } else if (processingItem.status === "Đang xử lý...") {
+                                  if (!processingItem.correctedText) {
+                                    statusText = "Đang sửa AI";
+                                  } else if (processingItem.correctedText && !processingItem.translatedText) {
+                                    statusText = "Đang dịch";
+                                  }
+                                }
+
+                                if (processingItem.status === "Chờ dịch...") {
+                                  return null;
+                                }
+
+                                return (
+                                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
+                                    <span>{statusText}</span>
+                                    <span className="inline-flex ml-0.5 w-4 text-left">
+                                      <span className="animate-pulse">.</span>
+                                      <span className="animate-pulse [animation-delay:200ms]">.</span>
+                                      <span className="animate-pulse [animation-delay:400ms]">.</span>
+                                    </span>
+                                  </span>
+                                );
+                              })() : null}
+                            </div>
+                          );
+                        })()}
                       </div>
 
-                      {/* Bubble Body */}
-                      <div className="space-y-2">
-                        {/* Original corrected text */}
-                        <p className="text-slate-800 dark:text-slate-100 text-[15px] font-semibold leading-relaxed">
-                          {item.correctedText || item.text}
-                        </p>
-                        
-                        {/* Translated text */}
-                        {item.status === "Final" ? (
-                          <div className="flex items-center space-x-1.5 pt-1 h-6">
-                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce"></div>
-                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                            <div className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                          </div>
-                        ) : (
-                          item.translatedText && (
-                            <p className="text-slate-500 dark:text-slate-400 text-[15px] italic leading-relaxed">
-                              {item.translatedText}
+                      {/* Bubble Body: Separated Original and Translated Blocks */}
+                      <div className="relative">
+                        {/* Original Text Block */}
+                        <div className="space-y-2">
+                          {group.items.map((item: any) => (
+                            <p key={item.id} className={`text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed ${item.confidence < 0.7 ? "bg-amber-50/50 dark:bg-amber-900/20 text-amber-950 dark:text-amber-50 p-2 rounded-lg" : ""}`}>
+                              {item.correctedText || item.text}
                             </p>
-                          )
+                          ))}
+                        </div>
+
+                        {/* Separator & Translated Text Block */}
+                        {group.items.some((i: any) => i.translatedText) && (
+                          <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
+                            <div className="space-y-2">
+                              {group.items.map((item: any) => (
+                                item.translatedText ? (
+                                  <div key={`trans-${item.id}`} className="group/trans relative">
+                                    <p className={`text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium pr-10 ${item.confidence < 0.7 ? "text-amber-800 dark:text-amber-300" : ""}`}>
+                                      {item.translatedText}
+                                    </p>
+                                    <button
+                                      onClick={() => playTtsText(item.translatedText)}
+                                      className="absolute right-0 top-0 p-1 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded-md transition-all shadow-sm"
+                                    >
+                                      <Volume2 className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ) : null
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </div>
                     </div>
                   </div>
                 );
               })}
-            </div>
 
-            {/* Render Interim Partial result */}
-            {partialTranscript && (
-              <div className="flex flex-col bg-white/40 dark:bg-slate-900/40 backdrop-blur-sm border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-2 opacity-80 animate-in fade-in zoom-in-95 duration-200">
-                <div className="flex items-center space-x-2.5">
-                  <span
-                    className="w-2 h-2 rounded-full bg-slate-400 animate-ping"
-                  ></span>
-                  <span className="font-semibold text-xs text-slate-500">
-                    {speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag)?.display_name || "Đang phát biểu..."}
+              {/* Real-time interim transcript, displayed as a simple gray line flowing at the bottom */}
+              {partialTranscript && (
+                <div className="flex items-center space-x-2 pl-4 py-2 animate-in fade-in duration-200">
+                  <span className="w-1.5 h-1.5 rounded-full animate-pulse shadow-sm" style={{ backgroundColor: speakerColorsRef.current[partialTranscript.speakerTag] || "#3b82f6" }}></span>
+                  <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic">
+                    {partialTranscript.text}...
                   </span>
                 </div>
-                <p className="text-slate-500 italic text-sm">
-                  "{partialTranscript.text}..."
-                </p>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Empty Room Instruction */}
             {transcripts.length === 0 && !partialTranscript && (
@@ -840,6 +930,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               </div>
             )}
           </div>
+
+
         </main>
       </div>
 
