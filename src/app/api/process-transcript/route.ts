@@ -65,118 +65,78 @@ Câu thoại cần xử lý:
 "${original_text}"
 `;
 
-    // We will use a TransformStream to send SSE back to the client
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          const resultStream = await model.generateContentStream(systemPrompt);
-          let fullText = "";
-          
-          for await (const chunk of resultStream.stream) {
-            fullText += chunk.text();
-            
-            // Parse current state
-            const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
-            const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
-            
-            const payload = {
-              type: "chunk",
-              corrected: correctedMatch ? correctedMatch[1].trim() : "",
-              translated: translatedMatch ? translatedMatch[1].trim() : ""
-            };
-            
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
-          }
+    const result = await model.generateContent(systemPrompt);
+    const fullText = result.response.text();
 
-          // Stream finished, send done signal
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`));
-          controller.close();
+    const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
+    const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
+    const actionItemsMatch = fullText.match(/---ACTION_ITEMS---\s*([\s\S]*?)(?=\s*---|$)/);
+    const confidenceMatch = fullText.match(/---CONFIDENCE---\s*([\s\S]*?)(?=\s*---|$)/);
 
-          // BACKGROUND TASKS: Parse the final text and save to Supabase
-          try {
-            const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
-            const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
-            const actionItemsMatch = fullText.match(/---ACTION_ITEMS---\s*([\s\S]*?)(?=\s*---|$)/);
-            const confidenceMatch = fullText.match(/---CONFIDENCE---\s*([\s\S]*?)(?=\s*---|$)/);
+    const finalCorrected = correctedMatch ? correctedMatch[1].trim() : original_text;
+    const finalTranslated = translatedMatch ? translatedMatch[1].trim() : "";
+    const finalConfidence = confidenceMatch ? parseFloat(confidenceMatch[1].trim()) : confidence;
+    
+    let finalActionItems = [];
+    try {
+      if (actionItemsMatch) finalActionItems = JSON.parse(actionItemsMatch[1].trim());
+    } catch (e) {}
 
-            const finalCorrected = correctedMatch ? correctedMatch[1].trim() : original_text;
-            const finalTranslated = translatedMatch ? translatedMatch[1].trim() : "";
-            const finalConfidence = confidenceMatch ? parseFloat(confidenceMatch[1].trim()) : confidence;
-            
-            let finalActionItems = [];
-            try {
-              if (actionItemsMatch) finalActionItems = JSON.parse(actionItemsMatch[1].trim());
-            } catch (e) {}
+    // Resolve Speaker ID
+    let speakerId = null;
+    if (speaker_tag) {
+      const { data: speaker } = await supabase
+        .from("speakers")
+        .select("id")
+        .eq("meeting_id", meeting_id)
+        .eq("speaker_tag", speaker_tag)
+        .maybeSingle();
 
-            // Resolve Speaker ID
-            let speakerId = null;
-            if (speaker_tag) {
-              const { data: speaker } = await supabase
-                .from("speakers")
-                .select("id")
-                .eq("meeting_id", meeting_id)
-                .eq("speaker_tag", speaker_tag)
-                .maybeSingle();
-
-              if (speaker) {
-                speakerId = speaker.id;
-              } else {
-                const { data: newSpeaker } = await supabase
-                  .from("speakers")
-                  .insert({
-                    meeting_id,
-                    speaker_tag,
-                    display_name: speaker_tag.replace("speaker_", "Speaker "),
-                    color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
-                  })
-                  .select().single();
-                if (newSpeaker) speakerId = newSpeaker.id;
-              }
-            }
-
-            // Insert Transcript
-            await supabase.from("transcripts").insert({
-              meeting_id,
-              speaker_id: speakerId,
-              original_text,
-              corrected_text: finalCorrected,
-              translated_text: finalTranslated,
-              translation_language: targetLang,
-              translation_provider: "Gemini",
-              start_ms: start_ms || 0,
-              end_ms: end_ms || 0,
-              confidence: finalConfidence || 1.0,
-            });
-
-            // Insert Action Items
-            if (finalActionItems.length > 0) {
-              const itemsToInsert = finalActionItems.map((item: any) => ({
-                meeting_id,
-                description: item.description,
-                owner: item.owner || null,
-                deadline: !isNaN(new Date(item.deadline).getTime()) ? new Date(item.deadline).toISOString() : null,
-                is_completed: false,
-              }));
-              await supabase.from("action_items").insert(itemsToInsert);
-            }
-          } catch (dbErr) {
-            console.error("Background DB Save Error:", dbErr);
-          }
-        } catch (error) {
-          console.error("Stream generation error:", error);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "error", error: String(error) })}\n\n`));
-          controller.close();
-        }
+      if (speaker) {
+        speakerId = speaker.id;
+      } else {
+        const { data: newSpeaker } = await supabase
+          .from("speakers")
+          .insert({
+            meeting_id,
+            speaker_tag,
+            display_name: speaker_tag.replace("speaker_", "Speaker "),
+            color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+          })
+          .select().single();
+        if (newSpeaker) speakerId = newSpeaker.id;
       }
+    }
+
+    // Insert Transcript
+    await supabase.from("transcripts").insert({
+      meeting_id,
+      speaker_id: speakerId,
+      original_text,
+      corrected_text: finalCorrected,
+      translated_text: finalTranslated,
+      translation_language: targetLang,
+      translation_provider: "Gemini",
+      start_ms: start_ms || 0,
+      end_ms: end_ms || 0,
+      confidence: finalConfidence || 1.0,
     });
 
-    return new NextResponse(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive"
-      }
+    // Insert Action Items
+    if (finalActionItems.length > 0) {
+      const itemsToInsert = finalActionItems.map((item: any) => ({
+        meeting_id,
+        description: item.description,
+        owner: item.owner || null,
+        deadline: !isNaN(new Date(item.deadline).getTime()) ? new Date(item.deadline).toISOString() : null,
+        is_completed: false,
+      }));
+      await supabase.from("action_items").insert(itemsToInsert);
+    }
+
+    return NextResponse.json({
+      corrected: finalCorrected,
+      translated: finalTranslated
     });
   } catch (error) {
     console.error("Process transcript error:", error);

@@ -172,6 +172,14 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 // Hook Callback when Deepgram yields transcript
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
+      // Allocate speaker color immediately on frontend if not exists
+      if (dgData.speakerTag && !speakerColorsRef.current[dgData.speakerTag]) {
+        const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+        const existingCount = Object.keys(speakerColorsRef.current).length;
+        const color = colors[existingCount % colors.length];
+        speakerColorsRef.current[dgData.speakerTag] = color;
+      }
+
       // 1. If partial (interim results), display at the bottom of the list
       if (!dgData.isFinal) {
         setPartialTranscript({
@@ -244,7 +252,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   const processTranscriptBlock = async (block: any) => {
     try {
-      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang xử lý..." } : t));
+      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t));
       const res = await fetch("/api/process-transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -262,53 +270,19 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         throw new Error("Gemini processing failed");
       }
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder("utf-8");
-      
-      if (!reader) return;
-
-      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang dịch..." } : t));
-
-      let done = false;
-      let buffer = "";
-      while (!done) {
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
-        if (value) {
-          buffer += decoder.decode(value, { stream: true });
-          
-          let eolIndex;
-          while ((eolIndex = buffer.indexOf("\n\n")) >= 0) {
-            const chunkString = buffer.slice(0, eolIndex);
-            buffer = buffer.slice(eolIndex + 2);
-            
-            if (chunkString.startsWith("data: ")) {
-              try {
-                const data = JSON.parse(chunkString.slice(6));
-                if (data.type === "chunk") {
-                  setTranscripts(prev =>
-                    prev.map(t =>
-                      t.id === block.id
-                        ? {
-                            ...t,
-                            correctedText: data.corrected || t.correctedText,
-                            translatedText: data.translated || t.translatedText,
-                          }
-                        : t
-                    )
-                  );
-                } else if (data.type === "done") {
-                  setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Translated" } : t));
-                } else if (data.type === "error") {
-                  setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Dịch lỗi - Thử lại" } : t));
-                }
-              } catch (e) {
-                // Parse error
+      const data = await res.json();
+      setTranscripts(prev =>
+        prev.map(t =>
+          t.id === block.id
+            ? {
+                ...t,
+                correctedText: data.corrected,
+                translatedText: data.translated,
+                status: "Translated",
               }
-            }
-          }
-        }
-      }
+            : t
+        )
+      );
     } catch (err) {
       console.error(err);
       setTranscripts((prev) =>
@@ -819,7 +793,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         {(() => {
                           const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
                           const needsReview = group.items.some((i: any) => i.confidence < 0.7);
-                          const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final"].includes(i.status));
+                          const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final", "Đang sửa AI..."].includes(i.status));
 
                           return (
                             <div className="flex items-center space-x-2">
@@ -839,7 +813,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                                 </button>
                               ) : processingItem ? (() => {
                                 let statusText = "Đang xử lý";
-                                if (processingItem.status === "Đang dịch...") {
+                                if (processingItem.status === "Đang sửa AI...") {
+                                  statusText = "Đang sửa AI";
+                                } else if (processingItem.status === "Đang dịch...") {
                                   statusText = "Đang dịch";
                                 } else if (processingItem.status === "Đang xử lý...") {
                                   if (!processingItem.correctedText) {
@@ -875,7 +851,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         <div className="space-y-2">
                           {group.items.map((item: any) => (
                             <p key={item.id} className={`text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed ${item.confidence < 0.7 ? "bg-amber-50/50 dark:bg-amber-900/20 text-amber-950 dark:text-amber-50 p-2 rounded-lg" : ""}`}>
-                              {item.correctedText || item.text}
+                              {item.text}
                             </p>
                           ))}
                         </div>
