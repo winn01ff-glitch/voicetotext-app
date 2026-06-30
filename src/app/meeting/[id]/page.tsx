@@ -168,6 +168,28 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }, 5000);
   };
 
+  const isJapaneseText = (text: string): boolean => {
+    return /[\u3040-\u309F\u30A0-\u30FF]/.test(text);
+  };
+
+  const joinWithPunctuation = (existing: string, addition: string, isJp: boolean): string => {
+    if (!existing) return addition.trim();
+    const trimmedExisting = existing.trim();
+    const trimmedAddition = addition.trim();
+    
+    // Check if existing ends with punctuation
+    const endsWithPunct = isJp 
+      ? /[。、？！?!]/.test(trimmedExisting[trimmedExisting.length - 1])
+      : /[.,?!]/.test(trimmedExisting[trimmedExisting.length - 1]);
+      
+    if (endsWithPunct) {
+      return `${trimmedExisting} ${trimmedAddition}`;
+    } else {
+      const period = isJp ? "。" : ".";
+      return `${trimmedExisting}${period} ${trimmedAddition}`;
+    }
+  };
+
 // Hook Callback when Deepgram yields transcript
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
@@ -179,8 +201,50 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[dgData.speakerTag] = color;
       }
 
+      let activeSpeakersList = speakers;
+
+      // Detect language from finalized text to autocorrect speaker tag mapping
+      if (dgData.isFinal && dgData.text.trim()) {
+        const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
+        const detectedLang = isJp ? "ja" : "vi";
+        
+        const currentSpeaker = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
+        
+        if (currentSpeaker && currentSpeaker.language_code !== "auto" && currentSpeaker.language_code !== detectedLang) {
+          const matchingSpeaker = speakers.find((s) => s.language_code === detectedLang && s.speaker_tag !== dgData.speakerTag);
+          
+          if (matchingSpeaker) {
+            console.log(`[Speaker AutoCorrect] Mismatch detected. Swapping speaker tags: ${currentSpeaker.display_name} <-> ${matchingSpeaker.display_name}`);
+            
+            const oldTag1 = currentSpeaker.speaker_tag;
+            const oldTag2 = matchingSpeaker.speaker_tag;
+            
+            // Swap tags locally
+            activeSpeakersList = speakers.map(s => {
+              if (s.id === currentSpeaker.id) return { ...s, speaker_tag: oldTag2 };
+              if (s.id === matchingSpeaker.id) return { ...s, speaker_tag: oldTag1 };
+              return s;
+            });
+            
+            setSpeakers(activeSpeakersList);
+            
+            // Update in database asynchronously
+            Promise.all([
+              supabase.from("speakers").update({ speaker_tag: oldTag2 }).eq("id", currentSpeaker.id),
+              supabase.from("speakers").update({ speaker_tag: oldTag1 }).eq("id", matchingSpeaker.id)
+            ]).catch(err => console.error("Error updating swapped speaker tags in DB:", err));
+            
+            // Swap colors in ref
+            const col1 = speakerColorsRef.current[oldTag1];
+            const col2 = speakerColorsRef.current[oldTag2];
+            speakerColorsRef.current[oldTag1] = col2;
+            speakerColorsRef.current[oldTag2] = col1;
+          }
+        }
+      }
+
       // Find speaker display name
-      const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
+      const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
       // 1. If speaker changed (we got a FINALized transcript for a different speaker tag),
@@ -245,7 +309,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             const currentBlock = prev[activeBlockIndex];
             const updatedBlock = {
                ...currentBlock,
-               text: (currentBlock.text + " " + dgData.text).trim(),
+               text: joinWithPunctuation(currentBlock.text, dgData.text, isJapaneseText(dgData.text)),
                interimText: "",
                endMs: dgData.endMs,
                confidence: (currentBlock.confidence + dgData.confidence) / 2,
