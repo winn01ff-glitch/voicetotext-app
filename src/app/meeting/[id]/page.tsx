@@ -231,7 +231,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 3. Once finalized, process immediately
+      // 3. Clear previous safety timeout
+      if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
+        clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
+        delete activeSpeakerTimeouts.current[dgData.speakerTag];
+      }
+
       setTranscripts((prev) => {
          // Find the last active block for this speaker tag
          const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
@@ -244,9 +249,21 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                interimText: "",
                endMs: dgData.endMs,
                confidence: (currentBlock.confidence + dgData.confidence) / 2,
-               status: "Đang sửa AI..." as any,
+               status: "Chờ dịch..." as any,
             };
-            processTranscriptBlock(updatedBlock);
+            
+            // Set safety timeout to auto-finalize this block if the speaker pauses for 5 seconds
+            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+               setTranscripts(currentPrev => {
+                  const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
+                  if (block) {
+                     processTranscriptBlock(block);
+                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+                  }
+                  return currentPrev;
+               });
+            }, 5000);
+
             return prev.map((t, idx) => idx === activeBlockIndex ? updatedBlock : t);
          }
 
@@ -262,10 +279,21 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
            startMs: dgData.startMs,
            endMs: dgData.endMs,
            confidence: dgData.confidence,
-           status: "Đang sửa AI..." as any,
+           status: "Chờ dịch..." as any,
          };
 
-         processTranscriptBlock(newBlock);
+         // Set safety timeout to auto-finalize this block if the speaker pauses for 5 seconds
+         activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+            setTranscripts(currentPrev => {
+               const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
+               if (block) {
+                  processTranscriptBlock(block);
+                  return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+               }
+               return currentPrev;
+            });
+         }, 5000);
+
          return [...prev, newBlock];
       });
     },
@@ -865,11 +893,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       {/* Bubble Body: Separated Original and Translated Blocks */}
                       <div className="relative">
                         {/* Original Text Block */}
-                        <div className="space-y-2">
+                        <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
                           {group.items.map((item: any) => (
-                            <p key={item.id} className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                            <span key={item.id} className="mr-1 inline">
                               {item.confidence < 0.7 ? (
-                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded border border-red-100/50 dark:border-red-900/30">
+                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded border border-red-100/50 dark:border-red-900/30 inline-block my-0.5">
                                   {item.text}
                                 </span>
                               ) : (
@@ -880,27 +908,26 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                                   {item.interimText}...
                                 </span>
                               )}
-                            </p>
+                            </span>
                           ))}
                         </div>
 
                         {/* Separator & Translated Text Block */}
                         {group.items.some((i: any) => i.translatedText) && (
                           <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
-                            <div className="space-y-2">
+                            <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium">
                               {group.items.map((item: any) => (
                                 item.translatedText ? (
-                                  <div key={`trans-${item.id}`} className="group/trans relative">
-                                    <p className={`text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium pr-10 ${item.confidence < 0.7 ? "text-amber-800 dark:text-amber-300" : ""}`}>
-                                      {item.translatedText}
-                                    </p>
+                                  <span key={`trans-${item.id}`} className="group/trans relative inline-flex items-center mr-2">
+                                    <span>{item.translatedText}</span>
                                     <button
                                       onClick={() => playTtsText(item.translatedText)}
-                                      className="absolute right-0 top-0 p-1 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded-md transition-all shadow-sm"
+                                      className="ml-1 p-0.5 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
+                                      title="Nghe"
                                     >
                                       <Volume2 className="w-2.5 h-2.5" />
                                     </button>
-                                  </div>
+                                  </span>
                                 ) : null
                               ))}
                             </div>

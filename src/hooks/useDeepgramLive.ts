@@ -211,40 +211,33 @@ export function useDeepgramLive({
     onStatusChange("recording");
 
     let ws;
+    let stream;
     try {
-      console.log("[Deepgram WS] Initiating connection...");
-      ws = await connectDeepgram();
-      webSocketRef.current = ws;
-    } catch (err) {
-      console.error("[Deepgram WS] Connection failed in startRecording:", err);
-      setStatus("failed");
-      onStatusChange("failed");
-      onError("Không thể kết nối đến máy chủ ghi âm Deepgram. Vui lòng kiểm tra lại kết nối mạng hoặc API key.");
-      return;
-    }
+      console.log("[Deepgram WS] Connecting to Deepgram and requesting microphone stream in parallel...");
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+          echoCancellation,
+          noiseSuppression,
+          autoGainControl,
+        },
+      };
 
-    try {
-      // Ensure audio stream is active (use selected device constraints)
-      if (!audioStreamRef.current) {
-        console.log("[Deepgram WS] Creating new audio stream since current stream is inactive");
-        const constraints: MediaStreamConstraints = {
-          audio: {
-            deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-            echoCancellation,
-            noiseSuppression,
-            autoGainControl,
-          },
-        };
-        audioStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-        startVolumeAnalysis(audioStreamRef.current);
-      } else {
-        console.log("[Deepgram WS] Reusing existing audio stream from preview");
-      }
+      const results = await Promise.all([
+        connectDeepgram(),
+        audioStreamRef.current ? Promise.resolve(audioStreamRef.current) : navigator.mediaDevices.getUserMedia(constraints)
+      ]);
+
+      ws = results[0];
+      stream = results[1];
+      webSocketRef.current = ws;
+      audioStreamRef.current = stream;
+      startVolumeAnalysis(stream);
     } catch (err) {
-      console.error("[MediaRecorder] Microphone stream capture failed:", err);
+      console.error("[Deepgram WS] Initialization failed in startRecording:", err);
       setStatus("failed");
       onStatusChange("failed");
-      onError("Không thể thu âm từ microphone đã chọn. Vui lòng kiểm tra quyền thiết bị.");
+      onError("Không thể kết nối hoặc thiết lập micro. Vui lòng kiểm tra quyền thiết bị và API key.");
       return;
     }
 
