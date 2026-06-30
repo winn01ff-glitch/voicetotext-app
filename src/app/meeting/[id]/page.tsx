@@ -72,6 +72,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
   const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
+  const activeRealtimeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load meeting configs on mount
   useEffect(() => {
@@ -257,6 +258,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
+      // Clear the active 3-second silence timer because new speech activity (interim or final) has arrived!
+      if (activeRealtimeTimeoutRef.current) {
+        clearTimeout(activeRealtimeTimeoutRef.current);
+        activeRealtimeTimeoutRef.current = null;
+      }
+
       // 1. If interim (not final): update the realtime card in transcripts state and return
       if (!dgData.isFinal) {
         if (dgData.text.trim()) {
@@ -273,7 +280,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               return updated;
             }
 
-            // If last block is realtime but belongs to a different speaker, finalize it first!
+            // Condition 2: Speaker changed! Immediately finalize the previous speaker's realtime card!
             if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
               const oldBlock = {
                 ...updated[lastIdx],
@@ -323,19 +330,30 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               interimText: "",
               endMs: dgData.endMs || Date.now(),
               confidence: (currentBlock.confidence + dgData.confidence) / 2,
-              status: (dgData.speechFinal ? "Đang sửa AI..." : "realtime") as any,
+              status: "realtime" as any, // ALWAYS keep status as realtime!
             };
 
             updated[lastIdx] = updatedBlock;
 
-            if (dgData.speechFinal) {
-              processTranscriptBlock(updatedBlock);
-            }
+            // Start the 3-second silence timer to finalize this block
+            activeRealtimeTimeoutRef.current = setTimeout(() => {
+              setTranscripts((currentPrev) => {
+                const idx = currentPrev.length - 1;
+                if (idx >= 0 && currentPrev[idx].id === updatedBlock.id && currentPrev[idx].status === "realtime") {
+                  const items = [...currentPrev];
+                  const finalized = { ...items[idx], status: "Đang sửa AI..." as any };
+                  items[idx] = finalized;
+                  processTranscriptBlock(finalized);
+                  return items;
+                }
+                return currentPrev;
+              });
+            }, 3000);
 
             return updated;
           }
 
-          // If last block is realtime but for a different speaker, finalize it first
+          // Condition 2: Speaker changed! Immediately finalize the previous speaker's realtime card!
           if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
             const oldBlock = {
               ...updated[lastIdx],
@@ -345,7 +363,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             processTranscriptBlock(oldBlock);
           }
 
-          // Create a new block
+          // Create a new block (starts as realtime)
           const newBlock = {
             id: Math.random().toString(36).substr(2, 9),
             text: dgData.text,
@@ -357,12 +375,23 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             startMs: dgData.startMs || Date.now(),
             endMs: dgData.endMs || Date.now(),
             confidence: dgData.confidence,
-            status: (dgData.speechFinal ? "Đang sửa AI..." : "realtime") as any,
+            status: "realtime" as any, // ALWAYS start as realtime!
           };
 
-          if (dgData.speechFinal) {
-            processTranscriptBlock(newBlock);
-          }
+          // Start the 3-second silence timer to finalize this block
+          activeRealtimeTimeoutRef.current = setTimeout(() => {
+            setTranscripts((currentPrev) => {
+              const idx = currentPrev.length - 1;
+              if (idx >= 0 && currentPrev[idx].id === newBlock.id && currentPrev[idx].status === "realtime") {
+                const items = [...currentPrev];
+                const finalized = { ...items[idx], status: "Đang sửa AI..." as any };
+                items[idx] = finalized;
+                processTranscriptBlock(finalized);
+                return items;
+              }
+              return currentPrev;
+            });
+          }, 3000);
 
           return [...updated, newBlock];
         });
