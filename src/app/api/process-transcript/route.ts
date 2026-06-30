@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
     // 3. Setup Gemini Client & Call API
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const modelName = process.env.AI_FAST_MODEL || "gemini-2.5-flash";
+    const modelName = process.env.AI_FAST_MODEL || "gemini-2.0-flash";
     const model = genAI.getGenerativeModel({ model: modelName });
 
     const targetLang = meeting.target_language;
@@ -45,22 +45,25 @@ export async function POST(request: Request) {
     const context = meeting.meeting_context;
 
     const systemPrompt = `
-You are a professional and precise translator.
-Translate the following speech transcript directly from its source language (around ${sourceLang}) to the target language (${targetLang}).
+You are an expert, professional translator specializing in technical and business translations.
+Translate the following speech transcript from its source language (around ${sourceLang}) to the target language (${targetLang}) contextually, smoothly, and professionally.
 
-CONTEXT:
-${context || "Conversation between professional partners"}
+CONTEXT OF THE MEETING/CONVERSATION:
+${context || "Construction site safety training, slinging work (玉掛け), and cranes (クレーン)"}
 
 GLOSSARY (Must apply if matching words are found):
 ${JSON.stringify(glossaryList || [])}
 
-RULES:
-1. Translate the text accurately, capturing the exact context.
-2. TUYỆT ĐỐI KHÔNG viết lại câu, không rút gọn, không mở rộng nội dung, không giải thích hoặc diễn giải theo ý bạn.
-3. Giữ nguyên nghĩa gốc, dịch tự nhiên sang ngôn ngữ đích.
-4. Chỉ trả về văn bản dịch duy nhất. Không thêm nhãn hoặc giải thích gì thêm.
+TRANSLATION RULES:
+1. Translate the text naturally and contextually into the target language. Do NOT translate word-for-word literally if it makes no sense or produces broken language.
+2. If the input transcript contains speech-to-text transcription typos (e.g. homophones or misheard words in the source language), identify the correct intended words based on the context and translate the intended meaning. For example, in a construction/crane/slinging context:
+   - "グレー" or "クレー" should be translated as "Cần cẩu / Crane".
+   - "雨宿り" (amayadori - sheltering from rain) or similar misheard words should be translated contextually (e.g., joint work / slinging / helper).
+   - "応急 けんばん" (emergency keyboard) or similar should be translated as "Tấm sắt lót đường / Steel plates".
+   - "釣りクランプ" or "つりクランプ" should be translated as "Kẹp cẩu / Lifting clamp".
+3. Keep the output strictly as the translated text only. Do not add any prefix, suffix, notes, explanations, or quotes.
 
-Transcript:
+Transcript to translate:
 "${original_text}"
 `;
 
@@ -68,8 +71,8 @@ Transcript:
     try {
       result = await model.generateContent(systemPrompt);
     } catch (err) {
-      console.warn(`Model ${modelName} failed, falling back to gemini-3.1-flash-lite:`, err);
-      const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+      console.warn(`Model ${modelName} failed, falling back to gemini-1.5-flash:`, err);
+      const fallbackModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       result = await fallbackModel.generateContent(systemPrompt);
     }
     const finalTranslated = result.response.text().trim();
