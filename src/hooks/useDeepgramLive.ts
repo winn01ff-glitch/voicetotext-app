@@ -174,6 +174,7 @@ export function useDeepgramLive({
       smart_format: "true",
       diarize: "true",
       interim_results: "true",
+      endpointing: "300",
     });
 
     if (sourceLanguage !== "auto") {

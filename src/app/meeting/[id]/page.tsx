@@ -961,7 +961,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                           {group.items.map((item: any) => (
                             <span key={item.id} className="mr-1 inline">
                               {item.confidence < 0.7 ? (
-                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded border border-red-100/50 dark:border-red-900/30 inline-block my-0.5">
+                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline">
                                   {item.text}
                                 </span>
                               ) : (
