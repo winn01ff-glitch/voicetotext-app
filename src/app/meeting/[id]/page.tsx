@@ -479,32 +479,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
-  // Group transcripts by speaker
-  const groupedTranscripts = useMemo(() => {
-    const result: any[] = [];
-    for (const t of transcripts) {
-      if (result.length > 0 && result[result.length - 1].speakerTag === t.speakerTag) {
-        result[result.length - 1].items.push(t);
-      } else {
-        result.push({
-          id: t.id,
-          speakerTag: t.speakerTag,
-          speakerName: t.speakerName,
-          startMs: t.startMs,
-          items: [t]
-        });
-      }
-    }
-    return result;
-  }, [transcripts]);
 
-  // Virtualized List Configuration
-  const rowVirtualizer = useVirtualizer({
-    count: groupedTranscripts.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 140,
-    overscan: 6,
-  });
 
   if (loading) {
     return (
@@ -779,166 +754,109 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             className="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-4"
           >
             <div className="flex flex-col gap-3">
-              {groupedTranscripts.map((group, index) => {
-                const speakerColor = speakerColorsRef.current[group.speakerTag] || "#64748b";
+              {transcripts.map((t) => {
+                const needsReview = t.confidence < 0.7;
+                const isProcessing = t.status === "processing";
+                const isError = t.status === "Dịch lỗi - Thử lại";
 
                 return (
-                  <div key={`${group.startMs}-${index}`}>
-                    {(() => {
-                      const isGroupRealtime = group.items.some((i: any) => i.status === "realtime");
-                      return (
-                        <div className={`flex flex-col p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group ${
-                          isGroupRealtime
-                            ? "bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 animate-[pulse_2.5s_infinite]"
-                            : "bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60"
-                        }`}>
-                          {/* Bubble Header */}
-                          <div className="flex items-center justify-between mb-2.5">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
-                                <span>●</span>
-                                <span>{group.speakerName}</span>
-                              </span>
-                              {isGroupRealtime ? (
-                                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
-                                  <span>Đang lắng nghe...</span>
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
-                                  {new Date(group.startMs).toISOString().substr(14, 5)}
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Group Status (Right side of the Header) */}
-                            {!isGroupRealtime && (() => {
-                              const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
-                                                             const needsReview = group.items.some((i: any) => i.confidence < 0.7);
-                              const processingItem = group.items.find((i: any) => i.status === "processing");
-
-                              return (
-                                <div className="flex items-center space-x-2">
-                                  {needsReview && (
-                                    <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
-                                      <AlertCircle className="w-3 h-3" />
-                                      <span>Cần soát lại</span>
-                                    </span>
-                                  )}
-                                  {hasError ? (
-                                    <button
-                                      onClick={() => { group.items.filter((i: any) => i.status === "Dịch lỗi - Thử lại").forEach(handleRetryAI) }}
-                                      className="text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 px-2.5 py-0.5 rounded-full flex items-center space-x-1 border border-red-150 dark:border-red-900/50 shadow-sm transition-all cursor-pointer"
-                                    >
-                                      <RefreshCw className="w-2.5 h-2.5" />
-                                      <span>Thử lại</span>
-                                    </button>
-                                  ) : processingItem ? (() => {
-                                     const statusText = "Đang dịch";
-
-                                    return (
-                                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
-                                        <span>{statusText}</span>
-                                        <span className="inline-flex ml-0.5 w-4 text-left">
-                                          <span className="animate-pulse">.</span>
-                                          <span className="animate-pulse [animation-delay:200ms]">.</span>
-                                          <span className="animate-pulse [animation-delay:400ms]">.</span>
-                                        </span>
-                                      </span>
-                                    );
-                                  })() : null}
-                                </div>
-                              );
-                            })()}
-                          </div>
-
-                          {/* Bubble Body: Separated Original and Translated Blocks */}
-                          <div className="relative">
-                            {/* Original Text Block */}
-                            <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
-                              {group.items.map((item: any) => {
-                                if (item.status === "realtime") {
-                                  const combined = (item.text + " " + item.interimText).trim();
-                                  return combined ? (
-                                    <span key={item.id} className="text-slate-400 dark:text-slate-500 font-normal italic">
-                                      "{combined}..."
-                                    </span>
-                                  ) : null;
-                                }
-                                return (
-                                  <span key={item.id} className="mr-1 inline">
-                                    {item.confidence < 0.7 ? (
-                                      <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline">
-                                        {item.correctedText || item.text}
-                                      </span>
-                                    ) : (
-                                      item.correctedText || item.text
-                                    )}
-                                  </span>
-                                );
-                              })}
-                            </div>
-
-                            {/* Separator & Translated Text Block */}
-                            {group.items.some((i: any) => i.translatedText) && (
-                              <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
-                                <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium">
-                                  {group.items.map((item: any) => (
-                                    item.translatedText ? (
-                                      <span key={`trans-${item.id}`} className="group/trans relative inline-flex items-center mr-2">
-                                        <span>{item.translatedText}</span>
-                                        <button
-                                          onClick={() => playTtsText(item.translatedText)}
-                                          className="ml-1 p-0.5 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
-                                          title="Nghe"
-                                        >
-                                          <Volume2 className="w-2.5 h-2.5" />
-                                        </button>
-                                      </span>
-                                    ) : null
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                  <div key={t.id}>
+                    <div className="flex flex-col p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 relative group">
+                      {/* Bubble Header */}
+                      <div className="flex items-center justify-between mb-2.5">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
+                            {new Date(t.startMs).toISOString().substr(14, 5)}
+                          </span>
                         </div>
-                      );
-                    })()}
+
+                        {/* Status (Right side of the Header) */}
+                        <div className="flex items-center space-x-2">
+                          {needsReview && (
+                            <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
+                              <AlertCircle className="w-3 h-3" />
+                              <span>Cần soát lại</span>
+                            </span>
+                          )}
+                          {isError ? (
+                            <button
+                              onClick={() => handleRetryAI(t)}
+                              className="text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 px-2.5 py-0.5 rounded-full flex items-center space-x-1 border border-red-150 dark:border-red-900/50 shadow-sm transition-all cursor-pointer"
+                            >
+                              <RefreshCw className="w-2.5 h-2.5" />
+                              <span>Thử lại</span>
+                            </button>
+                          ) : isProcessing ? (
+                            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
+                              <span>Đang dịch</span>
+                              <span className="inline-flex ml-0.5 w-4 text-left">
+                                <span className="animate-pulse">.</span>
+                                <span className="animate-pulse [animation-delay:200ms]">.</span>
+                                <span className="animate-pulse [animation-delay:400ms]">.</span>
+                              </span>
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {/* Bubble Body: Original and Translated Text */}
+                      <div className="relative">
+                        {/* Original Text Block */}
+                        <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                          {needsReview ? (
+                            <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline">
+                              {t.correctedText || t.text}
+                            </span>
+                          ) : (
+                            t.correctedText || t.text
+                          )}
+                        </div>
+
+                        {/* Separator & Translated Text Block */}
+                        {t.translatedText && (
+                          <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
+                            <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium group/trans relative inline-flex items-center mr-2">
+                              <span>{t.translatedText}</span>
+                              <button
+                                onClick={() => playTtsText(t.translatedText)}
+                                className="ml-1.5 p-0.5 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
+                                title="Nghe"
+                              >
+                                <Volume2 className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
             </div>
 
             {/* Separate Realtime Caption Section */}
-            {realtimeText && (realtimeText.text || realtimeText.interimText) && (() => {
-              const speakerColor = speakerColorsRef.current[realtimeText.speakerTag] || "#3b82f6";
-              return (
-                <div className="flex flex-col bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative animate-[pulse_2.5s_infinite]">
-                  {/* Bubble Header */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
-                        <span>●</span>
-                        <span>{realtimeText.speakerName}</span>
-                      </span>
-                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
-                        <span>Đang lắng nghe...</span>
-                      </span>
-                    </div>
-                  </div>
-                  {/* Bubble Body */}
-                  <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
-                    {realtimeText.text}
-                    {realtimeText.interimText && (
-                      <span className="text-slate-400 dark:text-slate-500 font-normal italic ml-1">
-                        {realtimeText.interimText}...
-                      </span>
-                    )}
+            {realtimeText && (realtimeText.text || realtimeText.interimText) && (
+              <div className="flex flex-col bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative animate-[pulse_2.5s_infinite]">
+                {/* Bubble Header */}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
+                      <span>Đang lắng nghe...</span>
+                    </span>
                   </div>
                 </div>
-              );
-            })()}
+                {/* Bubble Body */}
+                <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                  {realtimeText.text}
+                  {realtimeText.interimText && (
+                    <span className="text-slate-400 dark:text-slate-500 font-normal italic ml-1">
+                      {realtimeText.interimText}...
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Empty Room Instruction */}
             {transcripts.length === 0 && !partialTranscript && (
