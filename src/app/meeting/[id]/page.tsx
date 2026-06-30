@@ -183,28 +183,33 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If speaker changed (we got a transcript for a different speaker tag),
+      // 1. If speaker changed (we got a FINALized transcript for a different speaker tag),
       // immediately finalize and translate any waiting blocks of other speakers!
-      setTranscripts((prev) => {
-         let updated = [...prev];
-         prev.forEach((t) => {
-            if (t.speakerTag !== dgData.speakerTag && t.status === "Chờ dịch...") {
-               const blockToProcess = { ...t, status: "Đang sửa AI...", interimText: "" };
-               processTranscriptBlock(blockToProcess);
-               updated = updated.map(item => item.id === t.id ? blockToProcess : item);
-            }
-         });
-         return updated;
-      });
+      if (dgData.isFinal) {
+        setTranscripts((prev) => {
+           let updated = [...prev];
+           prev.forEach((t) => {
+              if (t.speakerTag !== dgData.speakerTag && t.status === "Chờ dịch...") {
+                 const blockToProcess = { ...t, status: "Đang sửa AI...", interimText: "" };
+                 processTranscriptBlock(blockToProcess);
+                 updated = updated.map(item => item.id === t.id ? blockToProcess : item);
+              }
+           });
+           return updated;
+        });
+      }
 
       // 2. If partial (interim results), display inside the active card for this speaker tag
       if (!dgData.isFinal) {
         setTranscripts((prev) => {
+          // Clear interimText from ALL other blocks that don't match the current speaker tag!
+          let updated = prev.map(t => t.speakerTag !== dgData.speakerTag ? { ...t, interimText: "" } : t);
+
           // Find the last active block for this speaker tag
-          const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
+          const activeBlockIndex = updated.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
 
           if (activeBlockIndex !== undefined) {
-            return prev.map((t, idx) => idx === activeBlockIndex ? { ...t, interimText: dgData.text } : t);
+            return updated.map((t, idx) => idx === activeBlockIndex ? { ...t, interimText: dgData.text } : t);
           }
 
           // Otherwise create a new active block for this speaker tag
@@ -221,7 +226,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             confidence: dgData.confidence,
             status: "Chờ dịch..." as any,
           };
-          return [...prev, newBlock];
+          return [...updated, newBlock];
         });
         return;
       }
