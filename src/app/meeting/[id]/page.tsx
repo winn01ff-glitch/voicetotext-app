@@ -147,17 +147,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
-  // Re-scroll to bottom on new transcripts
+  // Re-scroll to bottom on new transcripts (only when a new card is added to prevent layout thrashing)
   useEffect(() => {
     if (parentRef.current && !isFullScreen) {
       const scrollContainer = parentRef.current;
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         if (scrollContainer) {
           scrollContainer.scrollTop = scrollContainer.scrollHeight;
         }
-      }, 50);
+      });
     }
-  }, [transcripts, partialTranscript, isFullScreen]);
+  }, [transcripts.length, isFullScreen]);
 
   // Toast helper
   const addToast = (title: string, desc: string) => {
