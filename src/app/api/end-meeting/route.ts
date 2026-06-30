@@ -60,7 +60,7 @@ export async function POST(request: Request) {
 
     // 4. Call Gemini Quality Model to generate summary
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const qualityModelName = process.env.AI_QUALITY_MODEL || "gemini-1.5-pro";
+    const qualityModelName = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
     const model = genAI.getGenerativeModel({
       model: qualityModelName,
       generationConfig: { responseMimeType: "application/json" },

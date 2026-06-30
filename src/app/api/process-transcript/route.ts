@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
     // 3. Setup Gemini Client & Call API
     const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const modelName = process.env.AI_QUALITY_MODEL || "gemini-1.5-pro";
+    const modelName = process.env.AI_FAST_MODEL || "gemini-2.5-flash";
     const model = genAI.getGenerativeModel({ model: modelName });
 
     const targetLang = meeting.target_language;
