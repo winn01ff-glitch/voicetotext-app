@@ -43,6 +43,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const [activeRightTab, setActiveRightTab] = useState<"standard" | "raw">("standard");
+  const [rawTranscriptLog, setRawTranscriptLog] = useState<any[]>([]);
+  const [rawInterimText, setRawInterimText] = useState<{ text: string; speakerTag: string } | null>(null);
+
   // UI state
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [selectedTargetLang, setSelectedTargetLang] = useState("vi");
@@ -214,6 +218,30 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       // Find speaker display name
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
+
+      // Update Raw Diagnostic Log in parallel (100% direct and unfiltered)
+      if (!dgData.isFinal) {
+        if (dgData.text.trim()) {
+          setRawInterimText({
+            text: dgData.text,
+            speakerTag: dgData.speakerTag,
+          });
+        }
+      } else {
+        setRawInterimText(null);
+        if (dgData.text.trim()) {
+          setRawTranscriptLog((prev) => [
+            ...prev,
+            {
+              id: Math.random().toString(36).substr(2, 9),
+              text: dgData.text,
+              speakerTag: dgData.speakerTag,
+              speakerName,
+              timestamp: Date.now(),
+            }
+          ]);
+        }
+      }
 
       // 1. If interim (not final): update the realtime card in transcripts state and return
       if (!dgData.isFinal) {
@@ -858,11 +886,76 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
         {/* Right Column: Real-time Transcript Virtualized Feed */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950 p-6 relative">
+          {/* Tab Selector for Diagnosis */}
+          <div className="flex items-center space-x-1 bg-slate-100 dark:bg-slate-900/60 p-1 rounded-xl w-fit mb-4 border border-slate-200/50 dark:border-slate-800/80 shadow-sm shrink-0">
+            <button
+              onClick={() => setActiveRightTab("standard")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${
+                activeRightTab === "standard"
+                  ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              Hội thoại dịch (Chuẩn)
+            </button>
+            <button
+              onClick={() => setActiveRightTab("raw")}
+              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all duration-200 cursor-pointer ${
+                activeRightTab === "raw"
+                  ? "bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+            >
+              Raw Deepgram STT (Chẩn đoán)
+            </button>
+          </div>
+
           <div
             ref={parentRef}
             className="flex-1 overflow-y-auto custom-scrollbar pr-4 space-y-4"
           >
-            <div className="flex flex-col gap-3">
+            {activeRightTab === "raw" ? (
+              <div className="flex flex-col gap-3">
+                {rawTranscriptLog.map((log) => {
+                  const speakerColor = speakerColorsRef.current[log.speakerTag] || "#64748b";
+                  return (
+                    <div key={log.id} className="flex flex-col bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative">
+                      <div className="flex items-center space-x-2 mb-2">
+                        <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
+                          <span>●</span>
+                          <span>{log.speakerName}</span>
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
+                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                        {log.text}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {rawInterimText && (
+                  <div className="flex flex-col bg-blue-50/10 dark:bg-blue-950/5 border border-dashed border-blue-400/40 p-3.5 rounded-xl shadow-sm animate-pulse">
+                    <div className="flex items-center space-x-2 mb-2">
+                      <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColorsRef.current[rawInterimText.speakerTag] || "#3b82f6" }}>
+                        <span>●</span>
+                        <span>{speakers.find((s) => s.speaker_tag === rawInterimText.speakerTag)?.display_name || "Phát biểu"}</span>
+                      </span>
+                      <span className="text-[10px] text-blue-600 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping"></span>
+                        <span>Raw Interim...</span>
+                      </span>
+                    </div>
+                    <div className="text-slate-500 dark:text-slate-400 text-sm font-normal italic leading-relaxed">
+                      "{rawInterimText.text}..."
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
               {groupedTranscripts.map((group, index) => {
                 const speakerColor = speakerColorsRef.current[group.speakerTag] || "#64748b";
 
@@ -992,14 +1085,26 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 );
               })}
             </div>
+          )}
 
-            {/* Empty Room Instruction */}
-            {transcripts.length === 0 && !partialTranscript && (
+            {/* Empty Room Instruction (Standard View) */}
+            {activeRightTab === "standard" && transcripts.length === 0 && !partialTranscript && (
               <div className="h-full flex flex-col items-center justify-center text-center p-8">
                 <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
                 <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>
                 <p className="text-xs text-slate-400 max-w-[280px] mt-1">
                   Nhấn nút "Ghi âm" hoặc bắt đầu nói để trợ lý tự động chuyển đổi ngôn ngữ thời gian thực.
+                </p>
+              </div>
+            )}
+
+            {/* Empty Room Instruction (Raw View) */}
+            {activeRightTab === "raw" && rawTranscriptLog.length === 0 && !rawInterimText && (
+              <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
+                <h4 className="font-semibold text-slate-600 dark:text-slate-400">Chưa có luồng âm thanh gốc</h4>
+                <p className="text-xs text-slate-400 max-w-[280px] mt-1">
+                  Bắt đầu ghi âm để kiểm tra kết quả Speech-to-Text thô trực tiếp từ Deepgram.
                 </p>
               </div>
             )}
