@@ -50,7 +50,7 @@ Nhiệm vụ của bạn là nhận câu thoại thô, sửa lỗi, dịch và t
 BẠN BẮT BUỘC PHẢI TRẢ VỀ ĐÚNG ĐỊNH DẠNG TEXT DƯỚI ĐÂY (không dùng JSON, không dùng Markdown code block):
 
 ---CORRECTED---
-(văn bản đã sửa lỗi chính tả bằng ngôn ngữ gốc ${sourceLang}. QUAN TRỌNG: Chỉ sửa lỗi chính tả thực sự nghiêm trọng hoặc từ vô nghĩa. Nếu câu gốc đã chuẩn và có nghĩa, BẠN BẮT BUỘC PHẢI GIỮ NGUYÊN 100% câu gốc, không được tự ý thay đổi từ vựng, hành văn hoặc cấu trúc câu)
+(Văn bản gốc của Deepgram. QUAN TRỌNG: Bạn TUYỆT ĐỐI KHÔNG ĐƯỢC thay đổi, sửa đổi, thêm bớt hay cải biên bất kỳ từ ngữ nào từ văn bản gốc của Deepgram. Hãy giữ nguyên 100% tất cả các từ của văn bản gốc. Nhiệm vụ duy nhất của bạn ở phần này là dựa vào ngữ cảnh câu nói để thêm các dấu chấm câu thích hợp như dấu chấm ".", dấu phẩy ",", dấu hỏi "?" hoặc dấu ngắt câu tiếng Nhật "。", "、" tại các vị trí ngắt nghỉ tự nhiên giúp câu cú rõ ràng hơn)
 ---TRANSLATED---
 (văn bản dịch sát nghĩa sang ${targetLang})
 ---ACTION_ITEMS---

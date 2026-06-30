@@ -30,6 +30,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [transcripts, setTranscripts] = useState<any[]>([]); // Contains finalized and processed transcripts
   const [partialTranscript, setPartialTranscript] = useState<{ text: string; speakerTag: string } | null>(null);
+  const [activeSpeech, setActiveSpeech] = useState<any | null>(null);
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -157,7 +158,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         }
       });
     }
-  }, [transcripts.length, isFullScreen]);
+  }, [transcripts.length, activeSpeech?.text, activeSpeech?.interimText, isFullScreen]);
 
   // Toast helper
   const addToast = (title: string, desc: string) => {
@@ -190,7 +191,34 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
-// Hook Callback when Deepgram yields transcript
+  const finalizeActiveSpeech = useCallback(
+    async (speechToFinalize: any) => {
+      if (!speechToFinalize || !speechToFinalize.text.trim()) return;
+
+      const newBlock = {
+        id: speechToFinalize.id,
+        text: speechToFinalize.text,
+        interimText: "",
+        correctedText: "",
+        translatedText: "",
+        speakerTag: speechToFinalize.speakerTag,
+        speakerName: speechToFinalize.speakerName,
+        startMs: speechToFinalize.startMs,
+        endMs: Date.now(),
+        confidence: 0.99,
+        status: "Chờ dịch..." as any,
+      };
+
+      // 1. Instantly append to finalized transcripts
+      setTranscripts((prev) => [...prev, newBlock]);
+
+      // 2. Call Gemini for punctuation check and translation
+      processTranscriptBlock(newBlock);
+    },
+    [meetingId]
+  );
+
+  // Hook Callback when Deepgram yields transcript
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
       // Allocate speaker color immediately on frontend if not exists
@@ -205,7 +233,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
       // Detect language from finalized text to autocorrect speaker tag mapping
       if (dgData.isFinal && dgData.text.trim()) {
-        const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
+        const isJp = isJapaneseText(dgData.text);
         const detectedLang = isJp ? "ja" : "vi";
         
         const currentSpeaker = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
@@ -247,121 +275,84 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If speaker changed (we got a FINALized transcript for a different speaker tag),
-      // immediately finalize and translate any waiting blocks of other speakers!
-      if (dgData.isFinal) {
-        setTranscripts((prev) => {
-           let updated = [...prev];
-           prev.forEach((t) => {
-              if (t.speakerTag !== dgData.speakerTag && t.status === "Chờ dịch...") {
-                 const blockToProcess = { ...t, status: "Đang sửa AI...", interimText: "" };
-                 processTranscriptBlock(blockToProcess);
-                 updated = updated.map(item => item.id === t.id ? blockToProcess : item);
-              }
-           });
-           return updated;
-        });
-      }
-
-      // 2. If partial (interim results), display inside the active card for this speaker tag
-      if (!dgData.isFinal) {
-        setTranscripts((prev) => {
-          // Clear interimText from ALL other blocks that don't match the current speaker tag!
-          let updated = prev.map(t => t.speakerTag !== dgData.speakerTag ? { ...t, interimText: "" } : t);
-
-          // Find the last active block for this speaker tag
-          const activeBlockIndex = updated.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
-
-          if (activeBlockIndex !== undefined) {
-            return updated.map((t, idx) => idx === activeBlockIndex ? { ...t, interimText: dgData.text } : t);
+      // 1. If speaker changed, immediately finalize previous speaker's speech
+      setActiveSpeech((prev: any) => {
+        if (prev && prev.speakerTag !== dgData.speakerTag) {
+          // Clear any active timeout for old speaker
+          if (activeSpeakerTimeouts.current[prev.speakerTag]) {
+            clearTimeout(activeSpeakerTimeouts.current[prev.speakerTag]);
+            delete activeSpeakerTimeouts.current[prev.speakerTag];
           }
+          // Finalize old speech
+          finalizeActiveSpeech(prev);
+          
+          // Clear active speech first so we start a new one below
+          return null;
+        }
+        return prev;
+      });
 
-          // Otherwise create a new active block for this speaker tag
-          const newBlock = {
-            id: Math.random().toString(36).substr(2, 9),
-            text: "",
-            interimText: dgData.text,
-            correctedText: "",
-            translatedText: "",
-            speakerTag: dgData.speakerTag,
-            speakerName,
-            startMs: dgData.startMs,
-            endMs: dgData.endMs,
-            confidence: dgData.confidence,
-            status: "Chờ dịch..." as any,
-          };
-          return [...updated, newBlock];
-        });
-        return;
-      }
-
-      // 3. Clear previous safety timeout
+      // Clear previous safety timeout for current speaker
       if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
         clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
         delete activeSpeakerTimeouts.current[dgData.speakerTag];
       }
 
-      setTranscripts((prev) => {
-         // Find the last active block for this speaker tag
-         const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
-
-         if (activeBlockIndex !== undefined) {
-            const currentBlock = prev[activeBlockIndex];
-            const updatedBlock = {
-               ...currentBlock,
-               text: joinWithPunctuation(currentBlock.text, dgData.text, isJapaneseText(dgData.text)),
-               interimText: "",
-               endMs: dgData.endMs,
-               confidence: (currentBlock.confidence + dgData.confidence) / 2,
-               status: "Chờ dịch..." as any,
+      // 2. Process based on isFinal
+      if (!dgData.isFinal) {
+        // Update activeSpeech with interim text
+        setActiveSpeech((prev: any) => {
+          if (prev && prev.speakerTag === dgData.speakerTag) {
+            return {
+              ...prev,
+              interimText: dgData.text
             };
-            
-            // Set safety timeout to auto-finalize this block if the speaker pauses for 5 seconds
-            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-               setTranscripts(currentPrev => {
-                  const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
-                  if (block) {
-                     processTranscriptBlock(block);
-                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-                  }
-                  return currentPrev;
-               });
-            }, 5000);
+          } else {
+            return {
+              id: Math.random().toString(36).substr(2, 9),
+              speakerTag: dgData.speakerTag,
+              speakerName,
+              color: speakerColorsRef.current[dgData.speakerTag] || "#3b82f6",
+              text: "",
+              interimText: dgData.text,
+              startMs: dgData.startMs || Date.now(),
+            };
+          }
+        });
+      } else {
+        // Finalized text segment
+        setActiveSpeech((prev: any) => {
+          let currentSpeech;
+          if (prev && prev.speakerTag === dgData.speakerTag) {
+            const updatedText = joinWithPunctuation(prev.text, dgData.text, isJapaneseText(dgData.text));
+            currentSpeech = {
+              ...prev,
+              text: updatedText,
+              interimText: ""
+            };
+          } else {
+            currentSpeech = {
+              id: Math.random().toString(36).substr(2, 9),
+              speakerTag: dgData.speakerTag,
+              speakerName,
+              color: speakerColorsRef.current[dgData.speakerTag] || "#3b82f6",
+              text: dgData.text,
+              interimText: "",
+              startMs: dgData.startMs || Date.now(),
+            };
+          }
 
-            return prev.map((t, idx) => idx === activeBlockIndex ? updatedBlock : t);
-         }
+          // Set 5-second silence safety timeout to finalize this speech block
+          activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+            finalizeActiveSpeech(currentSpeech);
+            setActiveSpeech(null);
+          }, 5000);
 
-         // Otherwise create a NEW block
-         const newBlock = {
-           id: Math.random().toString(36).substr(2, 9),
-           text: dgData.text,
-           interimText: "",
-           correctedText: "",
-           translatedText: "",
-           speakerTag: dgData.speakerTag,
-           speakerName,
-           startMs: dgData.startMs,
-           endMs: dgData.endMs,
-           confidence: dgData.confidence,
-           status: "Chờ dịch..." as any,
-         };
-
-         // Set safety timeout to auto-finalize this block if the speaker pauses for 5 seconds
-         activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-            setTranscripts(currentPrev => {
-               const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
-               if (block) {
-                  processTranscriptBlock(block);
-                  return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-               }
-               return currentPrev;
-            });
-         }, 5000);
-
-         return [...prev, newBlock];
-      });
+          return currentSpeech;
+        });
+      }
     },
-    [speakers, meetingId]
+    [speakers, meetingId, finalizeActiveSpeech]
   );
 
   const processTranscriptBlock = async (block: any) => {
@@ -452,12 +443,16 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [meeting]);
 
-  // Clear partial transcript when paused or stopped
+  // Clear partial transcript and finalize active speech when paused or stopped
   useEffect(() => {
     if (status !== "recording") {
       setPartialTranscript(null);
+      if (activeSpeech) {
+        finalizeActiveSpeech(activeSpeech);
+        setActiveSpeech(null);
+      }
     }
-  }, [status]);
+  }, [status, activeSpeech, finalizeActiveSpeech]);
 
   // Audio Playback using Deepgram Aura TTS Route
   const playTtsText = (text: string) => {
@@ -1002,10 +997,42 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </div>
                 );
               })}
+              {/* Active Listening Card (Real-time transcription at the bottom) */}
+              {activeSpeech && (activeSpeech.text || activeSpeech.interimText) && (
+                <div 
+                  className="flex flex-col bg-slate-50/40 dark:bg-slate-900/30 border-2 border-dashed rounded-xl p-3.5 shadow-sm transition-all duration-300 relative group animate-pulse"
+                  style={{ borderColor: `${activeSpeech.color}40` }}
+                >
+                  {/* Bubble Header */}
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center space-x-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shadow-sm animate-ping shrink-0"
+                        style={{ backgroundColor: activeSpeech.color }}
+                      ></span>
+                      <span className="font-bold text-xs" style={{ color: activeSpeech.color }}>
+                        {activeSpeech.speakerName} (Đang nghe...)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bubble Body */}
+                  <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                    {activeSpeech.text && (
+                      <span className="text-slate-800 dark:text-slate-100 mr-1">{activeSpeech.text}</span>
+                    )}
+                    {activeSpeech.interimText && (
+                      <span className="text-slate-400 dark:text-slate-500 font-normal italic">
+                        {activeSpeech.interimText}...
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Empty Room Instruction */}
-            {transcripts.length === 0 && (
+            {transcripts.length === 0 && (!activeSpeech || (!activeSpeech.text && !activeSpeech.interimText)) && (
               <div className="h-full flex flex-col items-center justify-center text-center p-8">
                 <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
                 <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>
