@@ -29,19 +29,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [meeting, setMeeting] = useState<any>(null);
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [transcripts, setTranscripts] = useState<any[]>([]); // Contains finalized and processed transcripts
-  const [realtimeBuffer, setRealtimeBuffer] = useState<{
-    accumulatedText: string;
-    interimText: string;
-    speakerTag: string;
-  } | null>(null);
-
   const partialTranscript = useMemo(() => {
-    if (!realtimeBuffer) return null;
-    return {
-      text: (realtimeBuffer.accumulatedText + " " + realtimeBuffer.interimText).trim(),
-      speakerTag: realtimeBuffer.speakerTag,
-    };
-  }, [realtimeBuffer]);
+    const lastItem = transcripts[transcripts.length - 1];
+    if (lastItem && lastItem.status === "realtime") {
+      return {
+        text: (lastItem.text + " " + lastItem.interimText).trim(),
+        speakerTag: lastItem.speakerTag,
+      };
+    }
+    return null;
+  }, [transcripts]);
+
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -259,67 +257,37 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If interim (not final): update the realtime buffer state and return
+      // 1. If interim (not final): update the realtime card in transcripts state and return
       if (!dgData.isFinal) {
         if (dgData.text.trim()) {
-          setRealtimeBuffer((prev) => {
-            // Handle speaker change (flush previous speaker's buffer if any)
-            if (prev && prev.speakerTag !== dgData.speakerTag) {
-              const prevSpeaker = speakers.find((s) => s.speaker_tag === prev.speakerTag);
-              const prevName = prevSpeaker ? prevSpeaker.display_name : prev.speakerTag.replace("speaker_", "Speaker ");
-              const completeText = (prev.accumulatedText + " " + prev.interimText).trim();
-              if (completeText) {
-                const prevBlock = {
-                  id: Math.random().toString(36).substr(2, 9),
-                  text: completeText,
-                  interimText: "",
-                  correctedText: "",
-                  translatedText: "",
-                  speakerTag: prev.speakerTag,
-                  speakerName: prevName,
-                  startMs: Date.now(),
-                  endMs: Date.now(),
-                  confidence: 1.0,
-                  status: "Đang sửa AI..." as any,
-                };
-                setTranscripts((tPrev) => [...tPrev, prevBlock]);
-                processTranscriptBlock(prevBlock);
-              }
-              return {
-                accumulatedText: "",
+          setTranscripts((prev) => {
+            const updated = [...prev];
+            const lastIdx = updated.length - 1;
+            
+            // Check if last block is realtime and matches current speaker
+            if (lastIdx >= 0 && updated[lastIdx].status === "realtime" && updated[lastIdx].speakerTag === dgData.speakerTag) {
+              updated[lastIdx] = {
+                ...updated[lastIdx],
                 interimText: dgData.text,
-                speakerTag: dgData.speakerTag,
               };
+              return updated;
             }
-            return {
-              accumulatedText: prev ? prev.accumulatedText : "",
-              interimText: dgData.text,
-              speakerTag: dgData.speakerTag,
-            };
-          });
-        }
-        return;
-      }
 
-      // 2. If final
-      if (dgData.isFinal) {
-        // If this is the end of the utterance (speechFinal), finalize and create the conversation card!
-        if (dgData.speechFinal) {
-          let completeText = "";
-          setRealtimeBuffer((prev) => {
-            if (prev && prev.speakerTag === dgData.speakerTag) {
-              completeText = (prev.accumulatedText + " " + dgData.text).trim();
-            } else {
-              completeText = dgData.text.trim();
+            // If last block is realtime but belongs to a different speaker, finalize it first!
+            if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
+              const oldBlock = {
+                ...updated[lastIdx],
+                status: "Đang sửa AI..." as any,
+              };
+              updated[lastIdx] = oldBlock;
+              processTranscriptBlock(oldBlock);
             }
-            return null; // Clear realtime buffer
-          });
 
-          if (completeText) {
+            // Create a new realtime card at the end of transcripts
             const newBlock = {
               id: Math.random().toString(36).substr(2, 9),
-              text: completeText,
-              interimText: "",
+              text: "",
+              interimText: dgData.text,
               correctedText: "",
               translatedText: "",
               speakerTag: dgData.speakerTag,
@@ -327,53 +295,77 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               startMs: dgData.startMs || Date.now(),
               endMs: dgData.endMs || Date.now(),
               confidence: dgData.confidence,
-              status: "Đang sửa AI..." as any,
+              status: "realtime" as any,
             };
-
-            setTranscripts((prevTxs) => [...prevTxs, newBlock]);
-            processTranscriptBlock(newBlock);
-          }
-        } else {
-          // If not speechFinal, accumulate the text into the buffer
-          setRealtimeBuffer((prev) => {
-            // Handle speaker change
-            if (prev && prev.speakerTag !== dgData.speakerTag) {
-              const prevSpeaker = speakers.find((s) => s.speaker_tag === prev.speakerTag);
-              const prevName = prevSpeaker ? prevSpeaker.display_name : prev.speakerTag.replace("speaker_", "Speaker ");
-              const completeText = (prev.accumulatedText + " " + prev.interimText).trim();
-              if (completeText) {
-                const prevBlock = {
-                  id: Math.random().toString(36).substr(2, 9),
-                  text: completeText,
-                  interimText: "",
-                  correctedText: "",
-                  translatedText: "",
-                  speakerTag: prev.speakerTag,
-                  speakerName: prevName,
-                  startMs: Date.now(),
-                  endMs: Date.now(),
-                  confidence: 1.0,
-                  status: "Đang sửa AI..." as any,
-                };
-                setTranscripts((tPrev) => [...tPrev, prevBlock]);
-                processTranscriptBlock(prevBlock);
-              }
-              return {
-                accumulatedText: dgData.text,
-                interimText: "",
-                speakerTag: dgData.speakerTag,
-              };
-            }
-            const currentAccumulated = prev ? prev.accumulatedText : "";
-            const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
-            const newAccumulated = joinWithPunctuation(currentAccumulated, dgData.text, isJp);
-            return {
-              accumulatedText: newAccumulated,
-              interimText: "",
-              speakerTag: dgData.speakerTag,
-            };
+            return [...updated, newBlock];
           });
         }
+        return;
+      }
+
+      // 2. If final
+      if (dgData.isFinal) {
+        if (!dgData.text.trim()) return;
+
+        setTranscripts((prev) => {
+          const updated = [...prev];
+          const lastIdx = updated.length - 1;
+
+          // Check if last block is realtime and matches current speaker
+          if (lastIdx >= 0 && updated[lastIdx].status === "realtime" && updated[lastIdx].speakerTag === dgData.speakerTag) {
+            const currentBlock = updated[lastIdx];
+            const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
+            const combinedText = joinWithPunctuation(currentBlock.text, dgData.text, isJp);
+
+            const updatedBlock = {
+              ...currentBlock,
+              text: combinedText,
+              interimText: "",
+              endMs: dgData.endMs || Date.now(),
+              confidence: (currentBlock.confidence + dgData.confidence) / 2,
+              status: (dgData.speechFinal ? "Đang sửa AI..." : "realtime") as any,
+            };
+
+            updated[lastIdx] = updatedBlock;
+
+            if (dgData.speechFinal) {
+              processTranscriptBlock(updatedBlock);
+            }
+
+            return updated;
+          }
+
+          // If last block is realtime but for a different speaker, finalize it first
+          if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
+            const oldBlock = {
+              ...updated[lastIdx],
+              status: "Đang sửa AI..." as any,
+            };
+            updated[lastIdx] = oldBlock;
+            processTranscriptBlock(oldBlock);
+          }
+
+          // Create a new block
+          const newBlock = {
+            id: Math.random().toString(36).substr(2, 9),
+            text: dgData.text,
+            interimText: "",
+            correctedText: "",
+            translatedText: "",
+            speakerTag: dgData.speakerTag,
+            speakerName,
+            startMs: dgData.startMs || Date.now(),
+            endMs: dgData.endMs || Date.now(),
+            confidence: dgData.confidence,
+            status: (dgData.speechFinal ? "Đang sửa AI..." : "realtime") as any,
+          };
+
+          if (dgData.speechFinal) {
+            processTranscriptBlock(newBlock);
+          }
+
+          return [...updated, newBlock];
+        });
       }
     },
     [speakers, meetingId]
@@ -467,10 +459,23 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [meeting]);
 
-  // Clear partial transcript when paused or stopped
+  // Finalize any active realtime transcript when paused or stopped
   useEffect(() => {
     if (status !== "recording") {
-      setRealtimeBuffer(null);
+      setTranscripts((prev) => {
+        const lastIdx = prev.length - 1;
+        if (lastIdx >= 0 && prev[lastIdx].status === "realtime") {
+          const updated = [...prev];
+          const oldBlock = {
+            ...updated[lastIdx],
+            status: "Đang sửa AI..." as any,
+          };
+          updated[lastIdx] = oldBlock;
+          processTranscriptBlock(oldBlock);
+          return updated;
+        }
+        return prev;
+      });
     }
   }, [status]);
 
@@ -906,147 +911,138 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
                 return (
                   <div key={`${group.startMs}-${index}`}>
-                    <div className="flex flex-col bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group">
-                      {/* Bubble Header */}
-                      <div className="flex items-center justify-between mb-2.5">
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
-                            <span>●</span>
-                            <span>{group.speakerName}</span>
-                          </span>
-                          <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
-                            {new Date(group.startMs).toISOString().substr(14, 5)}
-                          </span>
-                        </div>
-
-                        {/* Group Status (Right side of the Header) */}
-                        {(() => {
-                          const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
-                          const needsReview = group.items.some((i: any) => i.confidence < 0.7);
-                          const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final", "Đang sửa AI..."].includes(i.status));
-
-                          return (
+                    {(() => {
+                      const isGroupRealtime = group.items.some((i: any) => i.status === "realtime");
+                      return (
+                        <div className={`flex flex-col p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group ${
+                          isGroupRealtime
+                            ? "bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 animate-[pulse_2.5s_infinite]"
+                            : "bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60"
+                        }`}>
+                          {/* Bubble Header */}
+                          <div className="flex items-center justify-between mb-2.5">
                             <div className="flex items-center space-x-2">
-                              {needsReview && (
-                                <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
-                                  <AlertCircle className="w-3 h-3" />
-                                  <span>Cần soát lại</span>
-                                </span>
-                              )}
-                              {hasError ? (
-                                <button
-                                  onClick={() => { group.items.filter((i: any) => i.status === "Dịch lỗi - Thử lại").forEach(handleRetryAI) }}
-                                  className="text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 px-2.5 py-0.5 rounded-full flex items-center space-x-1 border border-red-150 dark:border-red-900/50 shadow-sm transition-all cursor-pointer"
-                                >
-                                  <RefreshCw className="w-2.5 h-2.5" />
-                                  <span>Thử lại</span>
-                                </button>
-                              ) : processingItem ? (() => {
-                                 let statusText = "Đang dịch";
-                                 if (processingItem.status === "Đang sửa AI...") {
-                                   statusText = "Đang dịch";
-                                 } else if (processingItem.status === "Đang dịch...") {
-                                   statusText = "Đang dịch";
-                                 } else if (processingItem.status === "Đang xử lý...") {
-                                   statusText = "Đang dịch";
-                                 } else if (processingItem.correctedText && !processingItem.translatedText) {
-                                    statusText = "Đang dịch";
-                                  }
-
-
-                                return (
-                                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
-                                    <span>{statusText}</span>
-                                    <span className="inline-flex ml-0.5 w-4 text-left">
-                                      <span className="animate-pulse">.</span>
-                                      <span className="animate-pulse [animation-delay:200ms]">.</span>
-                                      <span className="animate-pulse [animation-delay:400ms]">.</span>
-                                    </span>
-                                  </span>
-                                );
-                              })() : null}
-                            </div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* Bubble Body: Separated Original and Translated Blocks */}
-                      <div className="relative">
-                        {/* Original Text Block */}
-                        <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
-                          {group.items.map((item: any) => (
-                            <span key={item.id} className="mr-1 inline">
-                              {item.confidence < 0.7 ? (
-                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline">
-                                  {item.text}
+                              <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
+                                <span>●</span>
+                                <span>{group.speakerName}</span>
+                              </span>
+                              {isGroupRealtime ? (
+                                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
+                                  <span>Đang lắng nghe...</span>
                                 </span>
                               ) : (
-                                item.text
-                              )}
-                              {item.interimText && (
-                                <span className="text-slate-400 dark:text-slate-500 font-normal italic ml-1">
-                                  {item.interimText}...
+                                <span className="text-[10px] text-slate-400 font-semibold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full">
+                                  {new Date(group.startMs).toISOString().substr(14, 5)}
                                 </span>
                               )}
-                            </span>
-                          ))}
-                        </div>
-
-                        {/* Separator & Translated Text Block */}
-                        {group.items.some((i: any) => i.translatedText) && (
-                          <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
-                            <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium">
-                              {group.items.map((item: any) => (
-                                item.translatedText ? (
-                                  <span key={`trans-${item.id}`} className="group/trans relative inline-flex items-center mr-2">
-                                    <span>{item.translatedText}</span>
-                                    <button
-                                      onClick={() => playTtsText(item.translatedText)}
-                                      className="ml-1 p-0.5 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
-                                      title="Nghe"
-                                    >
-                                      <Volume2 className="w-2.5 h-2.5" />
-                                    </button>
-                                  </span>
-                                ) : null
-                              ))}
                             </div>
+
+                            {/* Group Status (Right side of the Header) */}
+                            {!isGroupRealtime && (() => {
+                              const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
+                              const needsReview = group.items.some((i: any) => i.confidence < 0.7);
+                              const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final", "Đang sửa AI..."].includes(i.status));
+
+                              return (
+                                <div className="flex items-center space-x-2">
+                                  {needsReview && (
+                                    <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
+                                      <AlertCircle className="w-3 h-3" />
+                                      <span>Cần soát lại</span>
+                                    </span>
+                                  )}
+                                  {hasError ? (
+                                    <button
+                                      onClick={() => { group.items.filter((i: any) => i.status === "Dịch lỗi - Thử lại").forEach(handleRetryAI) }}
+                                      className="text-[10px] font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 dark:bg-red-950/40 px-2.5 py-0.5 rounded-full flex items-center space-x-1 border border-red-150 dark:border-red-900/50 shadow-sm transition-all cursor-pointer"
+                                    >
+                                      <RefreshCw className="w-2.5 h-2.5" />
+                                      <span>Thử lại</span>
+                                    </button>
+                                  ) : processingItem ? (() => {
+                                     let statusText = "Đang dịch";
+                                     if (processingItem.status === "Đang sửa AI...") {
+                                       statusText = "Đang dịch";
+                                     } else if (processingItem.status === "Đang dịch...") {
+                                       statusText = "Đang dịch";
+                                     } else if (processingItem.status === "Đang xử lý...") {
+                                       statusText = "Đang dịch";
+                                     } else if (processingItem.correctedText && !processingItem.translatedText) {
+                                        statusText = "Đang dịch";
+                                      }
+
+                                    return (
+                                      <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
+                                        <span>{statusText}</span>
+                                        <span className="inline-flex ml-0.5 w-4 text-left">
+                                          <span className="animate-pulse">.</span>
+                                          <span className="animate-pulse [animation-delay:200ms]">.</span>
+                                          <span className="animate-pulse [animation-delay:400ms]">.</span>
+                                        </span>
+                                      </span>
+                                    );
+                                  })() : null}
+                                </div>
+                              );
+                            })()}
                           </div>
-                        )}
-                      </div>
-                    </div>
+
+                          {/* Bubble Body: Separated Original and Translated Blocks */}
+                          <div className="relative">
+                            {/* Original Text Block */}
+                            <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                              {group.items.map((item: any) => {
+                                if (item.status === "realtime") {
+                                  const combined = (item.text + " " + item.interimText).trim();
+                                  return combined ? (
+                                    <span key={item.id} className="text-slate-400 dark:text-slate-500 font-normal italic">
+                                      "{combined}..."
+                                    </span>
+                                  ) : null;
+                                }
+                                return (
+                                  <span key={item.id} className="mr-1 inline">
+                                    {item.confidence < 0.7 ? (
+                                      <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline">
+                                        {item.correctedText || item.text}
+                                      </span>
+                                    ) : (
+                                      item.correctedText || item.text
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </div>
+
+                            {/* Separator & Translated Text Block */}
+                            {group.items.some((i: any) => i.translatedText) && (
+                              <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
+                                <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium">
+                                  {group.items.map((item: any) => (
+                                    item.translatedText ? (
+                                      <span key={`trans-${item.id}`} className="group/trans relative inline-flex items-center mr-2">
+                                        <span>{item.translatedText}</span>
+                                        <button
+                                          onClick={() => playTtsText(item.translatedText)}
+                                          className="ml-1 p-0.5 opacity-0 group-hover/trans:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
+                                          title="Nghe"
+                                        >
+                                          <Volume2 className="w-2.5 h-2.5" />
+                                        </button>
+                                      </span>
+                                    ) : null
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
-
-              {/* Thẻ realtime hiển thị nội dung đang nhận dạng (interim transcript) */}
-              {partialTranscript && partialTranscript.text.trim() && (() => {
-                const speakerColor = speakerColorsRef.current[partialTranscript.speakerTag] || "#3b82f6";
-                const sp = speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag);
-                const speakerName = sp ? sp.display_name : partialTranscript.speakerTag.replace("speaker_", "Speaker ");
-
-                return (
-                  <div className="flex flex-col bg-blue-50/10 dark:bg-blue-950/5 border-2 border-dashed border-blue-400/40 dark:border-blue-500/30 p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 relative group animate-[pulse_2.5s_infinite]">
-                    {/* Bubble Header */}
-                    <div className="flex items-center justify-between mb-2.5">
-                      <div className="flex items-center space-x-2">
-                        <span className="font-bold text-xs flex items-center gap-1.5" style={{ color: speakerColor }}>
-                          <span>●</span>
-                          <span>{speakerName}</span>
-                        </span>
-                        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-ping"></span>
-                          <span>Đang lắng nghe...</span>
-                        </span>
-                      </div>
-                    </div>
-                    {/* Bubble Body */}
-                    <div className="text-slate-500 dark:text-slate-400 text-sm font-normal italic leading-relaxed">
-                      "{partialTranscript.text}..."
-                    </div>
-                  </div>
-                );
-              })()}
             </div>
 
             {/* Empty Room Instruction */}
