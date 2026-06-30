@@ -246,22 +246,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                confidence: (currentBlock.confidence + dgData.confidence) / 2
             };
             
-            if (dgData.speechFinal) {
-               updatedBlock.status = "Đang sửa AI...";
-               processTranscriptBlock(updatedBlock);
-            } else {
-               // Reset safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
-               activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-                  setTranscripts(currentPrev => {
-                     const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
-                     if (block) {
-                        processTranscriptBlock(block);
-                        return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-                     }
-                     return currentPrev;
-                  });
-               }, 7000);
-            }
+            // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
+            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+               setTranscripts(currentPrev => {
+                  const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
+                  if (block) {
+                     processTranscriptBlock(block);
+                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+                  }
+                  return currentPrev;
+               });
+            }, 7000);
 
             return prev.map((t, idx) => idx === activeBlockIndex ? updatedBlock : t);
          }
@@ -278,24 +273,20 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
            startMs: dgData.startMs,
            endMs: dgData.endMs,
            confidence: dgData.confidence,
-           status: (dgData.speechFinal ? "Đang sửa AI..." : "Chờ dịch...") as any,
+           status: "Chờ dịch..." as any,
          };
 
-         if (dgData.speechFinal) {
-            processTranscriptBlock(newBlock);
-         } else {
-            // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
-            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-               setTranscripts(currentPrev => {
-                  const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
-                  if (block) {
-                     processTranscriptBlock(block);
-                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-                  }
-                  return currentPrev;
-               });
-            }, 7000);
-         }
+         // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
+         activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+            setTranscripts(currentPrev => {
+               const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
+               if (block) {
+                  processTranscriptBlock(block);
+                  return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+               }
+               return currentPrev;
+            });
+         }, 7000);
 
          return [...prev, newBlock];
       });
@@ -865,22 +856,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                                   <span>Thử lại</span>
                                 </button>
                               ) : processingItem ? (() => {
-                                let statusText = "Đang xử lý";
-                                if (processingItem.status === "Đang sửa AI...") {
-                                  statusText = "Đang sửa AI";
-                                } else if (processingItem.status === "Đang dịch...") {
-                                  statusText = "Đang dịch";
-                                } else if (processingItem.status === "Đang xử lý...") {
-                                  if (!processingItem.correctedText) {
-                                    statusText = "Đang sửa AI";
-                                  } else if (processingItem.correctedText && !processingItem.translatedText) {
+                                 let statusText = "Đang dịch";
+                                 if (processingItem.status === "Đang sửa AI...") {
+                                   statusText = "Đang dịch";
+                                 } else if (processingItem.status === "Đang dịch...") {
+                                   statusText = "Đang dịch";
+                                 } else if (processingItem.status === "Đang xử lý...") {
+                                   statusText = "Đang dịch";
+                                 } else if (processingItem.correctedText && !processingItem.translatedText) {
                                     statusText = "Đang dịch";
                                   }
-                                }
 
-                                if (processingItem.status === "Chờ dịch...") {
-                                  return null;
-                                }
 
                                 return (
                                   <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
