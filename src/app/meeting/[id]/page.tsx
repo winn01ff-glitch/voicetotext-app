@@ -29,7 +29,19 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [meeting, setMeeting] = useState<any>(null);
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [transcripts, setTranscripts] = useState<any[]>([]); // Contains finalized and processed transcripts
-  const [partialTranscript, setPartialTranscript] = useState<{ text: string; speakerTag: string } | null>(null);
+  const [realtimeBuffer, setRealtimeBuffer] = useState<{
+    accumulatedText: string;
+    interimText: string;
+    speakerTag: string;
+  } | null>(null);
+
+  const partialTranscript = useMemo(() => {
+    if (!realtimeBuffer) return null;
+    return {
+      text: (realtimeBuffer.accumulatedText + " " + realtimeBuffer.interimText).trim(),
+      speakerTag: realtimeBuffer.speakerTag,
+    };
+  }, [realtimeBuffer]);
   const [actionItems, setActionItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -247,37 +259,122 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If interim (not final): update the realtime card state and return
+      // 1. If interim (not final): update the realtime buffer state and return
       if (!dgData.isFinal) {
         if (dgData.text.trim()) {
-          setPartialTranscript({
-            text: dgData.text,
-            speakerTag: dgData.speakerTag,
+          setRealtimeBuffer((prev) => {
+            // Handle speaker change (flush previous speaker's buffer if any)
+            if (prev && prev.speakerTag !== dgData.speakerTag) {
+              const prevSpeaker = speakers.find((s) => s.speaker_tag === prev.speakerTag);
+              const prevName = prevSpeaker ? prevSpeaker.display_name : prev.speakerTag.replace("speaker_", "Speaker ");
+              const completeText = (prev.accumulatedText + " " + prev.interimText).trim();
+              if (completeText) {
+                const prevBlock = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  text: completeText,
+                  interimText: "",
+                  correctedText: "",
+                  translatedText: "",
+                  speakerTag: prev.speakerTag,
+                  speakerName: prevName,
+                  startMs: Date.now(),
+                  endMs: Date.now(),
+                  confidence: 1.0,
+                  status: "Đang sửa AI..." as any,
+                };
+                setTranscripts((tPrev) => [...tPrev, prevBlock]);
+                processTranscriptBlock(prevBlock);
+              }
+              return {
+                accumulatedText: "",
+                interimText: dgData.text,
+                speakerTag: dgData.speakerTag,
+              };
+            }
+            return {
+              accumulatedText: prev ? prev.accumulatedText : "",
+              interimText: dgData.text,
+              speakerTag: dgData.speakerTag,
+            };
           });
         }
         return;
       }
 
-      // 2. If final: clear the realtime card state and create a new main card
-      setPartialTranscript(null);
-      if (!dgData.text.trim()) return;
+      // 2. If final
+      if (dgData.isFinal) {
+        // If this is the end of the utterance (speechFinal), finalize and create the conversation card!
+        if (dgData.speechFinal) {
+          let completeText = "";
+          setRealtimeBuffer((prev) => {
+            if (prev && prev.speakerTag === dgData.speakerTag) {
+              completeText = (prev.accumulatedText + " " + dgData.text).trim();
+            } else {
+              completeText = dgData.text.trim();
+            }
+            return null; // Clear realtime buffer
+          });
 
-      const newBlock = {
-        id: Math.random().toString(36).substr(2, 9),
-        text: dgData.text,
-        interimText: "",
-        correctedText: "",
-        translatedText: "",
-        speakerTag: dgData.speakerTag,
-        speakerName,
-        startMs: dgData.startMs || Date.now(),
-        endMs: dgData.endMs || Date.now(),
-        confidence: dgData.confidence,
-        status: "Đang sửa AI..." as any,
-      };
+          if (completeText) {
+            const newBlock = {
+              id: Math.random().toString(36).substr(2, 9),
+              text: completeText,
+              interimText: "",
+              correctedText: "",
+              translatedText: "",
+              speakerTag: dgData.speakerTag,
+              speakerName,
+              startMs: dgData.startMs || Date.now(),
+              endMs: dgData.endMs || Date.now(),
+              confidence: dgData.confidence,
+              status: "Đang sửa AI..." as any,
+            };
 
-      setTranscripts((prev) => [...prev, newBlock]);
-      processTranscriptBlock(newBlock);
+            setTranscripts((prevTxs) => [...prevTxs, newBlock]);
+            processTranscriptBlock(newBlock);
+          }
+        } else {
+          // If not speechFinal, accumulate the text into the buffer
+          setRealtimeBuffer((prev) => {
+            // Handle speaker change
+            if (prev && prev.speakerTag !== dgData.speakerTag) {
+              const prevSpeaker = speakers.find((s) => s.speaker_tag === prev.speakerTag);
+              const prevName = prevSpeaker ? prevSpeaker.display_name : prev.speakerTag.replace("speaker_", "Speaker ");
+              const completeText = (prev.accumulatedText + " " + prev.interimText).trim();
+              if (completeText) {
+                const prevBlock = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  text: completeText,
+                  interimText: "",
+                  correctedText: "",
+                  translatedText: "",
+                  speakerTag: prev.speakerTag,
+                  speakerName: prevName,
+                  startMs: Date.now(),
+                  endMs: Date.now(),
+                  confidence: 1.0,
+                  status: "Đang sửa AI..." as any,
+                };
+                setTranscripts((tPrev) => [...tPrev, prevBlock]);
+                processTranscriptBlock(prevBlock);
+              }
+              return {
+                accumulatedText: dgData.text,
+                interimText: "",
+                speakerTag: dgData.speakerTag,
+              };
+            }
+            const currentAccumulated = prev ? prev.accumulatedText : "";
+            const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
+            const newAccumulated = joinWithPunctuation(currentAccumulated, dgData.text, isJp);
+            return {
+              accumulatedText: newAccumulated,
+              interimText: "",
+              speakerTag: dgData.speakerTag,
+            };
+          });
+        }
+      }
     },
     [speakers, meetingId]
   );
@@ -373,7 +470,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Clear partial transcript when paused or stopped
   useEffect(() => {
     if (status !== "recording") {
-      setPartialTranscript(null);
+      setRealtimeBuffer(null);
     }
   }, [status]);
 
