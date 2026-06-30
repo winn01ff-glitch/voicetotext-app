@@ -207,27 +207,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 // Hook Callback when Deepgram yields transcript
 
 
-  const finalizeTranscriptBlock = useCallback((speakerTag: string, speakerName: string, text: string) => {
-    if (!text.trim()) return;
-    const newBlock = {
-      id: Math.random().toString(36).substr(2, 9),
-      text: text.trim(),
-      interimText: "",
-      correctedText: "",
-      translatedText: "",
-      speakerTag,
-      speakerName,
-      startMs: Date.now(),
-      endMs: Date.now(),
-      confidence: 1.0,
-      status: "processing" as any,
-    };
-    setTranscripts((prev) => [...prev, newBlock]);
-    processTranscriptBlock(newBlock);
-  }, [meetingId]);
-
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
+      if (!dgData.text.trim()) return;
+
       // Allocate speaker color immediately on frontend if not exists
       if (dgData.speakerTag && !speakerColorsRef.current[dgData.speakerTag]) {
         const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -240,76 +223,36 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If interim (not final): update the realtime card state and return
+      // 1. If interim (not final): update the separate realtime card state and return
       if (!dgData.isFinal) {
-        if (dgData.text.trim()) {
-          setRealtimeText((prev) => {
-            // If speaker changed, finalize previous speaker's text!
-            if (prev && prev.speakerTag !== dgData.speakerTag) {
-              const completeText = (prev.text + " " + prev.interimText).trim();
-              if (completeText) {
-                finalizeTranscriptBlock(prev.speakerTag, prev.speakerName, completeText);
-              }
-              return {
-                text: "",
-                interimText: dgData.text,
-                speakerTag: dgData.speakerTag,
-                speakerName,
-              };
-            }
-            return {
-              text: prev ? prev.text : "",
-              interimText: dgData.text,
-              speakerTag: dgData.speakerTag,
-              speakerName,
-            };
-          });
-        }
+        setRealtimeText({
+          text: "",
+          interimText: dgData.text,
+          speakerTag: dgData.speakerTag,
+          speakerName,
+        });
         return;
       }
 
-      // 2. If final
-      if (dgData.isFinal) {
-        if (!dgData.text.trim()) return;
+      // 2. If final: clear realtime state and finalize immediately!
+      setRealtimeText(null);
 
-        if (dgData.speechFinal) {
-          let completeText = "";
-          setRealtimeText((prev) => {
-            if (prev && prev.speakerTag === dgData.speakerTag) {
-              completeText = (prev.text + " " + dgData.text).trim();
-            } else {
-              completeText = dgData.text.trim();
-            }
-            return null; // Clear realtime text
-          });
+      const newBlock = {
+        id: Math.random().toString(36).substr(2, 9),
+        text: dgData.text.trim(),
+        interimText: "",
+        correctedText: "",
+        translatedText: "",
+        speakerTag: dgData.speakerTag,
+        speakerName,
+        startMs: dgData.startMs || Date.now(),
+        endMs: dgData.endMs || Date.now(),
+        confidence: dgData.confidence,
+        status: "processing" as any,
+      };
 
-          if (completeText) {
-            finalizeTranscriptBlock(dgData.speakerTag, speakerName, completeText);
-          }
-        } else {
-          setRealtimeText((prev) => {
-            // If speaker changed, finalize previous speaker's text!
-            if (prev && prev.speakerTag !== dgData.speakerTag) {
-              const completeText = (prev.text + " " + prev.interimText).trim();
-              if (completeText) {
-                finalizeTranscriptBlock(prev.speakerTag, prev.speakerName, completeText);
-              }
-              return {
-                text: dgData.text,
-                interimText: "",
-                speakerTag: dgData.speakerTag,
-                speakerName,
-              };
-            }
-            return {
-              text: prev ? (prev.text + " " + dgData.text).trim() : dgData.text,
-              interimText: "",
-              speakerTag: dgData.speakerTag,
-              speakerName,
-            };
-          });
-        }
-      }
+      setTranscripts((prev) => [...prev, newBlock]);
+      processTranscriptBlock(newBlock);
     },
     [speakers, meetingId]
   );
@@ -402,18 +345,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [meeting]);
 
-  // Finalize any active realtime transcript when paused or stopped
+  // Clear realtime transcript when paused or stopped
   useEffect(() => {
     if (status !== "recording") {
-      setRealtimeText((prev) => {
-        if (prev) {
-          const completeText = (prev.text + " " + prev.interimText).trim();
-          if (completeText) {
-            finalizeTranscriptBlock(prev.speakerTag, prev.speakerName, completeText);
-          }
-        }
-        return null;
-      });
+      setRealtimeText(null);
     }
   }, [status]);
 
