@@ -61,8 +61,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Refs for auto-scroll
   const parentRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
-  const translationDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  const bufferedBlockRef = useRef<any>(null);
+  const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
 
   // Load meeting configs on mount
   useEffect(() => {
@@ -180,56 +179,84 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[dgData.speakerTag] = color;
       }
 
-      // 1. If partial (interim results), display at the bottom of the list
-      if (!dgData.isFinal) {
-        setPartialTranscript({
-          text: dgData.text,
-          speakerTag: dgData.speakerTag,
-        });
-        return;
-      }
-
-      // 2. Once finalized, clear partial block
-      setPartialTranscript(null);
-
       // Find speaker display name
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
+      // 1. If partial (interim results), display inside the active card for this speaker tag
+      if (!dgData.isFinal) {
+        setTranscripts((prev) => {
+          // Find the last active block for this speaker tag
+          const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
+
+          if (activeBlockIndex !== undefined) {
+            return prev.map((t, idx) => idx === activeBlockIndex ? { ...t, interimText: dgData.text } : t);
+          }
+
+          // Otherwise create a new active block for this speaker tag
+          const newBlock = {
+            id: Math.random().toString(36).substr(2, 9),
+            text: "",
+            interimText: dgData.text,
+            correctedText: "",
+            translatedText: "",
+            speakerTag: dgData.speakerTag,
+            speakerName,
+            startMs: dgData.startMs,
+            endMs: dgData.endMs,
+            confidence: dgData.confidence,
+            status: "Chờ dịch..." as any,
+          };
+          return [...prev, newBlock];
+        });
+        return;
+      }
+
+      // 2. Once finalized, clear active speaker timeout
+      if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
+        clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
+        delete activeSpeakerTimeouts.current[dgData.speakerTag];
+      }
+
       setTranscripts((prev) => {
-         const lastBlock = prev.length > 0 ? prev[prev.length - 1] : null;
-         let newPrev = [...prev];
+         // Find the last active block for this speaker tag
+         const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
 
-         // If the speaker changed and the last block was waiting, flush it immediately!
-         if (lastBlock && lastBlock.speakerTag !== dgData.speakerTag && lastBlock.status === "Chờ dịch...") {
-            processTranscriptBlock(lastBlock);
-            newPrev[newPrev.length - 1] = { ...lastBlock, status: "Đang xử lý..." };
-         }
-
-         const currentLastBlock = newPrev.length > 0 ? newPrev[newPrev.length - 1] : null;
-
-         // Check if we can merge with the last block (same speaker and waiting for translation)
-         if (currentLastBlock && currentLastBlock.speakerTag === dgData.speakerTag && currentLastBlock.status === "Chờ dịch...") {
+         if (activeBlockIndex !== undefined) {
+            const currentBlock = prev[activeBlockIndex];
             const updatedBlock = {
-               ...currentLastBlock,
-               text: (currentLastBlock.text + " " + dgData.text).trim(),
+               ...currentBlock,
+               text: (currentBlock.text + " " + dgData.text).trim(),
+               interimText: "",
                endMs: dgData.endMs,
-               confidence: (currentLastBlock.confidence + dgData.confidence) / 2
+               confidence: (currentBlock.confidence + dgData.confidence) / 2
             };
             
-            // If Deepgram says this is the end of the speech (speechFinal is true), trigger translation!
             if (dgData.speechFinal) {
-               updatedBlock.status = "Đang xử lý...";
+               updatedBlock.status = "Đang sửa AI...";
                processTranscriptBlock(updatedBlock);
+            } else {
+               // Reset safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
+               activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+                  setTranscripts(currentPrev => {
+                     const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
+                     if (block) {
+                        processTranscriptBlock(block);
+                        return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+                     }
+                     return currentPrev;
+                  });
+               }, 7000);
             }
 
-            return [...newPrev.slice(0, -1), updatedBlock];
+            return prev.map((t, idx) => idx === activeBlockIndex ? updatedBlock : t);
          }
 
          // Otherwise create a NEW block
          const newBlock = {
            id: Math.random().toString(36).substr(2, 9),
            text: dgData.text,
+           interimText: "",
            correctedText: "",
            translatedText: "",
            speakerTag: dgData.speakerTag,
@@ -237,14 +264,26 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
            startMs: dgData.startMs,
            endMs: dgData.endMs,
            confidence: dgData.confidence,
-           status: (dgData.speechFinal ? "Đang xử lý..." : "Chờ dịch...") as any,
+           status: (dgData.speechFinal ? "Đang sửa AI..." : "Chờ dịch...") as any,
          };
 
          if (dgData.speechFinal) {
             processTranscriptBlock(newBlock);
+         } else {
+            // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
+            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
+               setTranscripts(currentPrev => {
+                  const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
+                  if (block) {
+                     processTranscriptBlock(block);
+                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
+                  }
+                  return currentPrev;
+               });
+            }, 7000);
          }
 
-         return [...newPrev, newBlock];
+         return [...prev, newBlock];
       });
     },
     [speakers, meetingId]
@@ -852,6 +891,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                           {group.items.map((item: any) => (
                             <p key={item.id} className={`text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed ${item.confidence < 0.7 ? "bg-amber-50/50 dark:bg-amber-900/20 text-amber-950 dark:text-amber-50 p-2 rounded-lg" : ""}`}>
                               {item.text}
+                              {item.interimText && (
+                                <span className="text-slate-400 dark:text-slate-500 font-normal italic ml-1">
+                                  {item.interimText}...
+                                </span>
+                              )}
                             </p>
                           ))}
                         </div>
@@ -883,20 +927,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </div>
                 );
               })}
-
-              {/* Real-time interim transcript, displayed as a simple gray line flowing at the bottom */}
-              {partialTranscript && (
-                <div className="flex items-center space-x-2 pl-4 py-2 animate-in fade-in duration-200">
-                  <span className="w-1.5 h-1.5 rounded-full animate-pulse shadow-sm" style={{ backgroundColor: speakerColorsRef.current[partialTranscript.speakerTag] || "#3b82f6" }}></span>
-                  <span className="text-xs text-slate-400 dark:text-slate-500 font-medium italic">
-                    {partialTranscript.text}...
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Empty Room Instruction */}
-            {transcripts.length === 0 && !partialTranscript && (
+            {transcripts.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-center p-8">
                 <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
                 <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>
