@@ -45,7 +45,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
-  const [chunkSize, setChunkSize] = useState(100);
+  const [chunkSize, setChunkSize] = useState(250);
 
   // Dynamic speaker colors mapping
   const speakerColorsRef = useRef<{ [key: string]: string }>({});
@@ -231,12 +231,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 3. Once finalized, clear active speaker timeout
-      if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
-        clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
-        delete activeSpeakerTimeouts.current[dgData.speakerTag];
-      }
-
+      // 3. Once finalized, process immediately
       setTranscripts((prev) => {
          // Find the last active block for this speaker tag
          const activeBlockIndex = prev.map((t, idx) => ({ ...t, idx })).reverse().find(t => t.speakerTag === dgData.speakerTag && t.status === "Chờ dịch...")?.idx;
@@ -248,21 +243,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                text: (currentBlock.text + " " + dgData.text).trim(),
                interimText: "",
                endMs: dgData.endMs,
-               confidence: (currentBlock.confidence + dgData.confidence) / 2
+               confidence: (currentBlock.confidence + dgData.confidence) / 2,
+               status: "Đang sửa AI..." as any,
             };
-            
-            // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
-            activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-               setTranscripts(currentPrev => {
-                  const block = currentPrev.find(t => t.id === updatedBlock.id && t.status === "Chờ dịch...");
-                  if (block) {
-                     processTranscriptBlock(block);
-                     return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-                  }
-                  return currentPrev;
-               });
-            }, 7000);
-
+            processTranscriptBlock(updatedBlock);
             return prev.map((t, idx) => idx === activeBlockIndex ? updatedBlock : t);
          }
 
@@ -278,21 +262,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
            startMs: dgData.startMs,
            endMs: dgData.endMs,
            confidence: dgData.confidence,
-           status: "Chờ dịch..." as any,
+           status: "Đang sửa AI..." as any,
          };
 
-         // Set safety timeout to auto-finalize this block if the speaker pauses for 7 seconds
-         activeSpeakerTimeouts.current[dgData.speakerTag] = setTimeout(() => {
-            setTranscripts(currentPrev => {
-               const block = currentPrev.find(t => t.id === newBlock.id && t.status === "Chờ dịch...");
-               if (block) {
-                  processTranscriptBlock(block);
-                  return currentPrev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t);
-               }
-               return currentPrev;
-            });
-         }, 7000);
-
+         processTranscriptBlock(newBlock);
          return [...prev, newBlock];
       });
     },

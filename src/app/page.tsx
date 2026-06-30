@@ -49,7 +49,7 @@ export default function Dashboard() {
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
-  const [chunkSize, setChunkSize] = useState(100); // ms
+  const [chunkSize, setChunkSize] = useState(250); // ms
 
   // Mic level testing states
   const [isTestingMic, setIsTestingMic] = useState(false);
@@ -357,7 +357,7 @@ export default function Dashboard() {
     setEchoCancellation(true);
     setNoiseSuppression(true);
     setAutoGainControl(true);
-    setChunkSize(100);
+    setChunkSize(250);
     stopMicTest();
   };
 
