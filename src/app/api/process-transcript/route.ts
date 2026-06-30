@@ -45,32 +45,22 @@ export async function POST(request: Request) {
     const context = meeting.meeting_context;
 
     const systemPrompt = `
-Bạn là một trợ lý chỉnh sửa và dịch thuật hội thoại thông minh.
-Nhiệm vụ của bạn là nhận câu thoại gốc từ hệ thống Speech-to-Text, chèn thêm dấu câu phù hợp, và dịch sang ngôn ngữ đích.
+You are a professional and precise translator.
+Translate the following speech transcript directly from its source language (around ${sourceLang}) to the target language (${targetLang}).
 
-QUY TẮC BẤT BIẾN CHO CORRECTED TEXT (---CORRECTED---):
-1. Bạn CHỈ ĐƯỢC PHÉP thêm các dấu câu (chấm, phẩy, hỏi, chấm than...) và viết hoa chữ cái đầu câu hoặc danh từ riêng (nếu cần).
-2. Bạn TUYỆT ĐỐI KHÔNG ĐƯỢC sửa bất kỳ từ ngữ nào, không tự ý thay đổi cách viết, không đảo thứ tự từ, không sửa chính tả, không diễn đạt lại, không thêm/bớt từ, không tối ưu hóa câu văn. Bạn phải giữ nguyên 100% từ ngữ do Deepgram trả về.
-3. Ví dụ:
-   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Hôm nay tôi muốn đi Tokyo ngày mai." (Đúng quy tắc)
-   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Ngày mai tôi muốn đi Tokyo." (SAI QUY TẮC - vi phạm do đổi thứ tự từ và cấu trúc)
-   - Gốc: "hom nay toi muon di tokyo ngay mai" -> Sửa: "Tôi dự định sẽ đi Tokyo vào ngày mai." (SAI QUY TẮC - vi phạm do diễn đạt lại)
+CONTEXT:
+${context || "Conversation between professional partners"}
 
-BẠN BẮT BUỘC PHẢI TRẢ VỀ ĐÚNG ĐỊNH DẠNG TEXT DƯỚI ĐÂY (không dùng JSON, không dùng Markdown code block):
+GLOSSARY (Must apply if matching words are found):
+${JSON.stringify(glossaryList || [])}
 
----CORRECTED---
-(văn bản đã chèn dấu câu gốc. TUYỆT ĐỐI GIỮ NGUYÊN 100% TỪ NGỮ GỐC, CHỈ THÊM DẤU CÂU VÀ VIẾT HOA ĐẦU CÂU)
----TRANSLATED---
-(văn bản dịch sát nghĩa sang ${targetLang}. Sử dụng Glossary dưới đây nếu có)
----ACTION_ITEMS---
-(danh sách action item dạng JSON array hợp lệ: [{"description": "...", "owner": "...", "deadline": "..."}]. Nếu không có thì trả về [])
----CONFIDENCE---
-(điểm tự tin từ 0.0 đến 1.0, ví dụ 0.95)
+RULES:
+1. Translate the text accurately, capturing the exact context.
+2. TUYỆT ĐỐI KHÔNG viết lại câu, không rút gọn, không mở rộng nội dung, không giải thích hoặc diễn giải theo ý bạn.
+3. Giữ nguyên nghĩa gốc, dịch tự nhiên sang ngôn ngữ đích.
+4. Chỉ trả về văn bản dịch duy nhất. Không thêm nhãn hoặc giải thích gì thêm.
 
-Ngữ cảnh: "${context}"
-Glossary: ${JSON.stringify(glossaryList || [])}
-
-Câu thoại cần xử lý:
+Transcript:
 "${original_text}"
 `;
 
@@ -82,21 +72,10 @@ Câu thoại cần xử lý:
       const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
       result = await fallbackModel.generateContent(systemPrompt);
     }
-    const fullText = result.response.text();
-
-    const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);
-    const translatedMatch = fullText.match(/---TRANSLATED---\s*([\s\S]*?)(?=\s*---|$)/);
-    const actionItemsMatch = fullText.match(/---ACTION_ITEMS---\s*([\s\S]*?)(?=\s*---|$)/);
-    const confidenceMatch = fullText.match(/---CONFIDENCE---\s*([\s\S]*?)(?=\s*---|$)/);
-
-    const finalCorrected = correctedMatch ? correctedMatch[1].trim() : original_text;
-    const finalTranslated = translatedMatch ? translatedMatch[1].trim() : "";
-    const finalConfidence = confidenceMatch ? parseFloat(confidenceMatch[1].trim()) : confidence;
-    
-    let finalActionItems = [];
-    try {
-      if (actionItemsMatch) finalActionItems = JSON.parse(actionItemsMatch[1].trim());
-    } catch (e) {}
+    const finalTranslated = result.response.text().trim();
+    const finalCorrected = original_text;
+    const finalConfidence = confidence;
+    const finalActionItems: any[] = [];
 
     // Resolve Speaker ID
     let speakerId = null;

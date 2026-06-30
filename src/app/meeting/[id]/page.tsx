@@ -72,7 +72,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
   const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
-  const activeRealtimeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load meeting configs on mount
   useEffect(() => {
@@ -212,57 +211,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[dgData.speakerTag] = color;
       }
 
-      let activeSpeakersList = speakers;
-
-      // Detect language from finalized text to autocorrect speaker tag mapping
-      if (dgData.isFinal && dgData.text.trim()) {
-        const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
-        const detectedLang = isJp ? "ja" : "vi";
-        
-        const currentSpeaker = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
-        
-        if (currentSpeaker && currentSpeaker.language_code !== "auto" && currentSpeaker.language_code !== detectedLang) {
-          const matchingSpeaker = speakers.find((s) => s.language_code === detectedLang && s.speaker_tag !== dgData.speakerTag);
-          
-          if (matchingSpeaker) {
-            console.log(`[Speaker AutoCorrect] Mismatch detected. Swapping speaker tags: ${currentSpeaker.display_name} <-> ${matchingSpeaker.display_name}`);
-            
-            const oldTag1 = currentSpeaker.speaker_tag;
-            const oldTag2 = matchingSpeaker.speaker_tag;
-            
-            // Swap tags locally
-            activeSpeakersList = speakers.map(s => {
-              if (s.id === currentSpeaker.id) return { ...s, speaker_tag: oldTag2 };
-              if (s.id === matchingSpeaker.id) return { ...s, speaker_tag: oldTag1 };
-              return s;
-            });
-            
-            setSpeakers(activeSpeakersList);
-            
-            // Update in database asynchronously
-            Promise.all([
-              supabase.from("speakers").update({ speaker_tag: oldTag2 }).eq("id", currentSpeaker.id),
-              supabase.from("speakers").update({ speaker_tag: oldTag1 }).eq("id", matchingSpeaker.id)
-            ]).catch(err => console.error("Error updating swapped speaker tags in DB:", err));
-            
-            // Swap colors in ref
-            const col1 = speakerColorsRef.current[oldTag1];
-            const col2 = speakerColorsRef.current[oldTag2];
-            speakerColorsRef.current[oldTag1] = col2;
-            speakerColorsRef.current[oldTag2] = col1;
-          }
-        }
-      }
-
       // Find speaker display name
-      const sp = activeSpeakersList.find((s) => s.speaker_tag === dgData.speakerTag);
+      const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
-
-      // Clear the active 3-second silence timer because new speech activity (interim or final) has arrived!
-      if (activeRealtimeTimeoutRef.current) {
-        clearTimeout(activeRealtimeTimeoutRef.current);
-        activeRealtimeTimeoutRef.current = null;
-      }
 
       // 1. If interim (not final): update the realtime card in transcripts state and return
       if (!dgData.isFinal) {
@@ -280,11 +231,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               return updated;
             }
 
-            // Condition 2: Speaker changed! Immediately finalize the previous speaker's realtime card!
+            // Finalize previous realtime card if speaker changed
             if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
               const oldBlock = {
                 ...updated[lastIdx],
-                status: "Đang sửa AI..." as any,
+                status: "processing" as any,
               };
               updated[lastIdx] = oldBlock;
               processTranscriptBlock(oldBlock);
@@ -321,8 +272,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           // Check if last block is realtime and matches current speaker
           if (lastIdx >= 0 && updated[lastIdx].status === "realtime" && updated[lastIdx].speakerTag === dgData.speakerTag) {
             const currentBlock = updated[lastIdx];
-            const isJp = /[\u3040-\u309F\u30A0-\u30FF]/.test(dgData.text);
-            const combinedText = joinWithPunctuation(currentBlock.text, dgData.text, isJp);
+            const combinedText = (currentBlock.text + " " + dgData.text).trim();
 
             const updatedBlock = {
               ...currentBlock,
@@ -330,40 +280,29 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               interimText: "",
               endMs: dgData.endMs || Date.now(),
               confidence: (currentBlock.confidence + dgData.confidence) / 2,
-              status: "realtime" as any, // ALWAYS keep status as realtime!
+              status: (dgData.speechFinal ? "processing" : "realtime") as any,
             };
 
             updated[lastIdx] = updatedBlock;
 
-            // Start the 3-second silence timer to finalize this block
-            activeRealtimeTimeoutRef.current = setTimeout(() => {
-              setTranscripts((currentPrev) => {
-                const idx = currentPrev.length - 1;
-                if (idx >= 0 && currentPrev[idx].id === updatedBlock.id && currentPrev[idx].status === "realtime") {
-                  const items = [...currentPrev];
-                  const finalized = { ...items[idx], status: "Đang sửa AI..." as any };
-                  items[idx] = finalized;
-                  processTranscriptBlock(finalized);
-                  return items;
-                }
-                return currentPrev;
-              });
-            }, 3000);
+            if (dgData.speechFinal) {
+              processTranscriptBlock(updatedBlock);
+            }
 
             return updated;
           }
 
-          // Condition 2: Speaker changed! Immediately finalize the previous speaker's realtime card!
+          // Finalize previous realtime card if speaker changed
           if (lastIdx >= 0 && updated[lastIdx].status === "realtime") {
             const oldBlock = {
               ...updated[lastIdx],
-              status: "Đang sửa AI..." as any,
+              status: "processing" as any,
             };
             updated[lastIdx] = oldBlock;
             processTranscriptBlock(oldBlock);
           }
 
-          // Create a new block (starts as realtime)
+          // Create a new block
           const newBlock = {
             id: Math.random().toString(36).substr(2, 9),
             text: dgData.text,
@@ -375,23 +314,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             startMs: dgData.startMs || Date.now(),
             endMs: dgData.endMs || Date.now(),
             confidence: dgData.confidence,
-            status: "realtime" as any, // ALWAYS start as realtime!
+            status: (dgData.speechFinal ? "processing" : "realtime") as any,
           };
 
-          // Start the 3-second silence timer to finalize this block
-          activeRealtimeTimeoutRef.current = setTimeout(() => {
-            setTranscripts((currentPrev) => {
-              const idx = currentPrev.length - 1;
-              if (idx >= 0 && currentPrev[idx].id === newBlock.id && currentPrev[idx].status === "realtime") {
-                const items = [...currentPrev];
-                const finalized = { ...items[idx], status: "Đang sửa AI..." as any };
-                items[idx] = finalized;
-                processTranscriptBlock(finalized);
-                return items;
-              }
-              return currentPrev;
-            });
-          }, 3000);
+          if (dgData.speechFinal) {
+            processTranscriptBlock(newBlock);
+          }
 
           return [...updated, newBlock];
         });
@@ -402,7 +330,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   const processTranscriptBlock = async (block: any) => {
     try {
-      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "Đang sửa AI..." } : t));
+      setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "processing" } : t));
       const res = await fetch("/api/process-transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -417,7 +345,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       });
 
       if (!res.ok) {
-        throw new Error("Gemini processing failed");
+        throw new Error("Translation failed");
       }
 
       const data = await res.json();
@@ -426,9 +354,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           t.id === block.id
             ? {
                 ...t,
-                correctedText: data.corrected,
+                correctedText: data.corrected || block.text,
                 translatedText: data.translated,
-                status: "Translated",
+                status: "completed",
               }
             : t
         )
@@ -444,7 +372,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Manual retry for failed AI block
   const handleRetryAI = (block: any) => {
     setTranscripts((prev) =>
-      prev.map((t) => (t.id === block.id ? { ...t, status: "Final" } : t))
+      prev.map((t) => (t.id === block.id ? { ...t, status: "processing" } : t))
     );
     processTranscriptBlock(block);
   };
@@ -497,7 +425,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           const updated = [...prev];
           const oldBlock = {
             ...updated[lastIdx],
-            status: "Đang sửa AI..." as any,
+            status: "processing" as any,
           };
           updated[lastIdx] = oldBlock;
           processTranscriptBlock(oldBlock);
@@ -701,7 +629,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // If in FULL SCREEN Mode, render minimal clean caption view
   if (isFullScreen) {
-    const lastTxs = transcripts.slice(-3); // Get last 3 lines
+    const lastTxs = transcripts.filter(t => t.status !== "realtime").slice(-3); // Get last 3 stable lines
     return (
       <div className="min-h-screen flex flex-col bg-slate-900 text-white p-12 justify-center relative">
         {/* Exit Full Screen Button */}
@@ -970,8 +898,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                             {/* Group Status (Right side of the Header) */}
                             {!isGroupRealtime && (() => {
                               const hasError = group.items.some((i: any) => i.status === "Dịch lỗi - Thử lại");
-                              const needsReview = group.items.some((i: any) => i.confidence < 0.7);
-                              const processingItem = group.items.find((i: any) => ["Đang xử lý...", "Đang dịch...", "Đang phân tích...", "Final", "Đang sửa AI..."].includes(i.status));
+                                                             const needsReview = group.items.some((i: any) => i.confidence < 0.7);
+                              const processingItem = group.items.find((i: any) => i.status === "processing");
 
                               return (
                                 <div className="flex items-center space-x-2">
@@ -990,16 +918,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                                       <span>Thử lại</span>
                                     </button>
                                   ) : processingItem ? (() => {
-                                     let statusText = "Đang dịch";
-                                     if (processingItem.status === "Đang sửa AI...") {
-                                       statusText = "Đang dịch";
-                                     } else if (processingItem.status === "Đang dịch...") {
-                                       statusText = "Đang dịch";
-                                     } else if (processingItem.status === "Đang xử lý...") {
-                                       statusText = "Đang dịch";
-                                     } else if (processingItem.correctedText && !processingItem.translatedText) {
-                                        statusText = "Đang dịch";
-                                      }
+                                     const statusText = "Đang dịch";
 
                                     return (
                                       <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
