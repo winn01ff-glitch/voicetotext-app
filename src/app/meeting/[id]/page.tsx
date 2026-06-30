@@ -45,6 +45,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   }, [realtimeText]);
 
   const [actionItems, setActionItems] = useState<any[]>([]);
+  const [glossary, setGlossary] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // UI state
@@ -152,6 +153,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         .select("*")
         .eq("meeting_id", meetingId);
       setActionItems(acts || []);
+
+      // Fetch glossary
+      const { data: glo } = await supabase
+        .from("glossary")
+        .select("*")
+        .eq("meeting_id", meetingId);
+      setGlossary(glo || []);
 
       setLoading(false);
     } catch (err) {
@@ -329,6 +337,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   } = useDeepgramLive({
     meetingId,
     sourceLanguage: meeting?.source_language || "auto",
+    glossary,
     chunkSize,
     echoCancellation,
     noiseSuppression,

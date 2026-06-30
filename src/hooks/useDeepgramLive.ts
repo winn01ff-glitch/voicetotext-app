@@ -10,6 +10,7 @@ interface SpeakerInfo {
 interface UseDeepgramLiveProps {
   meetingId: string | null;
   sourceLanguage: string; // 'auto', 'vi', 'en', 'ja'
+  glossary?: any[];
   chunkSize: number; // 80 to 150ms
   echoCancellation: boolean;
   noiseSuppression: boolean;
@@ -31,6 +32,7 @@ interface UseDeepgramLiveProps {
 export function useDeepgramLive({
   meetingId,
   sourceLanguage,
+  glossary = [],
   chunkSize = 100,
   echoCancellation,
   noiseSuppression,
@@ -182,6 +184,24 @@ export function useDeepgramLive({
     } else {
       // Deepgram live streaming requires `language=multi` for automatic language detection.
       queryParams.set("language", "multi");
+    }
+
+    // Add default keywords for biasing if Japanese (ja) or Vietnamese (vi)
+    if (sourceLanguage === "ja") {
+      const defaultJpKeywords = ["クレーン", "玉掛け", "敷鉄板", "吊りクランプ", "相判", "ワイヤーロープ", "安全帯", "ヘルメット", "シャックル"];
+      defaultJpKeywords.forEach((k) => queryParams.append("keywords", `${k}:2`));
+    } else if (sourceLanguage === "vi") {
+      const defaultViKeywords = ["cần cẩu", "móc cáp", "tấm sắt", "kẹp cẩu", "xi nhan", "dây cáp"];
+      defaultViKeywords.forEach((k) => queryParams.append("keywords", `${k}:2`));
+    }
+
+    // Add user defined glossary keywords for biasing
+    if (glossary && glossary.length > 0) {
+      glossary.forEach((item: any) => {
+        if (item.source && item.source.trim()) {
+          queryParams.append("keywords", `${item.source.trim()}:2`);
+        }
+      });
     }
 
     const wsUrl = `wss://api.deepgram.com/v1/listen?${queryParams.toString()}`;
