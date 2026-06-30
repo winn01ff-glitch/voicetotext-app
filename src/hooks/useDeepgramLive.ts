@@ -53,6 +53,7 @@ export function useDeepgramLive({
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const audioQueueRef = useRef<Blob[]>([]);
 
   const reconnectCountRef = useRef<number>(0);
   const maxReconnects = 5;
@@ -210,8 +211,13 @@ export function useDeepgramLive({
 
     return new Promise((resolve, reject) => {
       ws.onopen = () => {
-        console.log("[Deepgram WS] WebSocket connected successfully");
+        console.log("[Deepgram WS] WebSocket connected successfully. Flushing audio queue if any...");
         reconnectCountRef.current = 0;
+        // Flush queue
+        while (audioQueueRef.current.length > 0) {
+          const queuedBlob = audioQueueRef.current.shift();
+          if (queuedBlob) ws.send(queuedBlob);
+        }
         resolve(ws);
       };
       ws.onerror = (err) => {
@@ -228,13 +234,14 @@ export function useDeepgramLive({
       return;
     }
     isIntentionalStop.current = false;
+    audioQueueRef.current = []; // Clear any residual queue
     setStatus("recording");
     onStatusChange("recording");
 
-    let ws;
-    let stream;
+    let stream: MediaStream;
     try {
-      console.log("[Deepgram WS] Connecting to Deepgram and requesting microphone stream in parallel...");
+      // 1. Instantly capture microphone stream to begin recording with zero lag
+      console.log("[Deepgram WS] Getting microphone stream...");
       const constraints: MediaStreamConstraints = {
         audio: {
           deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
@@ -243,106 +250,118 @@ export function useDeepgramLive({
           autoGainControl,
         },
       };
-
-      const results = await Promise.all([
-        connectDeepgram(),
-        audioStreamRef.current ? Promise.resolve(audioStreamRef.current) : navigator.mediaDevices.getUserMedia(constraints)
-      ]);
-
-      ws = results[0];
-      stream = results[1];
-      webSocketRef.current = ws;
+      
+      stream = audioStreamRef.current 
+        ? audioStreamRef.current 
+        : await navigator.mediaDevices.getUserMedia(constraints);
+        
       audioStreamRef.current = stream;
       startVolumeAnalysis(stream);
     } catch (err) {
-      console.error("[Deepgram WS] Initialization failed in startRecording:", err);
+      console.error("[MediaRecorder] Microphone access failed:", err);
       setStatus("failed");
       onStatusChange("failed");
-      onError("Không thể kết nối hoặc thiết lập micro. Vui lòng kiểm tra quyền thiết bị và API key.");
+      onError("Không thể truy cập Microphone. Vui lòng kiểm tra quyền thiết bị.");
       return;
     }
 
     try {
-      // Start MediaRecorder (sending raw audio bytes to WebSocket)
+      // 2. Initialize and start MediaRecorder instantly to prevent any lost words
       const options = { mimeType: "audio/webm;codecs=opus" };
       let mediaRecorder: MediaRecorder;
       try {
-        mediaRecorder = new MediaRecorder(audioStreamRef.current, options);
+        mediaRecorder = new MediaRecorder(stream, options);
       } catch (e) {
-        // Fallback if mimeType is not supported on this browser
         console.warn("[MediaRecorder] mimeType 'audio/webm;codecs=opus' not supported, falling back to default recorder options");
-        mediaRecorder = new MediaRecorder(audioStreamRef.current);
+        mediaRecorder = new MediaRecorder(stream);
       }
 
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          ws.send(event.data);
+        if (event.data.size > 0) {
+          const ws = webSocketRef.current;
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            // Flush any buffered chunks first
+            while (audioQueueRef.current.length > 0) {
+              const queuedBlob = audioQueueRef.current.shift();
+              if (queuedBlob) ws.send(queuedBlob);
+            }
+            ws.send(event.data);
+          } else {
+            // Queue chunks in memory while connection is warming up
+            audioQueueRef.current.push(event.data);
+          }
         }
       };
 
-      // Start capturing in chunks (configurable chunk size, e.g. 100ms)
       console.log(`[MediaRecorder] Starting recorder with timeslice: ${chunkSize}ms`);
       mediaRecorder.start(chunkSize);
 
-      // Setup WebSocket event handlers
-      ws.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        const transcript = data.channel?.alternatives?.[0]?.transcript;
+      // 3. Connect to Deepgram WebSocket asynchronously in the background
+      console.log("[Deepgram WS] Establishing Deepgram connection in background...");
+      connectDeepgram().then((ws) => {
+        webSocketRef.current = ws;
 
-        if (transcript) {
-          const isFinal = data.is_final;
-          const words = data.channel.alternatives[0].words || [];
-          
-          // Determine speaker tag
-          let speakerTag = "speaker_0";
-          if (words.length > 0 && typeof words[0].speaker === "number") {
-            speakerTag = `speaker_${words[0].speaker}`;
+        // Setup WebSocket event handlers
+        ws.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+          const transcript = data.channel?.alternatives?.[0]?.transcript;
+
+          if (transcript) {
+            const isFinal = data.is_final;
+            const words = data.channel.alternatives[0].words || [];
+            
+            let speakerTag = "speaker_0";
+            if (words.length > 0 && typeof words[0].speaker === "number") {
+              speakerTag = `speaker_${words[0].speaker}`;
+            }
+
+            let startMs = 0;
+            let endMs = 0;
+            if (words.length > 0) {
+              startMs = Math.round(words[0].start * 1000);
+              endMs = Math.round(words[words.length - 1].end * 1000);
+            }
+
+            const confidence = data.channel.alternatives[0].confidence || 1.0;
+
+            onTranscript({
+              text: transcript,
+              isFinal,
+              speechFinal: data.speech_final || false,
+              speakerTag,
+              startMs,
+              endMs,
+              confidence,
+            });
           }
+        };
 
-          // Calculate start_ms and end_ms
-          let startMs = 0;
-          let endMs = 0;
-          if (words.length > 0) {
-            startMs = Math.round(words[0].start * 1000);
-            endMs = Math.round(words[words.length - 1].end * 1000);
+        ws.onclose = (event) => {
+          console.log(`[Deepgram WS] Connection closed. Code: ${event.code}, Reason: ${event.reason || "None"}`);
+          if (!isIntentionalStop.current && reconnectCountRef.current < maxReconnects) {
+            reconnectCountRef.current++;
+            console.warn(`WebSocket disconnected. Retrying reconnection ${reconnectCountRef.current}/${maxReconnects} in 2s...`);
+            setTimeout(() => {
+              startRecording();
+            }, 2000);
+          } else if (!isIntentionalStop.current) {
+            setStatus("failed");
+            onStatusChange("failed");
+            onError("Kết nối WebSocket với Deepgram bị mất và không thể khôi phục.");
           }
+        };
+      }).catch((err) => {
+        console.error("[Deepgram WS] Connection failed in background:", err);
+        onError("Không thể kết nối đến máy chủ Deepgram.");
+      });
 
-          const confidence = data.channel.alternatives[0].confidence || 1.0;
-
-          // Push transcript event to parent UI
-          onTranscript({
-            text: transcript,
-            isFinal,
-            speechFinal: data.speech_final || false,
-            speakerTag,
-            startMs,
-            endMs,
-            confidence,
-          });
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log(`[Deepgram WS] Connection closed. Code: ${event.code}, Reason: ${event.reason || "None"}`);
-        if (!isIntentionalStop.current && reconnectCountRef.current < maxReconnects) {
-          reconnectCountRef.current++;
-          console.warn(`WebSocket disconnected. Retrying reconnection ${reconnectCountRef.current}/${maxReconnects} in 2s...`);
-          setTimeout(() => {
-            startRecording();
-          }, 2000);
-        } else if (!isIntentionalStop.current) {
-          setStatus("failed");
-          onStatusChange("failed");
-          onError("Kết nối WebSocket với Deepgram bị mất và không thể khôi phục.");
-        }
-      };
     } catch (err) {
-      console.error("[MediaRecorder] Initialization or recording failed:", err);
+      console.error("[MediaRecorder] Recording startup failed:", err);
       setStatus("failed");
       onStatusChange("failed");
-      onError("Lỗi khởi tạo bộ ghi âm hoặc kết nối luồng.");
+      onError("Lỗi khởi tạo bộ ghi âm.");
     }
   }, [meetingId, selectedDeviceId, echoCancellation, noiseSuppression, autoGainControl, chunkSize, connectDeepgram, startVolumeAnalysis, onTranscript, onStatusChange, onError]);
 
