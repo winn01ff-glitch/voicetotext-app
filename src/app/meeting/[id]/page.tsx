@@ -183,7 +183,21 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
       const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
 
-      // 1. If partial (interim results), display inside the active card for this speaker tag
+      // 1. If speaker changed (we got a transcript for a different speaker tag),
+      // immediately finalize and translate any waiting blocks of other speakers!
+      setTranscripts((prev) => {
+         let updated = [...prev];
+         prev.forEach((t) => {
+            if (t.speakerTag !== dgData.speakerTag && t.status === "Chờ dịch...") {
+               const blockToProcess = { ...t, status: "Đang sửa AI...", interimText: "" };
+               processTranscriptBlock(blockToProcess);
+               updated = updated.map(item => item.id === t.id ? blockToProcess : item);
+            }
+         });
+         return updated;
+      });
+
+      // 2. If partial (interim results), display inside the active card for this speaker tag
       if (!dgData.isFinal) {
         setTranscripts((prev) => {
           // Find the last active block for this speaker tag
@@ -212,7 +226,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 2. Once finalized, clear active speaker timeout
+      // 3. Once finalized, clear active speaker timeout
       if (activeSpeakerTimeouts.current[dgData.speakerTag]) {
         clearTimeout(activeSpeakerTimeouts.current[dgData.speakerTag]);
         delete activeSpeakerTimeouts.current[dgData.speakerTag];
@@ -889,8 +903,14 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         {/* Original Text Block */}
                         <div className="space-y-2">
                           {group.items.map((item: any) => (
-                            <p key={item.id} className={`text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed ${item.confidence < 0.7 ? "bg-amber-50/50 dark:bg-amber-900/20 text-amber-950 dark:text-amber-50 p-2 rounded-lg" : ""}`}>
-                              {item.text}
+                            <p key={item.id} className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed">
+                              {item.confidence < 0.7 ? (
+                                <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-0.5 rounded border border-red-100/50 dark:border-red-900/30">
+                                  {item.text}
+                                </span>
+                              ) : (
+                                item.text
+                              )}
                               {item.interimText && (
                                 <span className="text-slate-400 dark:text-slate-500 font-normal italic ml-1">
                                   {item.interimText}...

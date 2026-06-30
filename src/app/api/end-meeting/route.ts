@@ -95,7 +95,17 @@ Hãy trả về một đối tượng JSON khớp chính xác với cấu trúc 
 }
 `;
 
-    const aiResponse = await model.generateContent(summaryPrompt);
+    let aiResponse;
+    try {
+      aiResponse = await model.generateContent(summaryPrompt);
+    } catch (err) {
+      console.warn(`Summary model ${qualityModelName} failed, falling back to gemini-3.1-flash-lite:`, err);
+      const fallbackModel = genAI.getGenerativeModel({
+        model: "gemini-3.1-flash-lite",
+        generationConfig: { responseMimeType: "application/json" },
+      });
+      aiResponse = await fallbackModel.generateContent(summaryPrompt);
+    }
     const responseText = aiResponse.response.text();
     const summaryResult = JSON.parse(responseText);
 

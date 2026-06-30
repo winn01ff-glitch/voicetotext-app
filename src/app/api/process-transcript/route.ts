@@ -65,7 +65,14 @@ Câu thoại cần xử lý:
 "${original_text}"
 `;
 
-    const result = await model.generateContent(systemPrompt);
+    let result;
+    try {
+      result = await model.generateContent(systemPrompt);
+    } catch (err) {
+      console.warn(`Model ${modelName} failed, falling back to gemini-3.1-flash-lite:`, err);
+      const fallbackModel = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+      result = await fallbackModel.generateContent(systemPrompt);
+    }
     const fullText = result.response.text();
 
     const correctedMatch = fullText.match(/---CORRECTED---\s*([\s\S]*?)(?=\s*---|$)/);

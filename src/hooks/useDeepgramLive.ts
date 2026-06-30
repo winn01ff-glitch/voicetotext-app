@@ -174,7 +174,6 @@ export function useDeepgramLive({
       smart_format: "true",
       diarize: "true",
       interim_results: "true",
-      endpointing: "500", // Wait 500ms of silence before splitting sentences
     });
 
     if (sourceLanguage !== "auto") {
