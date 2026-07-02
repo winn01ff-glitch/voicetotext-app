@@ -1279,7 +1279,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 <div className="flex items-center space-x-1.5">
                   <span className={`w-1 h-1 rounded-full ${transcripts.some((t) => t.status === "processing") ? "bg-emerald-500 animate-ping" : "bg-slate-400 animate-pulse"}`}></span>
                   <span>
-                    {transcripts.some((t) => t.status === "processing") ? "Đang xử lý & Biên dịch..." : "Bản nháp hội thoại ghi nhận"}
+                    {transcripts.some((t) => t.status === "processing") ? "Đang xử lý & Biên dịch..." : "Bản nháp hiện tại"}
                   </span>
                 </div>
                 {transcripts.some((t) => t.status === "processing") ? (
@@ -1289,7 +1289,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </div>
                 ) : (
                   <div className="flex items-center space-x-2">
-                    <span className="text-[8px] text-slate-450 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded">
+                    <span className="hidden sm:inline-block text-[8px] text-slate-450 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded">
                       Tự động dịch sau 5s im lặng
                     </span>
                     <button
