@@ -182,6 +182,7 @@ export function useDeepgramLive({
       smart_format: "true",
       interim_results: "true",
       endpointing: "300", // Stabilize sentence finalization with 300ms pause threshold
+      diarize: "true", // Enable biometric speaker diarization
     });
 
     if (sourceLanguage !== "auto") {
@@ -293,9 +294,23 @@ export function useDeepgramLive({
             const isFinal = data.is_final;
             const words = data.channel.alternatives[0].words || [];
             
+            // Calculate predominant speaker tag
             let speakerTag = "speaker_0";
-            if (words.length > 0 && typeof words[0].speaker === "number") {
-              speakerTag = `speaker_${words[0].speaker}`;
+            if (words.length > 0) {
+              const speakerCounts: Record<number, number> = {};
+              let maxCount = 0;
+              let predominantSpeaker = 0;
+
+              for (const word of words) {
+                if (typeof word.speaker === "number") {
+                  speakerCounts[word.speaker] = (speakerCounts[word.speaker] || 0) + 1;
+                  if (speakerCounts[word.speaker] > maxCount) {
+                    maxCount = speakerCounts[word.speaker];
+                    predominantSpeaker = word.speaker;
+                  }
+                }
+              }
+              speakerTag = `speaker_${predominantSpeaker}`;
             }
 
             let startMs = 0;
