@@ -649,7 +649,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
     const timer = setTimeout(() => {
       processDraftsBatch();
-    }, 8000);
+    }, 5000);
 
     return () => clearTimeout(timer);
   }, [transcripts]);
@@ -1290,7 +1290,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 ) : (
                   <div className="flex items-center space-x-2">
                     <span className="text-[8px] text-slate-450 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded">
-                      Tự động dịch sau 8s im lặng
+                      Tự động dịch sau 5s im lặng
                     </span>
                     <button
                       onClick={(e) => {

@@ -181,6 +181,7 @@ export function useDeepgramLive({
       model: "nova-2",
       smart_format: "true",
       interim_results: "true",
+      endpointing: "300", // Stabilize sentence finalization with 300ms pause threshold
     });
 
     if (sourceLanguage !== "auto") {
