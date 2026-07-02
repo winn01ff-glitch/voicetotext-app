@@ -237,7 +237,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         }
       });
     }
-  }, [transcripts.length, isFullScreen]);
+  }, [
+    transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").length,
+    isFullScreen
+  ]);
 
   // Toast helper
   const addToast = (title: string, desc: string) => {
