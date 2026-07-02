@@ -1268,11 +1268,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           {/* Draft Preview Box: fixed height, lighter color, below live listening box */}
           {transcripts.some((t) => t.status === "draft" || t.status === "processing") ? (
             <div 
-              ref={draftsContainerRef}
-              className="mt-2 h-20 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 p-2.5 space-y-1 overflow-y-auto custom-scrollbar shadow-sm"
+              className="mt-2 h-20 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 p-2 flex flex-col justify-between shadow-sm"
             >
-              {/* Draft Box Header */}
-              <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider select-none">
+              {/* Draft Box Header: Fixed at the top, never scrolls away */}
+              <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 dark:text-slate-550 uppercase tracking-wider select-none shrink-0 pb-1 border-b border-slate-100/5 dark:border-slate-800/10">
                 <div className="flex items-center space-x-1.5">
                   <span className={`w-1 h-1 rounded-full ${transcripts.some((t) => t.status === "processing") ? "bg-emerald-500 animate-ping" : "bg-slate-400 animate-pulse"}`}></span>
                   <span>
@@ -1305,8 +1304,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 )}
               </div>
 
-              {/* Draft List */}
-              <div className="space-y-2">
+              {/* Draft List: Scrollable container */}
+              <div 
+                ref={draftsContainerRef}
+                className="flex-1 overflow-y-auto custom-scrollbar mt-1 pr-1 space-y-1.5"
+              >
                 {transcripts.filter((t) => t.status === "draft" || t.status === "processing").map((t) => {
                   const speakerColor = speakerColorsRef.current[t.speakerTag] || "#cbd5e1";
                   const isProcessing = t.status === "processing";
