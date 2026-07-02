@@ -59,6 +59,11 @@ export function useDeepgramLive({
   const maxReconnects = 5;
   const isIntentionalStop = useRef<boolean>(false);
 
+  const onTranscriptRef = useRef(onTranscript);
+  useEffect(() => {
+    onTranscriptRef.current = onTranscript;
+  }, [onTranscript]);
+
   // 1. Fetch input audio devices
   const refreshDevices = useCallback(async () => {
     try {
@@ -176,6 +181,8 @@ export function useDeepgramLive({
       model: "nova-2",
       smart_format: "true",
       interim_results: "true",
+      endpointing: "1000", // Wait for 1000ms of silence before finalizing a sentence
+      diarize: "true", // Enable speaker diarization to separate multiple speakers
     });
 
     if (sourceLanguage !== "auto") {
@@ -286,30 +293,63 @@ export function useDeepgramLive({
           if (transcript) {
             const isFinal = data.is_final;
             const words = data.channel.alternatives[0].words || [];
-            
-            let speakerTag = "speaker_0";
-            if (words.length > 0 && typeof words[0].speaker === "number") {
-              speakerTag = `speaker_${words[0].speaker}`;
+
+            if (isFinal && words.length > 0) {
+              // Calculate predominant speaker tag
+              const speakerCounts: Record<number, number> = {};
+              let maxCount = 0;
+              let predominantSpeaker = 0;
+
+              for (const word of words) {
+                if (typeof word.speaker === "number") {
+                  speakerCounts[word.speaker] = (speakerCounts[word.speaker] || 0) + 1;
+                  if (speakerCounts[word.speaker] > maxCount) {
+                    maxCount = speakerCounts[word.speaker];
+                    predominantSpeaker = word.speaker;
+                  }
+                }
+              }
+
+              const speakerTag = `speaker_${predominantSpeaker}`;
+              const startMs = Math.round(words[0].start * 1000);
+              const endMs = Math.round(words[words.length - 1].end * 1000);
+              const confidence = data.channel.alternatives[0].confidence || 1.0;
+
+              onTranscriptRef.current({
+                text: transcript,
+                isFinal: true,
+                speechFinal: data.speech_final || false,
+                speakerTag,
+                startMs,
+                endMs,
+                confidence,
+              });
+            } else {
+              // Fallback for interim results
+              let speakerTag = "speaker_0";
+              if (words.length > 0 && typeof words[0].speaker === "number") {
+                speakerTag = `speaker_${words[0].speaker}`;
+              }
+
+              let startMs = 0;
+              let endMs = 0;
+              if (words.length > 0) {
+                startMs = Math.round(words[0].start * 1000);
+                endMs = Math.round(words[words.length - 1].end * 1000);
+              }
+
+              const confidence = data.channel.alternatives[0].confidence || 1.0;
+
+              onTranscriptRef.current({
+                text: transcript,
+                isFinal,
+                speechFinal: data.speech_final || false,
+                speakerTag,
+                startMs,
+                endMs,
+                confidence,
+              });
             }
-
-            let startMs = 0;
-            let endMs = 0;
-            if (words.length > 0) {
-              startMs = Math.round(words[0].start * 1000);
-              endMs = Math.round(words[words.length - 1].end * 1000);
-            }
-
-            const confidence = data.channel.alternatives[0].confidence || 1.0;
-
-            onTranscript({
-              text: transcript,
-              isFinal,
-              speechFinal: data.speech_final || false,
-              speakerTag,
-              startMs,
-              endMs,
-              confidence,
-            });
           }
         };
 

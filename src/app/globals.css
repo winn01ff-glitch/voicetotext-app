@@ -120,3 +120,18 @@ svg.lucide {
 .animate-float {
   animation: float 3s ease-in-out infinite;
 }
+
+@keyframes flyUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fly-up {
+  animation: flyUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

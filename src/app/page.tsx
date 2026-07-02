@@ -35,8 +35,8 @@ export default function Dashboard() {
   const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
-    { speaker_tag: "speaker_0", display_name: "Tôi (Chủ tọa)", language_code: "vi" },
-    { speaker_tag: "speaker_1", display_name: "Đối tác Nhật", language_code: "ja" },
+    { speaker_tag: "speaker_0", display_name: "Tôi", language_code: "vi" },
+    { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
   ]);
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([
     { source: "NG", target: "不良", source_language: "en", target_language: "ja" },
@@ -49,7 +49,7 @@ export default function Dashboard() {
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
-  const [chunkSize, setChunkSize] = useState(250); // ms
+  const [chunkSize, setChunkSize] = useState(100); // ms
 
   // Mic level testing states
   const [isTestingMic, setIsTestingMic] = useState(false);
@@ -70,6 +70,18 @@ export default function Dashboard() {
       setIsDarkMode(true);
       document.documentElement.classList.add("dark");
     }
+
+    // Load saved audio configuration if any
+    const savedEcho = localStorage.getItem("meeting_echo_cancellation");
+    if (savedEcho !== null) setEchoCancellation(savedEcho !== "false");
+    const savedNoise = localStorage.getItem("meeting_noise_suppression");
+    if (savedNoise !== null) setNoiseSuppression(savedNoise !== "false");
+    const savedAGC = localStorage.getItem("meeting_auto_gain_control");
+    if (savedAGC !== null) setAutoGainControl(savedAGC !== "false");
+    const savedChunk = localStorage.getItem("meeting_chunk_size");
+    if (savedChunk !== null) setChunkSize(parseInt(savedChunk) || 100);
+    const savedDevice = localStorage.getItem("meeting_device_id");
+    if (savedDevice !== null) setSelectedDevice(savedDevice);
 
     fetchMeetings();
     checkUnfinishedMeeting();
@@ -348,8 +360,8 @@ export default function Dashboard() {
     setSourceLanguage("auto");
     setTargetLanguage("vi");
     setExpectedSpeakers([
-      { speaker_tag: "speaker_0", display_name: "Tôi (Chủ tọa)", language_code: "vi" },
-      { speaker_tag: "speaker_1", display_name: "Đối tác Nhật", language_code: "ja" },
+      { speaker_tag: "speaker_0", display_name: "Tôi", language_code: "vi" },
+      { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
     ]);
     setGlossary([
       { source: "NG", target: "不良", source_language: "en", target_language: "ja" },
@@ -357,7 +369,7 @@ export default function Dashboard() {
     setEchoCancellation(true);
     setNoiseSuppression(true);
     setAutoGainControl(true);
-    setChunkSize(250);
+    setChunkSize(100);
     stopMicTest();
   };
 
