@@ -101,11 +101,15 @@ TASK & STRICT RULES:
    - If a single raw transcript segment contains text spoken by different people (e.g. a question followed immediately by a response, or a Japanese sentence followed immediately by a Vietnamese/English sentence, or two different Japanese speaker voices), you MUST split this single segment into two or more separate turns in the JSON array.
    - **Crucially: Assign distinct, correct speaker tags (e.g. speaker_0 to the host, speaker_1 to the Japanese speaker) to each split turn! Do NOT assign the same speaker tag to both parts of the split conversation!**
 
-6. STRICT WORD PRESERVATION:
-   - Preserve the exact spoken vocabulary. Do NOT rewrite, summarize, or try to "improve" the speaker's grammar/speech. Do not omit any actual thoughts. Keep Japanese politeness levels exactly as spoken.
+6. ABSOLUTE WORD PRESERVATION & NO ARBITRARY REWRITING (CRITICAL):
+   - Treat the raw transcript text in RAW DIALOGUE SEQUENCE as the absolute truth of what was spoken live.
+   - You MUST NOT rewrite, paraphrase, summarize, or try to "improve" the speaker's grammar or sentence structure.
+   - Every word in your output 'original_text' MUST come directly from the raw input sequence. Do NOT add any extra greetings, filler words, politeness adaptations, or explanatory sentences that were not present in the raw transcript.
+   - Keep the original casual/polite register exactly as it was spoken.
+   - Only perform spelling corrections, glossary substitutions, gluing of split words (e.g. "住んでい" + "ます" -> "住んでいます"), and removal of repeated stutters (like "ずっとずっと..." -> "ずっと").
 
 7. TRANSLATION:
-   - Translate each grouped dialogue turn into "${targetLang}" contextually and naturally.
+   - Translate each dialogue turn into "${targetLang}" contextually, keeping the translation natural and faithful to the original words.
 
 OUTPUT FORMAT:
 Return a valid JSON object ONLY. Do not write any markdown code fences, do not write explanations.
