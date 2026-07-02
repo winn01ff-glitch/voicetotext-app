@@ -132,6 +132,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Refs for auto-scroll
   const parentRef = useRef<HTMLDivElement>(null);
   const draftsContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
   const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
 
@@ -229,13 +230,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // Re-scroll to bottom on new transcripts (only when a new card is added to prevent layout thrashing)
   useEffect(() => {
-    if (parentRef.current && !isFullScreen) {
-      const scrollContainer = parentRef.current;
-      requestAnimationFrame(() => {
-        if (scrollContainer) {
-          scrollContainer.scrollTop = scrollContainer.scrollHeight;
-        }
-      });
+    if (messagesEndRef.current && !isFullScreen) {
+      const timer = setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [
     transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").length,
@@ -1225,6 +1224,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </div>
                 );
               })}
+              {/* Scroll anchor */}
+              <div ref={messagesEndRef} className="h-2" />
             </div>
 
             {/* Empty Room Instruction */}
