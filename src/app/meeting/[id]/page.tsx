@@ -424,6 +424,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
       // 1. If interim (not final): update the separate realtime card state and return
       if (!dgData.isFinal) {
+        if (activeTimeoutRef.current) {
+          clearTimeout(activeTimeoutRef.current);
+          activeTimeoutRef.current = null;
+        }
         setRealtimeText({
           text: "",
           interimText: dgData.text,
@@ -433,8 +437,20 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 2. If final: clear realtime state and buffer it
-      setRealtimeText(null);
+      // 2. If final: show finalized text in the live box and schedule a clear after 3s of silence
+      setRealtimeText({
+        text: dgData.text,
+        interimText: "",
+        speakerTag: dgData.speakerTag,
+        speakerName,
+      });
+
+      if (activeTimeoutRef.current) {
+        clearTimeout(activeTimeoutRef.current);
+      }
+      activeTimeoutRef.current = setTimeout(() => {
+        setRealtimeText(null);
+      }, 3000);
 
       // Check current transcripts state from ref to avoid closures
       const currentTranscripts = transcriptsRef.current;
@@ -637,7 +653,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [status]);
 
-  // Auto-process drafts when silence is detected (5 seconds) & Auto-scroll drafts
+  // Auto-process drafts when silence is detected (2 seconds) & Auto-scroll drafts
   useEffect(() => {
     // Auto-scroll drafts container to bottom
     if (draftsContainerRef.current) {
@@ -649,7 +665,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
     const timer = setTimeout(() => {
       processDraftsBatch();
-    }, 5000);
+    }, 2000);
 
     return () => clearTimeout(timer);
   }, [transcripts]);
@@ -1290,7 +1306,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 ) : (
                   <div className="flex items-center space-x-2">
                     <span className="text-[8px] text-slate-450 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded">
-                      Tự động dịch sau 5s im lặng
+                      Tự động dịch sau 2s im lặng
                     </span>
                     <button
                       onClick={(e) => {
