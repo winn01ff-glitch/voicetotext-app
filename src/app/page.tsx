@@ -2337,12 +2337,12 @@ export default function Dashboard() {
       
       {/* TOASTS NOTIFICATIONS PANEL */}
       <style>{`
-        @keyframes toast-progress {
-          from { width: 100%; }
-          to { width: 0%; }
+        @keyframes toast-circle-progress {
+          from { stroke-dashoffset: 0; }
+          to { stroke-dashoffset: 62.83; }
         }
       `}</style>
-      <div className="fixed top-2 right-6 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
@@ -2350,32 +2350,32 @@ export default function Dashboard() {
               bg: "bg-emerald-50/95 dark:bg-emerald-950/90",
               title: "text-emerald-900 dark:text-emerald-300",
               desc: "text-emerald-700/90 dark:text-emerald-400/90",
-              bar: "bg-emerald-500",
-              btn: "text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-200"
+              circle: "text-emerald-500",
+              btn: "text-emerald-500 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-200"
             },
             warning: {
               border: "border-amber-100 dark:border-amber-900/50",
               bg: "bg-amber-50/95 dark:bg-amber-950/90",
               title: "text-amber-900 dark:text-amber-300",
               desc: "text-amber-700/90 dark:text-amber-400/90",
-              bar: "bg-amber-500",
-              btn: "text-amber-400 hover:text-amber-600 dark:hover:text-amber-200"
+              circle: "text-amber-500",
+              btn: "text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200"
             },
             error: {
               border: "border-red-100 dark:border-red-900/50",
               bg: "bg-red-50/95 dark:bg-red-950/90",
               title: "text-red-900 dark:text-red-300",
               desc: "text-red-700/90 dark:text-red-400/90",
-              bar: "bg-red-500",
-              btn: "text-red-400 hover:text-red-600 dark:hover:text-red-200"
+              circle: "text-red-500",
+              btn: "text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
             },
             info: {
               border: "border-blue-100 dark:border-blue-900/50",
               bg: "bg-blue-50/95 dark:bg-blue-950/90",
               title: "text-blue-900 dark:text-blue-300",
               desc: "text-blue-700/90 dark:text-blue-400/90",
-              bar: "bg-blue-500",
-              btn: "text-blue-400 hover:text-blue-600 dark:hover:text-blue-200"
+              circle: "text-blue-500",
+              btn: "text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200"
             }
           };
 
@@ -2384,26 +2384,45 @@ export default function Dashboard() {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto border ${style.border} ${style.bg} py-2 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-right-full fade-in duration-300`}
+              className={`pointer-events-auto border ${style.border} ${style.bg} py-2 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-top-10 fade-in duration-300`}
             >
               <div className="flex-1 min-w-0 pr-2">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
                 <p className={`text-[11px] font-medium leading-snug mt-0.5 ${style.desc}`}>{t.desc}</p>
               </div>
-              <button
-                onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
-                className={`${style.btn} cursor-pointer p-1 rounded-lg hover:bg-slate-200/20 shrink-0 self-center`}
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
               
-              {/* Progress bar */}
-              <div 
-                className={`absolute bottom-0 left-0 h-[2.5px] ${style.bar}`}
-                style={{
-                  animation: "toast-progress 5s linear forwards"
-                }}
-              />
+              <div className="relative flex items-center justify-center w-7 h-7 shrink-0">
+                <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 24 24">
+                  <circle
+                    className="text-slate-300/50 dark:text-slate-600/50"
+                    strokeWidth="2"
+                    stroke="currentColor"
+                    fill="transparent"
+                    r="10"
+                    cx="12"
+                    cy="12"
+                  />
+                  <circle
+                    className={`${style.circle}`}
+                    strokeWidth="2"
+                    strokeDasharray="62.83"
+                    strokeDashoffset="0"
+                    strokeLinecap="round"
+                    stroke="currentColor"
+                    fill="transparent"
+                    r="10"
+                    cx="12"
+                    cy="12"
+                    style={{ animation: "toast-circle-progress 5s linear forwards" }}
+                  />
+                </svg>
+                <button
+                  onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
+                  className={`${style.btn} cursor-pointer p-1 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 relative z-10 flex items-center justify-center transition-colors`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           );
         })}
