@@ -1224,7 +1224,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {/* Meeting Info Bar */}
-            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] lg:mb-1 ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 lg:order-2">
+            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] lg:mb-[7px] ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 lg:order-2">
               <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
                 <Calendar className="w-3.5 h-3.5" />
                 <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
