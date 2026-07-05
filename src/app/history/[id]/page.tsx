@@ -1168,20 +1168,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {/* Main Tab Switcher */}
-            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 select-none">
+            <div className="relative flex w-full p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner select-none overflow-hidden">
               <div
-                className="absolute bottom-0 left-0 h-[2px] bg-blue-600 dark:bg-blue-400 rounded-full transition-all duration-300 ease-out"
+                className="absolute top-1 bottom-1 left-1 rounded-lg bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
                 style={{
-                  width: "50%",
+                  width: "calc(50% - 4px)",
                   transform: mainTab === "raw" ? "translateX(100%)" : "translateX(0%)",
                 }}
               />
               <button
                 onClick={() => setMainTab("processed")}
-                className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                   mainTab === "processed"
-                    ? "text-blue-600 dark:text-blue-400"
-                    : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                    ? "text-white dark:text-slate-900"
+                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <MessageSquare className="w-3.5 h-3.5 shrink-0" />
@@ -1189,10 +1189,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </button>
               <button
                 onClick={() => setMainTab("raw")}
-                className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                   mainTab === "raw"
-                    ? "text-blue-600 dark:text-blue-400"
-                    : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                    ? "text-white dark:text-slate-900"
+                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                 }`}
               >
                 <FileText className="w-3.5 h-3.5 shrink-0" />
@@ -1204,12 +1204,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* MAIN CONTENT AREA */}
           <div className="w-full space-y-6 text-left">
             {/* SUB-TABS SELECT CARD */}
-            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 mb-6 select-none">
-              {/* Sliding Bottom Line Indicator */}
+            <div className="relative flex w-full p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner mb-6 select-none overflow-hidden">
+              {/* Sliding Background Indicator */}
               <div
-                className="absolute bottom-0 left-0 h-[2px] bg-indigo-600 dark:bg-indigo-400 rounded-full transition-all duration-300 ease-out"
+                className="absolute top-1 bottom-1 left-1 rounded-lg bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
                 style={{
-                  width: "50%",
+                  width: "calc(50% - 4px)",
                   transform:
                     (mainTab === "processed"
                       ? subTabProcessed === "transcript"
@@ -1222,20 +1222,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabProcessed("summary")}
-                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                       subTabProcessed === "summary"
-                        ? "text-indigo-600 dark:text-indigo-400"
-                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                        ? "text-white dark:text-slate-900"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     Tóm tắt &amp; Hành động (AI)
                   </button>
                   <button
                     onClick={() => setSubTabProcessed("transcript")}
-                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                       subTabProcessed === "transcript"
-                        ? "text-indigo-600 dark:text-indigo-400"
-                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                        ? "text-white dark:text-slate-900"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     Bản chi tiết ({filteredTranscripts.length})
@@ -1245,20 +1245,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabRaw("summary")}
-                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                       subTabRaw === "summary"
-                        ? "text-indigo-600 dark:text-indigo-400"
-                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                        ? "text-white dark:text-slate-900"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     Tóm tắt &amp; Hành động (AI)
                   </button>
                   <button
                     onClick={() => setSubTabRaw("transcript")}
-                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
                       subTabRaw === "transcript"
-                        ? "text-indigo-600 dark:text-indigo-400"
-                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                        ? "text-white dark:text-slate-900"
+                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
                     }`}
                   >
                     Bản chi tiết ({filteredReprocessedTranscripts.length})
