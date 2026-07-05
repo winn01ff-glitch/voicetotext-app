@@ -1166,7 +1166,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       className={`hidden lg:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "25%",
-                        transform: `translateX(${activeIndex * 100}%)`,
+                        transform: activeIndex >= 2 
+                          ? `translateX(calc(${activeIndex * 100}% - 1.5px))` 
+                          : `translateX(${activeIndex * 100}%)`,
                       }}
                     />
                     
