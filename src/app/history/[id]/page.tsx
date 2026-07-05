@@ -1115,18 +1115,26 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* Export buttons: icon-only on mobile, icon+text on sm+ */}
             <button
               onClick={handleExportDocx}
-              className="flex items-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
               title="Xuất Word"
             >
-              <FileText className="w-3.5 h-3.5" />
+              <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" viewBox="0 0 24 24" fill="none">
+                <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="#3B82F6"/>
+                <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="#93C5FD"/>
+                <text x="12" y="17" textAnchor="middle" fill="white" fontSize="6" fontWeight="bold" fontFamily="Arial">DOC</text>
+              </svg>
               <span className="hidden sm:inline">Xuất Word</span>
             </button>
             <button
               onClick={handleExportPdf}
-              className="flex items-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:text-slate-400 dark:hover:text-red-400 dark:hover:bg-red-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
               title="Xuất PDF"
             >
-              <FileText className="w-3.5 h-3.5" />
+              <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0" viewBox="0 0 24 24" fill="none">
+                <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="#EF4444"/>
+                <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="#FCA5A5"/>
+                <text x="12" y="17" textAnchor="middle" fill="white" fontSize="6" fontWeight="bold" fontFamily="Arial">PDF</text>
+              </svg>
               <span className="hidden sm:inline">Xuất PDF</span>
             </button>
           </div>
@@ -1137,8 +1145,28 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
         <div className="space-y-6">
 
-          {/* TOP BAR: Main Tab Switcher + Meeting Info (inline) */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          {/* TOP BAR: Meeting Info + Tab Switcher */}
+          <div className="flex flex-col gap-3">
+            {/* Meeting Info Bar */}
+            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm">
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{formatDuration(meeting.duration_ms)}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="capitalize">{meeting.meeting_context}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
+              </div>
+            </div>
+
             {/* Main Tab Switcher */}
             <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 select-none">
               <div
@@ -1170,26 +1198,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <FileText className="w-3.5 h-3.5 shrink-0" />
                 <span>Hội thoại gốc</span>
               </button>
-            </div>
-
-            {/* Meeting Info Chips */}
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 ml-auto">
-              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
-                <Calendar className="w-3 h-3 text-slate-400" />
-                <span className="font-semibold">{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
-              </span>
-              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
-                <Clock className="w-3 h-3 text-slate-400" />
-                <span className="font-semibold">{formatDuration(meeting.duration_ms)}</span>
-              </span>
-              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
-                <BookOpen className="w-3 h-3 text-slate-400" />
-                <span className="font-semibold capitalize">{meeting.meeting_context}</span>
-              </span>
-              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
-                <RefreshCw className="w-3 h-3 text-slate-400" />
-                <span className="font-semibold">{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
-              </span>
             </div>
           </div>
 
