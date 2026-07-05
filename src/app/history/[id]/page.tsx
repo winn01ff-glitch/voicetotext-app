@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, use, Fragment } from "react";
+import { useState, useEffect, use, Fragment, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { exportToDocx } from "@/lib/docx-helper";
@@ -10,7 +10,7 @@ import { exportToPdf } from "@/lib/pdf-helper";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Moon, Sun, Plus, Sparkles
+  Moon, Sun, Plus, Sparkles, ChevronDown
 } from "lucide-react";
 
 interface HistoryDetailProps {
@@ -38,7 +38,45 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [subTabRaw, setSubTabRaw] = useState<"summary" | "transcript">("summary");
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedVoice, setSelectedVoice] = useState("aura-asteria-en");
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [activeSpeech, setActiveSpeech] = useState<{ id: string } | null>(null);
+
+  // Load browser speechSynthesis voices
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const loadVoices = () => {
+      setVoices(window.speechSynthesis.getVoices());
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  const allAvailableVoices = useMemo(() => {
+    const targetLang = meeting?.target_language || "vi";
+    return voices
+      .filter((v) => v.lang.toLowerCase().startsWith(targetLang.toLowerCase()))
+      .map((v) => {
+        let cleanName = v.name.split(" - ")[0].replace(/\s*\(.*?\)\s*/g, "").trim();
+        return { name: `${cleanName} (Hệ thống)`, value: v.name };
+      });
+  }, [voices, meeting?.target_language]);
+
+  useEffect(() => {
+    if (allAvailableVoices.length > 0) {
+      const currentVoiceExists = allAvailableVoices.some((v) => v.value === selectedVoice);
+      if (!currentVoiceExists) {
+        setSelectedVoice(allAvailableVoices[0].value);
+      }
+    } else {
+      setSelectedVoice("");
+    }
+  }, [allAvailableVoices, selectedVoice]);
 
   // Reprocessing state for raw transcript
   const [isReprocessingRaw, setIsReprocessingRaw] = useState(false);
@@ -775,10 +813,41 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     );
   };
 
-  const playTts = (text: string) => {
+  const playTts = (id: string, text: string) => {
     if (!text) return;
-    const audio = new Audio(`/api/tts?text=${encodeURIComponent(text)}&voice=${selectedVoice}`);
-    audio.play().catch((err) => console.error(err));
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      if (activeSpeech && activeSpeech.id === id) {
+        window.speechSynthesis.cancel();
+        setActiveSpeech(null);
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      
+      const voice = voices.find((v) => v.name === selectedVoice);
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      } else {
+        const targetLang = meeting?.target_language || "vi";
+        utterance.lang = targetLang === "vi" ? "vi-VN" : targetLang === "ja" ? "ja-JP" : "en-US";
+      }
+
+      utterance.onstart = () => {
+        setActiveSpeech({ id });
+      };
+      
+      utterance.onend = () => {
+        setActiveSpeech(null);
+      };
+
+      utterance.onerror = () => {
+        setActiveSpeech(null);
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   // Filter transcripts by search keyword
@@ -1418,15 +1487,24 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                   <div className="flex items-center space-x-3 text-xs">
                     <span className="text-slate-400 font-medium">Giọng đọc phát lại:</span>
-                    <select
-                      value={selectedVoice}
-                      onChange={(e) => setSelectedVoice(e.target.value)}
-                      className="h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    >
-                      <option value="aura-asteria-en">Aura Asteria (Nữ)</option>
-                      <option value="aura-athena-en">Aura Athena (Nữ Anh)</option>
-                      <option value="aura-orion-en">Aura Orion (Nam)</option>
-                    </select>
+                    <div className="relative inline-block">
+                      <select
+                        value={selectedVoice}
+                        onChange={(e) => setSelectedVoice(e.target.value)}
+                        className="h-9 pl-2 pr-8 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate max-w-[200px] cursor-pointer"
+                      >
+                        {allAvailableVoices.length > 0 ? (
+                          allAvailableVoices.map((v) => (
+                            <option key={v.value} value={v.value}>
+                              {v.name}
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">Giọng mặc định hệ thống</option>
+                        )}
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                    </div>
                   </div>
                 </div>
 
@@ -1560,11 +1638,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               <div className="flex items-center justify-center space-x-1.5">
                                 {t.translatedText && (
                                   <button
-                                    onClick={() => playTts(t.translatedText)}
-                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-colors cursor-pointer"
-                                    title="Nghe giọng dịch"
+                                    onClick={() => playTts(t.id, t.translatedText)}
+                                    className={`p-1 rounded transition-colors cursor-pointer ${
+                                      activeSpeech?.id === t.id
+                                        ? "text-red-500 bg-red-50 dark:bg-red-950/30 dark:text-red-400 animate-pulse"
+                                        : "text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30"
+                                    }`}
+                                    title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe giọng dịch"}
                                   >
-                                    <Play className="w-4 h-4 fill-current" />
+                                    {activeSpeech?.id === t.id ? (
+                                      <Square className="w-4 h-4 fill-current" />
+                                    ) : (
+                                      <Play className="w-4 h-4 fill-current" />
+                                    )}
                                   </button>
                                 )}
                                 <button
@@ -2035,15 +2121,24 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                   <div className="flex items-center space-x-3 text-xs">
                     <span className="text-slate-400 font-medium">Giọng đọc phát lại:</span>
-                    <select
-                      value={selectedVoice}
-                      onChange={(e) => setSelectedVoice(e.target.value)}
-                      className="h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    >
-                      <option value="aura-asteria-en">Aura Asteria (Nữ)</option>
-                      <option value="aura-athena-en">Aura Athena (Nữ Anh)</option>
-                      <option value="aura-orion-en">Aura Orion (Nam)</option>
-                    </select>
+                    <div className="relative inline-block">
+                      <select
+                        value={selectedVoice}
+                        onChange={(e) => setSelectedVoice(e.target.value)}
+                        className="h-9 pl-2 pr-8 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate max-w-[200px] cursor-pointer"
+                      >
+                        {allAvailableVoices.length > 0 ? (
+                          allAvailableVoices.map((v) => (
+                            <option key={v.value} value={v.value}>
+                              {v.name}
+                            </option>
+                          ))
+                        ) : (
+                          <option value="">Giọng mặc định hệ thống</option>
+                        )}
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                    </div>
                   </div>
                 </div>
 
@@ -2173,11 +2268,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               <div className="flex items-center justify-center space-x-1.5">
                                 {t.translatedText && (
                                   <button
-                                    onClick={() => playTts(t.translatedText)}
-                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-colors cursor-pointer"
-                                    title="Nghe giọng dịch"
+                                    onClick={() => playTts(t.id, t.translatedText)}
+                                    className={`p-1 rounded transition-colors cursor-pointer ${
+                                      activeSpeech?.id === t.id
+                                        ? "text-red-500 bg-red-50 dark:bg-red-950/30 dark:text-red-400 animate-pulse"
+                                        : "text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30"
+                                    }`}
+                                    title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe giọng dịch"}
                                   >
-                                    <Play className="w-4 h-4 fill-current" />
+                                    {activeSpeech?.id === t.id ? (
+                                      <Square className="w-4 h-4 fill-current" />
+                                    ) : (
+                                      <Play className="w-4 h-4 fill-current" />
+                                    )}
                                   </button>
                                 )}
                                 <button

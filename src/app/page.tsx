@@ -35,7 +35,7 @@ export default function Dashboard() {
   const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
-    { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" },
+    { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" },
   ]);
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([]);
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
@@ -137,10 +137,10 @@ export default function Dashboard() {
         setExpectedSpeakers(JSON.parse(savedSpeakers));
       } catch (e) {
         console.error("Failed to parse speakers", e);
-        setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" }]);
+        setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" }]);
       }
     } else {
-      setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" }]);
+      setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" }]);
     }
 
     // Load saved glossary
@@ -194,8 +194,13 @@ export default function Dashboard() {
         }
       });
       // Set default title
-      const today = new Date().toISOString().split("T")[0];
-      setMeetingTitle(`Cuộc họp ngày ${today}`);
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day} - ${hours}:${minutes}`);
       setChunkSize(100);
     } else {
       stopMicTest();
@@ -515,13 +520,18 @@ export default function Dashboard() {
 
   // Reset defaults for setup
   const resetSetupDefaults = () => {
-    const today = new Date().toISOString().split("T")[0];
-    setMeetingTitle(`Cuộc họp ngày ${today}`);
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day} - ${hours}:${minutes}`);
     setMeetingContext("general");
     setSourceLanguage("auto");
     setTargetLanguage("vi");
     setExpectedSpeakers([
-      { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" },
+      { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" },
     ]);
     setGlossary([]);
     setEchoCancellation(true);
@@ -1198,7 +1208,7 @@ export default function Dashboard() {
                       {expectedSpeakers.map((sp, idx) => (
                         <div key={idx} className={`flex items-center gap-3 bg-white/80 p-1.5 pr-9 rounded-lg border border-white shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
                           <div className={`w-7 h-7 rounded-md font-extrabold flex items-center justify-center text-[11px] shrink-0 ${idx === 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
-                            {idx}
+                            {idx + 1}
                           </div>
                           <div className="flex-1 min-w-0 flex items-center justify-between">
                             <input

@@ -10,7 +10,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle,
   Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff,
-  Moon, Sun, Plus
+  Moon, Sun, Plus, ChevronDown
 } from "lucide-react";
 
 interface MeetingRoomProps {
@@ -166,16 +166,57 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // UI state
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [selectedTargetLang, setSelectedTargetLang] = useState("vi");
-  const [selectedVoice, setSelectedVoice] = useState("aura-asteria-en");
+  const [selectedVoice, setSelectedVoice] = useState("");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [activeSpeech, setActiveSpeech] = useState<{ id: string; type: "original" | "translated" } | null>(null);
   const [lastSavedTime, setLastSavedTime] = useState<string>("");
   const [summaryProgress, setSummaryProgress] = useState(0);
   const [isFinishing, setIsFinishing] = useState(false);
+
+  // Load browser speechSynthesis voices
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    const loadVoices = () => {
+      setVoices(window.speechSynthesis.getVoices());
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  const allAvailableVoices = useMemo(() => {
+    return voices
+      .filter((v) => v.lang.toLowerCase().startsWith(selectedTargetLang.toLowerCase()))
+      .map((v) => {
+        // Clean name e.g. "Microsoft An - Vietnamese (Vietnam)" -> "Microsoft An"
+        let cleanName = v.name.split(" - ")[0].replace(/\s*\(.*?\)\s*/g, "").trim();
+        return { name: `${cleanName} (Hệ thống)`, value: v.name };
+      });
+  }, [voices, selectedTargetLang]);
+
+  useEffect(() => {
+    if (allAvailableVoices.length > 0) {
+      const currentVoiceExists = allAvailableVoices.some((v) => v.value === selectedVoice);
+      if (!currentVoiceExists) {
+        setSelectedVoice(allAvailableVoices[0].value);
+      }
+    } else {
+      setSelectedVoice("");
+    }
+  }, [allAvailableVoices, selectedVoice]);
 
   // Audio settings from localStorage
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [noiseSuppression, setNoiseSuppression] = useState(true);
   const [autoGainControl, setAutoGainControl] = useState(true);
   const [chunkSize, setChunkSize] = useState(250);
+  const [endpointing, setEndpointing] = useState(3000);
+  const [translationDelay, setTranslationDelay] = useState(5000);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   // Dynamic speaker colors mapping
   const speakerColorsRef = useRef<{ [key: string]: string }>({});
@@ -221,6 +262,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     setNoiseSuppression(localStorage.getItem("meeting_noise_suppression") !== "false");
     setAutoGainControl(localStorage.getItem("meeting_auto_gain_control") !== "false");
     setChunkSize(parseInt(localStorage.getItem("meeting_chunk_size") || "100"));
+    setEndpointing(parseInt(localStorage.getItem("meeting_endpointing") || "3000"));
+    setTranslationDelay(parseInt(localStorage.getItem("meeting_translation_delay") || "5000"));
 
     fetchMeetingDetails();
   }, []);
@@ -336,6 +379,20 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
+  const handleTargetLangChange = async (lang: string) => {
+    setSelectedTargetLang(lang);
+    try {
+      const { error } = await supabase
+        .from("meetings")
+        .update({ target_language: lang })
+        .eq("id", meetingId);
+      if (error) throw error;
+      setMeeting((prev: any) => prev ? { ...prev, target_language: lang } : null);
+    } catch (err) {
+      console.error("Failed to update target language:", err);
+    }
+  };
+
   // Re-scroll to bottom on new transcripts (only when a new card is added to prevent layout thrashing)
   useEffect(() => {
     if (messagesEndRef.current && !isFullScreen) {
@@ -433,6 +490,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           start_ms: block.startMs,
           end_ms: block.endMs,
           confidence: block.confidence,
+          target_language: selectedTargetLang,
         }),
       });
 
@@ -654,6 +712,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           fullTranscript: liveTranscriptTextRef.current,
           history,
           last_transcript,
+          target_language: selectedTargetLang,
           drafts: draftsToProcess.map((d) => ({
             id: d.id,
             speakerTag: d.speakerTag,
@@ -710,6 +769,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           meeting_id: meetingId,
+          target_language: selectedTargetLang,
           drafts: [{
             id: block.id,
             speakerTag: block.speakerTag,
@@ -766,6 +826,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     echoCancellation,
     noiseSuppression,
     autoGainControl,
+    endpointing,
     onTranscript: handleTranscript,
     onError: handleMicError,
     onStatusChange: handleStatusChange,
@@ -842,7 +903,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     });
   }, [transcripts, speakers, loading, meetingId]);
 
-  // Auto-process drafts when silence is detected (3 seconds) & Auto-scroll drafts
+  // Auto-process drafts when silence is detected & Auto-scroll drafts
   useEffect(() => {
     // Auto-scroll drafts container to bottom
     if (draftsContainerRef.current) {
@@ -854,16 +915,57 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
     const timer = setTimeout(() => {
       processDraftsBatch();
-    }, 3000);
+    }, translationDelay);
 
     return () => clearTimeout(timer);
-  }, [transcripts]);
+  }, [transcripts, translationDelay]);
 
-  // Audio Playback using Deepgram Aura TTS Route
-  const playTtsText = (text: string) => {
+  // Audio Playback using Hybrid Browser Speech / Deepgram Aura 2 TTS
+  // Audio Playback using Browser SpeechSynthesis with Play/Stop toggle support
+  const playTtsText = (id: string, type: "original" | "translated", text: string, langCode?: string) => {
     if (!text) return;
-    const audio = new Audio(`/api/tts?text=${encodeURIComponent(text)}&voice=${selectedVoice}`);
-    audio.play().catch((err) => console.error("Play TTS error:", err));
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      // If the clicked one is already speaking, stop it
+      if (activeSpeech && activeSpeech.id === id && activeSpeech.type === type) {
+        window.speechSynthesis.cancel();
+        setActiveSpeech(null);
+        return;
+      }
+
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      
+      const targetLang = langCode || selectedTargetLang;
+      let voiceToUse = selectedVoice;
+
+      if (langCode && langCode !== selectedTargetLang) {
+        // Find first browser voice for this language
+        const brVoice = voices.find((v) => v.lang.toLowerCase().startsWith(langCode.toLowerCase()));
+        voiceToUse = brVoice ? brVoice.name : "";
+      }
+
+      const voice = voices.find((v) => v.name === voiceToUse);
+      if (voice) {
+        utterance.voice = voice;
+        utterance.lang = voice.lang;
+      } else {
+        utterance.lang = targetLang === "vi" ? "vi-VN" : targetLang === "ja" ? "ja-JP" : "en-US";
+      }
+
+      utterance.onstart = () => {
+        setActiveSpeech({ id, type });
+      };
+      
+      utterance.onend = () => {
+        setActiveSpeech(null);
+      };
+
+      utterance.onerror = () => {
+        setActiveSpeech(null);
+      };
+      
+      window.speechSynthesis.speak(utterance);
+    }
   };
 
   // Merge speakers action
@@ -1076,18 +1178,49 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
           <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
             {/* Sidebar skeleton */}
-            <div className="w-full md:w-[360px] bg-white/60 dark:bg-slate-900/40 border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-4 md:p-7 flex flex-col gap-6 shrink-0 overflow-y-auto">
-              <div className="space-y-3">
-                <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+            <div className="w-full md:w-[360px] bg-slate-50/50 dark:bg-slate-900/10 border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-6 flex flex-col gap-6 shrink-0 overflow-y-auto">
+              {/* Audio recording status skeleton */}
+              <div className="space-y-4 animate-pulse">
+                <div className="w-28 h-3 rounded bg-slate-200 dark:bg-slate-800" />
+                <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 shadow-sm space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-slate-200 dark:bg-slate-800" />
+                      <div className="w-16 h-3.5 rounded bg-slate-200 dark:bg-slate-800" />
+                    </div>
+                    <div className="w-12 h-3 rounded bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                  <div className="w-full h-1.5 rounded bg-slate-200 dark:bg-slate-800" />
+                  <div className="flex gap-3 pt-1">
+                    <div className="w-1/2 h-10 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                    <div className="w-1/2 h-10 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-3">
-                <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                <div className="h-32 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+
+              {/* Speakers skeleton */}
+              <div className="space-y-4 flex-1 animate-pulse">
+                <div className="w-28 h-3 rounded bg-slate-200 dark:bg-slate-800" />
+                <div className="space-y-3">
+                  <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-3 h-3 rounded-full bg-slate-200 dark:bg-slate-800" />
+                      <div className="w-16 h-4 bg-slate-200 dark:bg-slate-800 rounded" />
+                    </div>
+                    <div className="w-8 h-4 bg-slate-200 dark:bg-slate-800 rounded-md" />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-3">
-                <div className="w-28 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                <div className="h-40 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+
+              {/* Target language & Voice playback settings skeleton */}
+              <div className="space-y-4 pt-6 border-t border-slate-200/60 dark:border-slate-800 animate-pulse">
+                <div className="flex items-center justify-between w-full h-4">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 bg-slate-200 dark:bg-slate-800 rounded" />
+                    <div className="w-44 h-4 bg-slate-200 dark:bg-slate-800 rounded" />
+                  </div>
+                  <div className="w-4 h-4 bg-slate-200 dark:bg-slate-800 rounded" />
+                </div>
               </div>
             </div>
 
@@ -1097,6 +1230,27 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
                 <div className="w-48 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
                 <div className="w-80 h-3 rounded bg-slate-100 dark:bg-slate-900 animate-pulse" />
+              </div>
+
+              {/* Separator Divider */}
+              <div className="w-full h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-3 shrink-0 shadow-sm" />
+
+              {/* Skeleton for Live Transcript */}
+              <div className="h-[88px] shrink-0 bg-slate-50/40 dark:bg-slate-900/30 border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2 flex flex-col justify-between shadow-sm animate-pulse">
+                <div className="flex items-center space-x-1.5 pt-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800" />
+                  <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="w-48 h-3 bg-slate-200 dark:bg-slate-800 mb-2" />
+              </div>
+
+              {/* Skeleton for Speaker Classification */}
+              <div className="h-[88px] mt-1.5 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 px-4 py-2 flex flex-col justify-between shadow-sm animate-pulse">
+                <div className="flex items-center space-x-1.5 pt-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800" />
+                  <div className="w-32 h-3 rounded bg-slate-200 dark:bg-slate-800" />
+                </div>
+                <div className="w-40 h-3 bg-slate-200 dark:bg-slate-800 mb-2" />
               </div>
             </div>
           </div>
@@ -1367,36 +1521,156 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             </div>
           </div>
 
-          {/* Target language & Voice playback settings */}
+          {/* Collapsible config settings */}
           <div className="space-y-4 pt-6 border-t border-slate-200/60 dark:border-slate-800">
-            <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Cấu hình Dịch &amp; Đọc</h4>
-            <div className="space-y-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 shadow-sm">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Dịch sang ngôn ngữ</label>
-                <select
-                  value={selectedTargetLang}
-                  onChange={(e) => setSelectedTargetLang(e.target.value)}
-                  className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all"
-                >
-                  <option value="vi">Tiếng Việt (vi)</option>
-                  <option value="ja">Tiếng Nhật (ja)</option>
-                  <option value="en">Tiếng Anh (en)</option>
-                </select>
-              </div>
+            <button
+              onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+              className="flex items-center justify-between w-full text-left font-bold text-xs uppercase tracking-widest text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer select-none"
+            >
+              <span className="flex items-center space-x-1.5">
+                <Settings className="w-3.5 h-3.5" />
+                <span>Cấu hình giọng đọc &amp; Thiết lập</span>
+              </span>
+              <ChevronDown
+                className={`w-4 h-4 transition-transform duration-200 ${
+                  showAdvancedSettings ? "" : "rotate-180"
+                }`}
+              />
+            </button>
 
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Giọng đọc (Phát âm)</label>
-                <select
-                  value={selectedVoice}
-                  onChange={(e) => setSelectedVoice(e.target.value)}
-                  className="w-full h-10 px-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all"
-                >
-                  <option value="aura-asteria-en">Aura Asteria (Nữ Mỹ)</option>
-                  <option value="aura-athena-en">Aura Athena (Nữ Anh)</option>
-                  <option value="aura-orion-en">Aura Orion (Nam Anh)</option>
-                </select>
+            {showAdvancedSettings && (
+              <div className="space-y-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Voice select */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Giọng đọc (Phát âm)</label>
+                  <div className="relative w-full">
+                    <select
+                      value={selectedVoice}
+                      onChange={(e) => setSelectedVoice(e.target.value)}
+                      className="w-full h-10 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none truncate cursor-pointer"
+                    >
+                      {allAvailableVoices.length > 0 ? (
+                        allAvailableVoices.map((v) => (
+                          <option key={v.value} value={v.value}>
+                            {v.name}
+                          </option>
+                        ))
+                      ) : (
+                        <option value="">Giọng mặc định hệ thống</option>
+                      )}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-100 dark:border-slate-800/60 my-2"></div>
+
+                {/* Silence timeout (Deepgram Endpointing) */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <span>Thời gian ngắt lời (Deepgram)</span>
+                    <span className="text-blue-500 font-mono">{(endpointing / 1000).toFixed(1)}s</span>
+                  </div>
+                  <div className="relative w-full">
+                    <select
+                      value={endpointing}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        setEndpointing(val);
+                        localStorage.setItem("meeting_endpointing", String(val));
+                      }}
+                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
+                    >
+                      <option value="500">Nhanh nhạy (0.5s)</option>
+                      <option value="1000">Tiêu chuẩn (1.0s)</option>
+                      <option value="1500">Mặc định (1.5s)</option>
+                      <option value="2000">Chậm rãi (2.0s)</option>
+                      <option value="3000">Rất chậm (3.0s)</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    Thời gian im lặng để Deepgram ngắt và hoàn thiện câu nói tạm thời.
+                  </p>
+                </div>
+
+                {/* Silence timeout (AI Translation Delay) */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                    <span>Thời gian tự động dịch (AI)</span>
+                    <span className="text-blue-500 font-mono">{(translationDelay / 1000).toFixed(1)}s</span>
+                  </div>
+                  <div className="relative w-full">
+                    <select
+                      value={translationDelay}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value);
+                        setTranslationDelay(val);
+                        localStorage.setItem("meeting_translation_delay", String(val));
+                      }}
+                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
+                    >
+                      <option value="1000">Tức thì (1.0s)</option>
+                      <option value="2000">Rất nhanh (2.0s)</option>
+                      <option value="3000">Mặc định (3.0s)</option>
+                      <option value="4000">Vừa phải (4.0s)</option>
+                      <option value="5000">Thong thả (5.0s)</option>
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                  </div>
+                  <p className="text-[10px] text-slate-400 leading-normal">
+                    Thời gian im lặng để AI gom câu lại và thực hiện dịch đồng bộ.
+                  </p>
+                </div>
+
+                {/* Audio parameters toggles */}
+                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Xử lý âm thanh micro</label>
+                  
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <span className="text-slate-600 dark:text-slate-350">Khử tiếng vang (Echo)</span>
+                    <input
+                      type="checkbox"
+                      checked={echoCancellation}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setEchoCancellation(val);
+                        localStorage.setItem("meeting_echo_cancellation", String(val));
+                      }}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <span className="text-slate-600 dark:text-slate-350">Lọc nhiễu (Noise)</span>
+                    <input
+                      type="checkbox"
+                      checked={noiseSuppression}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setNoiseSuppression(val);
+                        localStorage.setItem("meeting_noise_suppression", String(val));
+                      }}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <span className="text-slate-600 dark:text-slate-350">Tự chỉnh độ nhạy (AGC)</span>
+                    <input
+                      type="checkbox"
+                      checked={autoGainControl}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setAutoGainControl(val);
+                        localStorage.setItem("meeting_auto_gain_control", String(val));
+                      }}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </aside>
 
@@ -1508,27 +1782,59 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       {/* Bubble Body: Original and Translated Text */}
                       <div className="relative">
                         {/* Original Text Block */}
-                        <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed whitespace-pre-wrap">
-                          {needsReview ? (
-                            <span className="bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-200 dark:border-amber-900/30 inline whitespace-pre-wrap">
-                              {t.correctedText || t.text}
+                        <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed whitespace-pre-wrap group/orig relative">
+                          <div className="relative inline-flex items-center mr-2">
+                            <span className="whitespace-pre-wrap">
+                              {needsReview ? (
+                                <span className="bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-200 dark:border-amber-900/30 inline">
+                                  {t.correctedText || t.text}
+                                </span>
+                              ) : (
+                                t.correctedText || t.text
+                              )}
                             </span>
-                          ) : (
-                            t.correctedText || t.text
-                          )}
+                            <button
+                              onClick={() => {
+                                const sp = speakers.find((s) => s.speaker_tag === t.speakerTag);
+                                const langCode = sp?.language_code || meeting?.source_language || "auto";
+                                const finalLangCode = langCode === "auto" ? (meeting?.source_language === "auto" ? "ja" : meeting?.source_language) : langCode;
+                                playTtsText(t.id, "original", t.correctedText || t.text, finalLangCode);
+                              }}
+                              className={`ml-1.5 p-0.5 border rounded transition-all duration-200 delay-0 shadow-sm cursor-pointer shrink-0 ${
+                                activeSpeech?.id === t.id && activeSpeech?.type === "original"
+                                  ? "opacity-100 text-red-500 bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900/30 animate-pulse"
+                                  : "opacity-0 group-hover/orig:opacity-100 group-hover/orig:delay-[150ms] text-slate-400 hover:text-blue-600 bg-slate-50 border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700"
+                              }`}
+                              title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe giọng gốc"}
+                            >
+                              {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
+                                <VolumeX className="w-2.5 h-2.5" />
+                              ) : (
+                                <Volume2 className="w-2.5 h-2.5" />
+                              )}
+                            </button>
+                          </div>
                         </div>
 
                         {/* Separator & Translated Text Block */}
                         {t.translatedText && (
-                          <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
-                            <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium group/trans relative inline-flex items-center mr-2">
+                          <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-700/80 group/trans relative">
+                            <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium relative inline-flex items-center mr-2">
                               <span className="whitespace-pre-wrap">{t.translatedText}</span>
                               <button
-                                onClick={() => playTtsText(t.translatedText)}
-                                className="ml-1.5 p-0.5 opacity-0 group-hover:opacity-100 text-slate-400 hover:text-blue-600 bg-slate-50 border border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700 rounded transition-all shadow-sm cursor-pointer"
-                                title="Nghe"
+                                onClick={() => playTtsText(t.id, "translated", t.translatedText)}
+                                className={`ml-1.5 p-0.5 border rounded transition-all duration-200 delay-0 shadow-sm cursor-pointer shrink-0 ${
+                                  activeSpeech?.id === t.id && activeSpeech?.type === "translated"
+                                    ? "opacity-100 text-red-500 bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900/30 animate-pulse"
+                                    : "opacity-0 group-hover/trans:opacity-100 group-hover/trans:delay-[150ms] text-slate-400 hover:text-blue-600 bg-slate-50 border-slate-200 hover:bg-blue-50 dark:bg-slate-800 dark:border-slate-700 dark:hover:bg-slate-700"
+                                }`}
+                                title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe"}
                               >
-                                <Volume2 className="w-2.5 h-2.5" />
+                                {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
+                                  <VolumeX className="w-2.5 h-2.5" />
+                                ) : (
+                                  <Volume2 className="w-2.5 h-2.5" />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -1572,20 +1878,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   >
                     {copiedLive ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                   </button>
-                  <button
-                    onClick={() => {
-                      const btn = document.activeElement as HTMLElement;
-                      btn?.classList.add("scale-0", "opacity-0");
-                      setTimeout(() => {
-                        setLiveTranscriptText("");
-                        btn?.classList.remove("scale-0", "opacity-0");
-                      }, 200);
-                    }}
-                    className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-950/20 transition-all duration-200 cursor-pointer"
-                    title="Xóa nội dung nghe trực tiếp"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
                 </div>
               )}
             </div>
@@ -1625,7 +1917,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 )}
                 {transcripts.some((t) => t.status === "draft") && !transcripts.some((t) => t.status === "processing") && (
                   <span className="hidden sm:inline-flex items-center text-[8px] text-slate-400 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1 h-3.5 rounded normal-case ml-1.5 shadow-sm leading-none">
-                    Auto 3s
+                    Auto {(translationDelay / 1000).toFixed(0)}s
                   </span>
                 )}
               </div>
@@ -1664,26 +1956,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     title={copiedDrafts ? "Đã sao chép!" : "Sao chép toàn bộ hội thoại gốc"}
                   >
                     {copiedDrafts ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const confirmClear = await showCustomConfirm("Bạn có chắc chắn muốn xóa toàn bộ lịch sử cuộc trò chuyện này không?");
-                      if (!confirmClear) return;
-                      const btn = document.activeElement as HTMLElement;
-                      btn?.classList.add("scale-0", "opacity-0");
-                      try {
-                        await supabase.from("transcripts").delete().eq("meeting_id", meetingId);
-                        setTranscripts([]);
-                      } catch (err) {
-                        console.error("Lỗi khi xóa cuộc trò chuyện:", err);
-                      } finally {
-                        btn?.classList.remove("scale-0", "opacity-0");
-                      }
-                    }}
-                    className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-950/20 transition-all duration-200 cursor-pointer"
-                    title="Xóa toàn bộ cuộc trò chuyện"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}

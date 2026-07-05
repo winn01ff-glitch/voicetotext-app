@@ -1,0 +1,9 @@
+- [x] Disable Deepgram Diarization in useDeepgramLive.ts
+- [x] Group live speech into single draft block in page.tsx
+- [x] Verify the application compile status
+- [x] Add raw_transcript TEXT column to meetings table in database
+- [x] Update end-meeting API to save the live transcript text to database
+- [x] Create reprocess-raw-transcript API route to diarize full text using Gemini
+- [x] Add "Hội thoại gốc (Chưa xử lý)" tab on history details page
+- [x] Integrate speaker count selection and reprocess execution button in UI
+- [x] Verify compilation success and test with the development server

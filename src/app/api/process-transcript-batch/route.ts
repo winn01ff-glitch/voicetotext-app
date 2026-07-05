@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, drafts, fullTranscript, history, last_transcript } = body;
+    const { meeting_id, drafts, fullTranscript, history, last_transcript, target_language } = body;
 
     if (!meeting_id || !drafts || !Array.isArray(drafts) || drafts.length === 0) {
       return NextResponse.json({ error: "Missing required fields (meeting_id, drafts)" }, { status: 400 });
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       text: d.text
     }));
 
-    const targetLang = meeting.target_language;
+    const targetLang = target_language || meeting.target_language;
     const sourceLang = meeting.source_language;
     const context = meeting.meeting_context;
 

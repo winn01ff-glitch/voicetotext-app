@@ -15,6 +15,7 @@ interface UseDeepgramLiveProps {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
+  endpointing?: number;
   onTranscript: (data: {
     text: string;
     isFinal: boolean;
@@ -37,6 +38,7 @@ export function useDeepgramLive({
   echoCancellation,
   noiseSuppression,
   autoGainControl,
+  endpointing = 3000,
   onTranscript,
   onActionItemDetected,
   onError,
@@ -182,7 +184,7 @@ export function useDeepgramLive({
       smart_format: "true",
       filler_words: "true",
       interim_results: "true",
-      endpointing: "3000",  // 3s pause before finalizing segment
+      endpointing: String(endpointing),  // configurable pause before finalizing segment
       diarize: "true",
     });
 
@@ -223,7 +225,7 @@ export function useDeepgramLive({
         reject(err);
       };
     });
-  }, [sourceLanguage]);
+  }, [sourceLanguage, endpointing, glossary]);
 
   // 4. Start recording and streaming
   const startRecording = useCallback(async () => {
