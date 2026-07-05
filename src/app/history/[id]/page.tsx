@@ -117,6 +117,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // Custom Modal state
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
+    isClosing?: boolean;
     title: string;
     message: string;
     type: "info" | "confirm" | "success" | "error";
@@ -335,12 +336,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return new Promise<void>((resolve) => {
       setModalConfig({
         isOpen: true,
+        isClosing: false,
         title,
         message,
         type,
         onConfirm: () => {
-          setModalConfig((prev) => ({ ...prev, isOpen: false }));
-          resolve();
+          setModalConfig((prev) => ({ ...prev, isClosing: true }));
+          setTimeout(() => {
+            setModalConfig((prev) => ({ ...prev, isOpen: false, isClosing: false }));
+            resolve();
+          }, 200);
         },
       });
     });
@@ -350,16 +355,23 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return new Promise<boolean>((resolve) => {
       setModalConfig({
         isOpen: true,
+        isClosing: false,
         title,
         message,
         type: "confirm",
         onConfirm: () => {
-          setModalConfig((prev) => ({ ...prev, isOpen: false }));
-          resolve(true);
+          setModalConfig((prev) => ({ ...prev, isClosing: true }));
+          setTimeout(() => {
+            setModalConfig((prev) => ({ ...prev, isOpen: false, isClosing: false }));
+            resolve(true);
+          }, 200);
         },
         onCancel: () => {
-          setModalConfig((prev) => ({ ...prev, isOpen: false }));
-          resolve(false);
+          setModalConfig((prev) => ({ ...prev, isClosing: true }));
+          setTimeout(() => {
+            setModalConfig((prev) => ({ ...prev, isOpen: false, isClosing: false }));
+            resolve(false);
+          }, 200);
         },
       });
     });
@@ -3403,14 +3415,48 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       {/* CUSTOM MODAL */}
       {modalConfig.isOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-all duration-300 animate-in fade-in"
+          className={`fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 ${
+            modalConfig.isClosing ? "animate-modal-backdrop-out" : "animate-modal-backdrop-in"
+          }`}
           onClick={() => {
             if (modalConfig.onCancel) modalConfig.onCancel();
             else if (modalConfig.onConfirm) modalConfig.onConfirm();
           }}
         >
+          <style>{`
+            @keyframes modal-backdrop-in {
+              from { opacity: 0; backdrop-filter: blur(0); }
+              to { opacity: 1; backdrop-filter: blur(4px); }
+            }
+            @keyframes modal-backdrop-out {
+              from { opacity: 1; backdrop-filter: blur(4px); }
+              to { opacity: 0; backdrop-filter: blur(0); }
+            }
+            @keyframes modal-card-in {
+              from { opacity: 0; transform: scale(0.95); }
+              to { opacity: 1; transform: scale(1); }
+            }
+            @keyframes modal-card-out {
+              from { opacity: 1; transform: scale(1); }
+              to { opacity: 0; transform: scale(0.95); }
+            }
+            .animate-modal-backdrop-in {
+              animation: modal-backdrop-in 0.2s ease-out forwards;
+            }
+            .animate-modal-backdrop-out {
+              animation: modal-backdrop-out 0.2s ease-in forwards;
+            }
+            .animate-modal-card-in {
+              animation: modal-card-in 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+            }
+            .animate-modal-card-out {
+              animation: modal-card-out 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            }
+          `}</style>
           <div 
-            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all duration-300 scale-in select-none text-left"
+            className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 select-none text-left ${
+              modalConfig.isClosing ? "animate-modal-card-out" : "animate-modal-card-in"
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">

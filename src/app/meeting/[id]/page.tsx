@@ -2098,41 +2098,67 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           from { stroke-dashoffset: 0; }
           to { stroke-dashoffset: 62.83; }
         }
+        @keyframes toast-in {
+          0% {
+            opacity: 0;
+            transform: translateY(-20px) scale(0.96);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        @keyframes toast-out {
+          0% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-20px) scale(0.96);
+          }
+        }
+        .animate-toast-in {
+          animation: toast-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        .animate-toast-out {
+          animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
       `}</style>
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
-              border: "border-emerald-200 dark:border-emerald-800/50",
-              bg: "bg-emerald-100/95 dark:bg-emerald-900/90",
-              title: "text-emerald-950 dark:text-emerald-100",
-              desc: "text-emerald-800 dark:text-emerald-300",
-              circle: "text-emerald-600",
-              btn: "text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-200"
+              border: "border-none",
+              bg: "bg-emerald-600 dark:bg-emerald-500",
+              title: "text-white font-extrabold",
+              desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-emerald-100"
             },
             warning: {
-              border: "border-amber-200 dark:border-amber-800/50",
-              bg: "bg-amber-100/95 dark:bg-amber-900/90",
-              title: "text-amber-950 dark:text-amber-100",
-              desc: "text-amber-800 dark:text-amber-300",
-              circle: "text-amber-600",
-              btn: "text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200"
+              border: "border-none",
+              bg: "bg-amber-500 dark:bg-amber-600",
+              title: "text-white font-extrabold",
+              desc: "text-amber-50 dark:text-amber-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-amber-100"
             },
             error: {
-              border: "border-red-200 dark:border-red-800/50",
-              bg: "bg-red-100/95 dark:bg-red-900/90",
-              title: "text-red-950 dark:text-red-100",
-              desc: "text-red-800 dark:text-red-300",
-              circle: "text-red-600",
-              btn: "text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-200"
+              border: "border-none",
+              bg: "bg-rose-600 dark:bg-rose-500",
+              title: "text-white font-extrabold",
+              desc: "text-rose-50 dark:text-rose-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-rose-100"
             },
             info: {
-              border: "border-blue-200 dark:border-blue-800/50",
-              bg: "bg-blue-100/95 dark:bg-blue-900/90",
-              title: "text-blue-950 dark:text-blue-100",
-              desc: "text-blue-800 dark:text-blue-300",
-              circle: "text-blue-600",
-              btn: "text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
+              border: "border-none",
+              bg: "bg-blue-600 dark:bg-blue-500",
+              title: "text-white font-extrabold",
+              desc: "text-blue-50 dark:text-blue-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-blue-100"
             }
           };
 
@@ -2141,17 +2167,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto border ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-out slide-out-to-top-10 fade-out" : "animate-in slide-in-from-top-10 fade-in"}`}
+              className={`pointer-events-auto ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
             >
-              <div className="flex-1 min-w-0 pr-2">
+              <div className="flex-1 min-w-0 pr-2 relative z-10">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
                 <p className={`text-[11px] font-medium leading-snug mt-0.5 ${style.desc}`}>{t.desc}</p>
               </div>
               
-              <div className="relative flex items-center justify-center w-7 h-7 shrink-0">
+              <div className="relative flex items-center justify-center w-7 h-7 shrink-0 z-10">
                 <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 24 24">
                   <circle
-                    className="text-slate-400/30 dark:text-slate-500/30"
+                    className="text-white/20"
                     strokeWidth="2"
                     stroke="currentColor"
                     fill="transparent"
