@@ -1176,13 +1176,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       style={{
                         width: "50%",
                         top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 1px)" : "calc(100% - 1px)",
-                        transform: `translateX(${(activeIndex === 0 || activeIndex === 1) ? 0 : 100}%)`,
+                        transform: `translateX(${(activeIndex === 0 || activeIndex === 1) ? "0%" : "calc(100% - 1.5px)"})`,
                       }}
                     />
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 border-r-blue-500 dark:border-r-blue-450 lg:border-r-0 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1191,13 +1191,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                       <span className="hidden sm:inline">Tóm tắt &amp; Hành động</span>
                       <span className="sm:hidden">Tóm tắt</span>
-                      {/* Subpixel overlap vertical divider */}
-                      <div className="absolute right-0 top-0 bottom-[-1.5px] w-[2px] bg-blue-500 dark:bg-blue-450 lg:hidden" />
                     </button>
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-3 lg:order-2 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-500 dark:border-r-blue-450 whitespace-nowrap order-3 lg:order-2 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1205,8 +1203,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     >
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                       <span>Bản chi tiết ({filteredTranscripts.length})</span>
-                      {/* Subpixel overlap vertical divider */}
-                      <div className="absolute right-0 top-0 bottom-[-1.5px] w-[2px] bg-blue-500 dark:bg-blue-450" />
                     </button>
                     
                     <button
