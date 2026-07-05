@@ -1175,7 +1175,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   : (subTabRaw === "summary" ? 2 : 3);
                 
                 const isRaw = activeIndex >= 2;
-                const indicatorBg = isRaw ? "bg-indigo-600 dark:bg-indigo-400" : "bg-blue-600 dark:bg-blue-400";
+                const indicatorBg = isRaw ? "bg-emerald-600 dark:bg-emerald-400" : "bg-blue-600 dark:bg-blue-400";
                 
                 return (
                   <>
@@ -1189,7 +1189,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1202,7 +1202,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1214,10 +1214,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 2
-                          ? "text-indigo-600 dark:text-indigo-400"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
@@ -1226,10 +1226,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 3
-                          ? "text-indigo-600 dark:text-indigo-400"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
