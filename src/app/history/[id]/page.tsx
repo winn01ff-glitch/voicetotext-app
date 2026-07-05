@@ -1187,7 +1187,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 ${dividerColor} lg:border-r-0 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 ${activeIndex === 0 ? dividerColor : "border-r-transparent"} lg:border-r-0 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1200,7 +1200,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 ${dividerColor} lg:border-r-blue-400/80 dark:lg:border-r-blue-600/60 whitespace-nowrap order-3 lg:order-2 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 ${activeIndex === 1 ? dividerColor : "border-r-transparent"} lg:border-r-2 ${isRaw ? "lg:border-r-emerald-500/60 dark:lg:border-r-emerald-600/40" : "lg:border-r-blue-400/80 dark:lg:border-r-blue-600/60"} whitespace-nowrap order-3 lg:order-2 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1212,7 +1212,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 lg:order-3 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 lg:order-3 border-l-2 ${activeIndex === 2 ? (isRaw ? "border-l-emerald-500/60 dark:border-l-emerald-600/40" : "border-l-blue-400/80 dark:border-l-blue-600/60") : "border-l-transparent"} lg:border-l-0 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 2
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
@@ -1224,7 +1224,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 lg:order-4 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 lg:order-4 border-l-2 ${activeIndex === 3 ? (isRaw ? "border-l-emerald-500/60 dark:border-l-emerald-600/40" : "border-l-blue-400/80 dark:border-l-blue-600/60") : "border-l-transparent"} lg:border-l-0 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 3
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
