@@ -1175,7 +1175,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   : (subTabRaw === "summary" ? 2 : 3);
                 
                 const isRaw = activeIndex >= 2;
-                const indicatorBg = isRaw ? "bg-emerald-600 dark:bg-emerald-400" : "bg-blue-600 dark:bg-blue-400";
+                const indicatorBg = isRaw 
+                  ? "bg-gradient-to-r from-emerald-500 to-teal-600 dark:from-emerald-400 dark:to-teal-500" 
+                  : "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500";
                 
                 return (
                   <>
@@ -1189,9 +1191,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 0
-                          ? "text-blue-600 dark:text-blue-400"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1202,9 +1204,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
                         activeIndex === 1
-                          ? "text-blue-600 dark:text-blue-400"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1214,9 +1216,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 2
-                          ? "text-emerald-600 dark:text-emerald-400"
+                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
@@ -1226,9 +1228,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 3
-                          ? "text-emerald-600 dark:text-emerald-400"
+                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
