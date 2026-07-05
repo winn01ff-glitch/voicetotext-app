@@ -1149,7 +1149,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-px">
             
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
-            <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none pb-px shrink-0 order-2 lg:order-1 gap-y-1 lg:gap-y-0">
+            <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none pb-px shrink-0 order-2 lg:order-1 gap-y-0">
               {(() => {
                 const activeIndex = mainTab === "processed"
                   ? (subTabProcessed === "summary" ? 0 : 1)
