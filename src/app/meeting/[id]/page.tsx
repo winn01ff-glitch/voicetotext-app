@@ -2130,7 +2130,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           const config = {
             success: {
               border: "border-none",
-              bg: "bg-emerald-600 dark:bg-emerald-500",
+              bg: "bg-gradient-to-b from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700",
               title: "text-white font-extrabold",
               desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
               circle: "text-white",
@@ -2138,7 +2138,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             warning: {
               border: "border-none",
-              bg: "bg-amber-500 dark:bg-amber-600",
+              bg: "bg-gradient-to-b from-amber-400 to-amber-600 dark:from-amber-500 dark:to-amber-700",
               title: "text-white font-extrabold",
               desc: "text-amber-50 dark:text-amber-100 font-semibold",
               circle: "text-white",
@@ -2146,7 +2146,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             error: {
               border: "border-none",
-              bg: "bg-rose-600 dark:bg-rose-500",
+              bg: "bg-gradient-to-b from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-700",
               title: "text-white font-extrabold",
               desc: "text-rose-50 dark:text-rose-100 font-semibold",
               circle: "text-white",
@@ -2154,7 +2154,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             info: {
               border: "border-none",
-              bg: "bg-blue-600 dark:bg-blue-500",
+              bg: "bg-gradient-to-b from-blue-400 to-blue-600 dark:from-blue-500 dark:to-blue-700",
               title: "text-white font-extrabold",
               desc: "text-blue-50 dark:text-blue-100 font-semibold",
               circle: "text-white",
