@@ -12,7 +12,7 @@ import AudioPlayer from "@/components/AudioPlayer";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown
+  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List
 } from "lucide-react";
 
 interface HistoryDetailProps {
@@ -1144,95 +1144,171 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
-        {/* Header skeleton */}
-        <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 h-16 flex items-center justify-between px-4 shrink-0">
-          <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
-            <div className="w-32 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-          </div>
-          <div className="flex items-center space-x-2">
-            <div className="w-10 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
-            <div className="w-10 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
-            <div className="w-10 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
-            <div className="w-28 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
-            <div className="w-20 h-8 rounded-md bg-slate-200 dark:bg-slate-800 animate-pulse" />
+        {/* Header (Static rendering while loading) */}
+        <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center justify-between gap-3">
+            {/* Left: Back + Title Skeleton */}
+            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+              <button
+                onClick={() => router.push("/")}
+                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
+                title="Quay lại danh sách"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div className="w-48 sm:w-64 h-5 sm:h-6 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
+            </div>
+
+            {/* Right: Action Buttons (Disabled appearance) */}
+            <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
+                <Pin className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </div>
+              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
+                <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </div>
+              <div className="p-1.5 sm:p-2 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
+                <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              </div>
+
+              <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-800" />
+
+              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
+                <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0 opacity-50" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="currentColor"/>
+                  <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="currentColor"/>
+                </svg>
+                <span className="hidden sm:inline text-xs font-semibold">Xuất Word</span>
+              </div>
+              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
+                <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0 opacity-50" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="currentColor"/>
+                  <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="currentColor"/>
+                </svg>
+                <span className="hidden sm:inline text-xs font-semibold">Xuất PDF</span>
+              </div>
+            </div>
           </div>
         </header>
         
         {/* Core container skeleton */}
-        <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-8">
-          <div className="flex flex-col lg:flex-row gap-8 items-start">
-            {/* Left column skeleton */}
-            <div className="w-full lg:w-[265px] shrink-0 space-y-6">
-              {/* Tab Selector skeleton */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
-                <div className="w-16 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                <div className="w-full h-10 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                <div className="w-full h-10 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse" />
+        <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
+          <div className="space-y-6">
+            
+            {/* TOP BAR skeleton */}
+            <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-0">
+              
+              {/* Unified 4-Tab Switcher - STATIC rendering */}
+              <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
+                <div className="hidden xl:block absolute z-10 bottom-[-1px] h-[2px] rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500" style={{ width: "25%", transform: "translateX(0%)" }} />
+                <div className="xl:hidden absolute z-10 h-[2px] bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500" style={{ width: "50%", top: "calc(50% - 1px)", transform: "translateX(0%)" }} />
+                
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-r-2 border-r-blue-500 dark:border-r-blue-450 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 whitespace-nowrap order-1 xl:order-1 text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5">
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Tóm tắt &amp; Hành động</span>
+                  <span className="sm:hidden">Tóm tắt</span>
+                </div>
+                
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-r-2 border-r-slate-100 dark:border-r-slate-800 xl:border-r-0 whitespace-nowrap order-3 xl:order-2 text-slate-400 dark:text-slate-500">
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                  <span className="hidden sm:inline">Bản chi tiết</span>
+                  <span className="sm:hidden">Chi tiết</span>
+                </div>
+                
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-b border-slate-200 dark:border-slate-800 xl:border-b-0 whitespace-nowrap order-2 xl:order-3 text-slate-400 dark:text-slate-500">
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                  <span>Hội thoại gốc</span>
+                </div>
+                
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold whitespace-nowrap order-4 xl:order-4 text-slate-400 dark:text-slate-500">
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                  <span>Bản chi tiết gốc</span>
+                </div>
               </div>
-              {/* Info card skeleton */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5">
-                <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse mb-1" />
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="flex items-start space-x-3">
-                    <div className="w-4 h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse mt-0.5" />
-                    <div className="space-y-2 flex-1">
-                      <div className="w-12 h-2.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-24 h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                    </div>
-                  </div>
-                ))}
+
+              {/* Skeleton Info Bar */}
+              <div className="grid grid-cols-4 xl:flex w-full xl:w-auto order-1 xl:order-2 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 xl:mb-[5.5px] bg-slate-50 dark:bg-slate-900/60 shadow-sm divide-x divide-slate-200 dark:divide-slate-800">
+                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[65px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
+                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[40px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
+                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[45px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
+                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[50px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
               </div>
             </div>
 
-            {/* Right column skeleton */}
-            <div className="flex-1 w-full space-y-6">
-              {/* Tab pills skeleton */}
-              <div className="w-full h-11 rounded-xl bg-slate-200 dark:bg-slate-850 animate-pulse" />
-              
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Summary cards skeleton */}
+            {/* MAIN CONTENT AREA skeleton */}
+            <div className="w-full space-y-6 text-left">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                
+                {/* Left/Middle Column (Summary & Decisions) */}
                 <div className="lg:col-span-2 space-y-6">
-                  {/* Overview box */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-                    <div className="w-32 h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                    <div className="space-y-2.5">
-                      <div className="w-full h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-[95%] h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-[90%] h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                  {/* Executive Summary */}
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
+                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                        <div className="w-32 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      </div>
+                    </div>
+                    <div className="p-5 space-y-3">
+                      <div className="w-full h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      <div className="w-full h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      <div className="w-[90%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      <div className="w-[95%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
                     </div>
                   </div>
-                  {/* Decisions box */}
-                  <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-                    <div className="w-28 h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                    <div className="space-y-3">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-1.5 h-1.5 rounded-full bg-slate-350 dark:bg-slate-750 shrink-0" />
-                        <div className="w-[85%] h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                  
+                  {/* Decisions */}
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
+                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                        <div className="w-40 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
                       </div>
-                      <div className="flex items-center space-x-3">
-                        <div className="w-1.5 h-1.5 rounded-full bg-slate-350 dark:bg-slate-750 shrink-0" />
-                        <div className="w-[75%] h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                    </div>
+                    <div className="p-5 space-y-4">
+                      <div className="flex items-start space-x-3">
+                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
+                        <div className="w-[85%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      </div>
+                      <div className="flex items-start space-x-3">
+                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
+                        <div className="w-[75%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                      </div>
+                      <div className="flex items-start space-x-3">
+                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
+                        <div className="w-[80%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Assignments card skeleton */}
-                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4 h-fit">
-                  <div className="w-36 h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                  <div className="space-y-4">
-                    {[1, 2].map((i) => (
-                      <div key={i} className="flex items-start space-x-3 border border-slate-100 dark:border-slate-800/80 p-3 rounded-lg">
-                        <div className="w-4 h-4 rounded border border-slate-300 dark:border-slate-700 bg-slate-200 dark:bg-slate-800 animate-pulse shrink-0 mt-0.5" />
-                        <div className="space-y-2 flex-1">
-                          <div className="w-full h-3.5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                          <div className="w-16 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                        </div>
+                {/* Right Column (Action Items Checklist) */}
+                <div className="space-y-6">
+                  {/* Action Items Skeleton */}
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
+                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                        <div className="w-36 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
                       </div>
-                    ))}
+                    </div>
+                    <div className="p-5 space-y-4">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="flex items-start space-x-3 py-1 border-b border-slate-100 dark:border-slate-800/50 last:border-0">
+                          <div className="w-5 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse mt-0.5 shrink-0" />
+                          <div className="flex-1 space-y-2.5">
+                            <div className="w-[90%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                            <div className="flex items-center space-x-2">
+                              <div className="w-20 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                              <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
+                
               </div>
             </div>
           </div>
@@ -1334,27 +1410,27 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               onClick={handleTogglePin}
               className={`p-1.5 sm:p-2 rounded-md border cursor-pointer transition-all duration-200 ${
                 meeting.is_pinned
-                  ? "bg-blue-50 border-blue-200 text-blue-500 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-400"
-                  : "bg-white border-slate-200 text-slate-400 hover:text-blue-500 hover:bg-blue-50/50 hover:border-blue-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-blue-400 dark:hover:bg-blue-950/20 dark:hover:border-blue-900/50"
+                  ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-400"
+                  : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-slate-300 dark:hover:bg-slate-800 dark:hover:border-slate-700"
               }`}
               title="Ghim"
             >
-              <Pin className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
+              <Pin className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${meeting.is_pinned ? "fill-current" : ""}`} />
             </button>
             <button
               onClick={handleToggleFavorite}
               className={`p-1.5 sm:p-2 rounded-md border cursor-pointer transition-all duration-200 ${
                 meeting.is_favorite
                   ? "bg-amber-50 border-amber-200 text-amber-500 dark:bg-amber-950/40 dark:border-amber-900/50 dark:text-amber-400"
-                  : "bg-white border-slate-200 text-slate-400 hover:text-amber-500 hover:bg-amber-50/50 hover:border-amber-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-amber-400 dark:hover:bg-amber-950/20 dark:hover:border-amber-900/50"
+                  : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-100 hover:border-slate-300 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-slate-300 dark:hover:bg-slate-800 dark:hover:border-slate-700"
               }`}
               title="Yêu thích"
             >
-              <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
+              <Star className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${meeting.is_favorite ? "fill-current" : ""}`} />
             </button>
             <button
               onClick={handleDeleteMeeting}
-              className="p-1.5 sm:p-2 border border-slate-200 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100 rounded-md dark:bg-slate-900 dark:border-slate-800 cursor-pointer"
+              className="p-1.5 sm:p-2 border border-slate-200 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-200 rounded-md bg-white dark:bg-slate-900 dark:border-slate-800 dark:hover:bg-red-950/30 dark:hover:border-red-900/50 dark:hover:text-red-400 cursor-pointer transition-all duration-200"
               title="Xóa"
             >
               <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
