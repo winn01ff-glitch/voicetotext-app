@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, use, Fragment, useMemo } from "react";
+import { useState, useEffect, use, Fragment, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { exportToDocx } from "@/lib/docx-helper";
@@ -901,9 +901,112 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     );
   };
 
+  // Playlist state and ref for playing all sentences sequentially
+  const [playingAllType, setPlayingAllType] = useState<"original" | "translated" | null>(null);
+  const playlistRef = useRef<{
+    type: "original" | "translated";
+    items: any[];
+    index: number;
+  } | null>(null);
+
+  const stopPlayingAll = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPlayingAllType(null);
+    setActiveSpeech(null);
+    playlistRef.current = null;
+  }, []);
+
+  const playPlaylistItem = useCallback((index: number) => {
+    if (!playlistRef.current) return;
+    const { type, items } = playlistRef.current;
+    if (index >= items.length) {
+      // Playlist finished
+      setPlayingAllType(null);
+      setActiveSpeech(null);
+      playlistRef.current = null;
+      return;
+    }
+
+    playlistRef.current.index = index;
+    const item = items[index];
+    const text = type === "original" ? (item.correctedText || item.originalText) : item.translatedText;
+
+    if (!text) {
+      // Skip empty items
+      playPlaylistItem(index + 1);
+      return;
+    }
+
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+
+      if (type === "original") {
+        const srcLang = meeting?.source_language || "ja";
+        utterance.lang = srcLang === "ja" ? "ja-JP" : srcLang === "vi" ? "vi-VN" : "en-US";
+      } else {
+        const voice = voices.find((v) => v.name === selectedVoice);
+        if (voice) {
+          utterance.voice = voice;
+          utterance.lang = voice.lang;
+        } else {
+          const targetLang = meeting?.target_language || "vi";
+          utterance.lang = targetLang === "vi" ? "vi-VN" : targetLang === "ja" ? "ja-JP" : "en-US";
+        }
+      }
+
+      utterance.onstart = () => {
+        setActiveSpeech({ id: item.id });
+      };
+
+      utterance.onend = () => {
+        if (playlistRef.current && playlistRef.current.index === index) {
+          playPlaylistItem(index + 1);
+        }
+      };
+
+      utterance.onerror = () => {
+        if (playlistRef.current && playlistRef.current.index === index) {
+          playPlaylistItem(index + 1);
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+  }, [meeting, voices, selectedVoice]);
+
+  const startPlayingPlaylist = (type: "original" | "translated", items: any[]) => {
+    if (items.length === 0) return;
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+      
+      const validItems = items.filter((item) => {
+        const txt = type === "original" ? (item.correctedText || item.originalText) : item.translatedText;
+        return !!txt;
+      });
+
+      if (validItems.length === 0) return;
+
+      playlistRef.current = {
+        type,
+        items: validItems,
+        index: 0
+      };
+      setPlayingAllType(type);
+      playPlaylistItem(0);
+    }
+  };
+
   const playTts = (id: string, text: string, isOriginal: boolean = false) => {
     if (!text) return;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      if (playlistRef.current) {
+        setPlayingAllType(null);
+        playlistRef.current = null;
+      }
+
       if (activeSpeech && activeSpeech.id === id) {
         window.speechSynthesis.cancel();
         setActiveSpeech(null);
@@ -1567,8 +1670,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             ) : (
               <div className="space-y-6 bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm">
                 {/* Internal Search & Voice selector */}
-                <div className="flex flex-col md:flex-row gap-4 justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="relative w-full max-w-md">
+                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
@@ -1588,13 +1691,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     )}
                   </div>
 
-                  <div className="flex items-center space-x-3 text-xs">
-                    <span className="text-slate-400 font-medium">Giọng đọc phát lại:</span>
-                    <div className="relative inline-block">
+                  <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
+                    <span className="text-slate-400 font-medium shrink-0">Giọng đọc:</span>
+                    <div className="relative flex-1 sm:flex-initial max-w-[240px] sm:max-w-[200px] w-full">
                       <select
                         value={selectedVoice}
                         onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-2 pr-8 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate max-w-[200px] cursor-pointer"
+                        className="h-9 pl-3 pr-8 w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer"
                       >
                         {allAvailableVoices.length > 0 ? (
                           allAvailableVoices.map((v) => (
@@ -1666,8 +1769,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
                               </span>
                               <span 
-                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                  activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                  activeTouchKey === `tx_orig_${t.id}`
+                                    ? "opacity-100 delay-0"
+                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -1675,7 +1780,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     playTts(t.id, t.correctedText || t.originalText, true);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                  }`}
                                   title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
                                 >
                                   {activeSpeech?.id === t.id ? (
@@ -1689,7 +1796,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                   title="Sao chép gốc"
                                 >
                                   {copiedKey === `tx_orig_${t.id}` ? (
@@ -1713,8 +1820,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 {highlightText(t.translatedText, searchQuery)}
                               </span>
                               <span 
-                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                  activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                  activeTouchKey === `tx_trans_${t.id}`
+                                    ? "opacity-100 delay-0"
+                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -1722,7 +1831,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     playTts(t.id, t.translatedText, false);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                  }`}
                                   title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
                                 >
                                   {activeSpeech?.id === t.id ? (
@@ -1736,7 +1847,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     handleCopyText(t.translatedText, `tx_trans_${t.id}`);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                   title="Sao chép bản dịch"
                                 >
                                   {copiedKey === `tx_trans_${t.id}` ? (
@@ -1777,8 +1888,58 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
                         <th className="py-3 px-4 text-left style-none w-16 whitespace-nowrap">Giây</th>
                         <th className="py-3 px-4 text-left style-none w-32 whitespace-nowrap">Người nói</th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">Văn bản gốc</th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">Bản dịch</th>
+                        <th className="py-3 px-4 text-left style-none w-[40%]">
+                          <div className="flex items-center space-x-1.5 select-none">
+                            <span>Văn bản gốc</span>
+                            <button
+                              onClick={() => {
+                                if (playingAllType === "original") {
+                                  stopPlayingAll();
+                                } else {
+                                  startPlayingPlaylist("original", filteredTranscripts);
+                                }
+                              }}
+                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
+                                playingAllType === "original"
+                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
+                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
+                              }`}
+                              title={playingAllType === "original" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản gốc từ trên xuống"}
+                            >
+                              {playingAllType === "original" ? (
+                                <VolumeX className="w-3 h-3 text-red-500" />
+                              ) : (
+                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
+                              )}
+                            </button>
+                          </div>
+                        </th>
+                        <th className="py-3 px-4 text-left style-none w-[40%]">
+                          <div className="flex items-center space-x-1.5 select-none">
+                            <span>Bản dịch</span>
+                            <button
+                              onClick={() => {
+                                if (playingAllType === "translated") {
+                                  stopPlayingAll();
+                                } else {
+                                  startPlayingPlaylist("translated", filteredTranscripts);
+                                }
+                              }}
+                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
+                                playingAllType === "translated"
+                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
+                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
+                              }`}
+                              title={playingAllType === "translated" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản dịch từ trên xuống"}
+                            >
+                              {playingAllType === "translated" ? (
+                                <VolumeX className="w-3 h-3 text-red-500" />
+                              ) : (
+                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
+                              )}
+                            </button>
+                          </div>
+                        </th>
                         <th className="py-3 px-4 text-center style-none w-20 whitespace-nowrap">Công cụ</th>
                       </tr>
                     </thead>
@@ -1812,7 +1973,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 )}
                               </div>
                             </td>
-                            <td className="py-4 px-4 align-top">
+                            <td className="py-4 px-4 align-top group/cell">
                               {isEditing ? (
                                 <div className="flex items-start space-x-2">
                                   <textarea
@@ -1840,7 +2001,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
                                   }}
-                                  className="group/cell leading-relaxed cursor-pointer"
+                                  className="leading-relaxed cursor-pointer"
                                 >
                                   <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
@@ -1851,8 +2012,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     </span>
                                   )}
                                   <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                      activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                      activeTouchKey === `tx_orig_${t.id}`
+                                        ? "opacity-100 delay-0"
+                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -1860,13 +2023,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                      }`}
                                       title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
                                     >
                                       {activeSpeech?.id === t.id ? (
-                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
-                                        <Volume2 className="w-3.5 h-3.5" />
+                                        <Volume2 className="w-3 h-3" />
                                       )}
                                     </button>
                                     <button
@@ -1874,34 +2039,36 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                       title="Sao chép gốc"
                                     >
                                       {copiedKey === `tx_orig_${t.id}` ? (
-                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                        <Check className="w-3 h-3 text-green-500" />
                                       ) : (
-                                        <Copy className="w-3.5 h-3.5" />
+                                        <Copy className="w-3 h-3" />
                                       )}
                                     </button>
                                   </span>
                                 </div>
                               )}
                             </td>
-                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed">
+                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell">
                               {t.translatedText && (
                                 <div 
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
                                   }}
-                                  className="group/cell leading-relaxed cursor-pointer"
+                                  className="leading-relaxed cursor-pointer"
                                 >
                                   <span>
                                     {highlightText(t.translatedText, searchQuery)}
                                   </span>
                                   <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                      activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                      activeTouchKey === `tx_trans_${t.id}`
+                                        ? "opacity-100 delay-0"
+                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -1909,13 +2076,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         playTts(t.id, t.translatedText, false);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                      }`}
                                       title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
                                     >
                                       {activeSpeech?.id === t.id ? (
-                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
-                                        <Volume2 className="w-3.5 h-3.5" />
+                                        <Volume2 className="w-3 h-3" />
                                       )}
                                     </button>
                                     <button
@@ -1923,13 +2092,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         handleCopyText(t.translatedText, `tx_trans_${t.id}`);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                       title="Sao chép bản dịch"
                                     >
                                       {copiedKey === `tx_trans_${t.id}` ? (
-                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                        <Check className="w-3 h-3 text-green-500" />
                                       ) : (
-                                        <Copy className="w-3.5 h-3.5" />
+                                        <Copy className="w-3 h-3" />
                                       )}
                                     </button>
                                   </span>
@@ -2434,8 +2603,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             ) : (
               <div className="space-y-6 bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm">
                 {/* Internal Search & Voice selector */}
-                <div className="flex flex-col md:flex-row gap-4 justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="relative w-full max-w-md">
+                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
@@ -2455,13 +2624,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     )}
                   </div>
 
-                  <div className="flex items-center space-x-3 text-xs">
-                    <span className="text-slate-400 font-medium">Giọng đọc phát lại:</span>
-                    <div className="relative inline-block">
+                  <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
+                    <span className="text-slate-400 font-medium shrink-0">Giọng đọc:</span>
+                    <div className="relative flex-1 sm:flex-initial max-w-[240px] sm:max-w-[200px] w-full">
                       <select
                         value={selectedVoice}
                         onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-2 pr-8 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate max-w-[200px] cursor-pointer"
+                        className="h-9 pl-3 pr-8 w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer"
                       >
                         {allAvailableVoices.length > 0 ? (
                           allAvailableVoices.map((v) => (
@@ -2527,8 +2696,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
                               </span>
                               <span 
-                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                  activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                  activeTouchKey === `tx_orig_${t.id}`
+                                    ? "opacity-100 delay-0"
+                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -2536,11 +2707,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     playTts(t.id, t.correctedText || t.originalText, true);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                  }`}
                                   title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
                                 >
                                   {activeSpeech?.id === t.id ? (
-                                    <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                   ) : (
                                     <Volume2 className="w-3 h-3" />
                                   )}
@@ -2550,7 +2723,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                   title="Sao chép gốc"
                                 >
                                   {copiedKey === `tx_orig_${t.id}` ? (
@@ -2574,8 +2747,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 {highlightText(t.translatedText, searchQuery)}
                               </span>
                               <span 
-                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                  activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                  activeTouchKey === `tx_trans_${t.id}`
+                                    ? "opacity-100 delay-0"
+                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -2583,7 +2758,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     playTts(t.id, t.translatedText, false);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                  }`}
                                   title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
                                 >
                                   {activeSpeech?.id === t.id ? (
@@ -2597,7 +2774,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     handleCopyText(t.translatedText, `tx_trans_${t.id}`);
                                   }}
-                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                   title="Sao chép bản dịch"
                                 >
                                   {copiedKey === `tx_trans_${t.id}` ? (
@@ -2637,8 +2814,58 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
                         <th className="py-3 px-4 text-left style-none w-16 whitespace-nowrap">Giây</th>
                         <th className="py-3 px-4 text-left style-none w-32 whitespace-nowrap">Người nói</th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">Văn bản gốc</th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">Bản dịch</th>
+                        <th className="py-3 px-4 text-left style-none w-[40%]">
+                          <div className="flex items-center space-x-1.5 select-none">
+                            <span>Văn bản gốc</span>
+                            <button
+                              onClick={() => {
+                                if (playingAllType === "original") {
+                                  stopPlayingAll();
+                                } else {
+                                  startPlayingPlaylist("original", filteredReprocessedTranscripts);
+                                }
+                              }}
+                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
+                                playingAllType === "original"
+                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
+                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
+                              }`}
+                              title={playingAllType === "original" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản gốc từ trên xuống"}
+                            >
+                              {playingAllType === "original" ? (
+                                <VolumeX className="w-3 h-3 text-red-500" />
+                              ) : (
+                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
+                              )}
+                            </button>
+                          </div>
+                        </th>
+                        <th className="py-3 px-4 text-left style-none w-[40%]">
+                          <div className="flex items-center space-x-1.5 select-none">
+                            <span>Bản dịch</span>
+                            <button
+                              onClick={() => {
+                                if (playingAllType === "translated") {
+                                  stopPlayingAll();
+                                } else {
+                                  startPlayingPlaylist("translated", filteredReprocessedTranscripts);
+                                }
+                              }}
+                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
+                                playingAllType === "translated"
+                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
+                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
+                              }`}
+                              title={playingAllType === "translated" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản dịch từ trên xuống"}
+                            >
+                              {playingAllType === "translated" ? (
+                                <VolumeX className="w-3 h-3 text-red-500" />
+                              ) : (
+                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
+                              )}
+                            </button>
+                          </div>
+                        </th>
                         <th className="py-3 px-4 text-center style-none w-20 whitespace-nowrap">Công cụ</th>
                       </tr>
                     </thead>
@@ -2668,7 +2895,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-4 px-4 align-top">
+                            <td className="py-4 px-4 align-top group/cell">
                               {isEditing ? (
                                 <div className="flex items-start space-x-2">
                                   <textarea
@@ -2696,7 +2923,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
                                   }}
-                                  className="group/cell leading-relaxed cursor-pointer"
+                                  className="leading-relaxed cursor-pointer"
                                 >
                                   <span className="text-slate-900 dark:text-slate-100 font-semibold">
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
@@ -2707,8 +2934,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     </span>
                                   )}
                                   <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                      activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                      activeTouchKey === `tx_orig_${t.id}`
+                                        ? "opacity-100 delay-0"
+                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -2716,13 +2945,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                      }`}
                                       title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
                                     >
                                       {activeSpeech?.id === t.id ? (
-                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
-                                        <Volume2 className="w-3.5 h-3.5" />
+                                        <Volume2 className="w-3 h-3" />
                                       )}
                                     </button>
                                     <button
@@ -2730,34 +2961,36 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                       title="Sao chép gốc"
                                     >
                                       {copiedKey === `tx_orig_${t.id}` ? (
-                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                        <Check className="w-3 h-3 text-green-500" />
                                       ) : (
-                                        <Copy className="w-3.5 h-3.5" />
+                                        <Copy className="w-3 h-3" />
                                       )}
                                     </button>
                                   </span>
                                 </div>
                               )}
                             </td>
-                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed">
+                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell">
                               {t.translatedText && (
                                 <div 
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
                                   }}
-                                  className="group/cell leading-relaxed cursor-pointer"
+                                  className="leading-relaxed cursor-pointer"
                                 >
                                   <span>
                                     {highlightText(t.translatedText, searchQuery)}
                                   </span>
                                   <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
-                                      activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
+                                      activeTouchKey === `tx_trans_${t.id}`
+                                        ? "opacity-100 delay-0"
+                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -2765,13 +2998,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         playTts(t.id, t.translatedText, false);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
+                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                      }`}
                                       title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
                                     >
                                       {activeSpeech?.id === t.id ? (
-                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
-                                        <Volume2 className="w-3.5 h-3.5" />
+                                        <Volume2 className="w-3 h-3" />
                                       )}
                                     </button>
                                     <button
@@ -2779,13 +3014,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         e.stopPropagation();
                                         handleCopyText(t.translatedText, `tx_trans_${t.id}`);
                                       }}
-                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
                                       title="Sao chép bản dịch"
                                     >
                                       {copiedKey === `tx_trans_${t.id}` ? (
-                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                        <Check className="w-3 h-3 text-green-500" />
                                       ) : (
-                                        <Copy className="w-3.5 h-3.5" />
+                                        <Copy className="w-3 h-3" />
                                       )}
                                     </button>
                                   </span>
