@@ -1649,7 +1649,7 @@ export default function Dashboard() {
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[650px] max-h-[95vh]"
+            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]"
           >
             
             {/* Header */}
