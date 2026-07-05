@@ -1149,7 +1149,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-px">
             
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
-            <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none pb-px shrink-0 order-2 lg:order-1 gap-y-0">
+            <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none shrink-0 order-2 lg:order-1 gap-y-0">
               {(() => {
                 const activeIndex = mainTab === "processed"
                   ? (subTabProcessed === "summary" ? 0 : 1)
@@ -1163,7 +1163,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <>
                     {/* Desktop-only sliding underline indicator */}
                     <div
-                      className={`hidden lg:block absolute bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
+                      className={`hidden lg:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "25%",
                         transform: `translateX(${activeIndex * 100}%)`,
@@ -1172,7 +1172,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     {/* Mobile-only 2D sliding underline indicator */}
                     <div
-                      className={`lg:hidden absolute h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
+                      className={`lg:hidden absolute z-10 h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "50%",
                         top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 1px)" : "calc(100% - 1px)",
