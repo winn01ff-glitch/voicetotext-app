@@ -1163,7 +1163,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <>
                     {/* Desktop-only sliding underline indicator */}
                     <div
-                      className={`hidden lg:block absolute bottom-0 h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
+                      className={`hidden lg:block absolute bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "25%",
                         transform: `translateX(${activeIndex * 100}%)`,
@@ -1175,7 +1175,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       className={`lg:hidden absolute h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "50%",
-                        top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 2px)" : "calc(100% - 2px)",
+                        top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 1px)" : "calc(100% - 1px)",
                         transform: `translateX(${(activeIndex === 0 || activeIndex === 1) ? 0 : 100}%)`,
                       }}
                     />
