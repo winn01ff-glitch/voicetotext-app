@@ -71,18 +71,25 @@ export default function Dashboard() {
     message: "",
     type: "info",
   });
-  type Toast = { id: number; title: string; desc: string; type: "success" | "error" | "info" | "warning" };
+  type Toast = { id: number; title: string; desc: string; type: "success" | "error" | "info" | "warning", closing?: boolean };
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToastId = useRef(0);
+
+  const removeToast = (id: number) => {
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, closing: true } : t)));
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 300);
+  };
 
   const showCustomAlert = (message: string, type: "success" | "error" | "info" | "warning" = "info", title: string = "Thông báo") => {
     return new Promise<void>((resolve) => {
       const id = nextToastId.current++;
       setToasts((prev) => [...prev, { id, title, desc: message, type }]);
       setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
+        removeToast(id);
         resolve();
-      }, 5000);
+      }, 4700);
     });
   };
 
@@ -2342,40 +2349,40 @@ export default function Dashboard() {
           to { stroke-dashoffset: 62.83; }
         }
       `}</style>
-      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
-              border: "border-emerald-100 dark:border-emerald-900/50",
-              bg: "bg-emerald-50/95 dark:bg-emerald-950/90",
-              title: "text-emerald-900 dark:text-emerald-300",
-              desc: "text-emerald-700/90 dark:text-emerald-400/90",
-              circle: "text-emerald-500",
-              btn: "text-emerald-500 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-200"
+              border: "border-emerald-200 dark:border-emerald-800/50",
+              bg: "bg-emerald-100/95 dark:bg-emerald-900/90",
+              title: "text-emerald-950 dark:text-emerald-100",
+              desc: "text-emerald-800 dark:text-emerald-300",
+              circle: "text-emerald-600",
+              btn: "text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-200"
             },
             warning: {
-              border: "border-amber-100 dark:border-amber-900/50",
-              bg: "bg-amber-50/95 dark:bg-amber-950/90",
-              title: "text-amber-900 dark:text-amber-300",
-              desc: "text-amber-700/90 dark:text-amber-400/90",
-              circle: "text-amber-500",
-              btn: "text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-200"
+              border: "border-amber-200 dark:border-amber-800/50",
+              bg: "bg-amber-100/95 dark:bg-amber-900/90",
+              title: "text-amber-950 dark:text-amber-100",
+              desc: "text-amber-800 dark:text-amber-300",
+              circle: "text-amber-600",
+              btn: "text-amber-600 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-200"
             },
             error: {
-              border: "border-red-100 dark:border-red-900/50",
-              bg: "bg-red-50/95 dark:bg-red-950/90",
-              title: "text-red-900 dark:text-red-300",
-              desc: "text-red-700/90 dark:text-red-400/90",
-              circle: "text-red-500",
-              btn: "text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200"
+              border: "border-red-200 dark:border-red-800/50",
+              bg: "bg-red-100/95 dark:bg-red-900/90",
+              title: "text-red-950 dark:text-red-100",
+              desc: "text-red-800 dark:text-red-300",
+              circle: "text-red-600",
+              btn: "text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-200"
             },
             info: {
-              border: "border-blue-100 dark:border-blue-900/50",
-              bg: "bg-blue-50/95 dark:bg-blue-950/90",
-              title: "text-blue-900 dark:text-blue-300",
-              desc: "text-blue-700/90 dark:text-blue-400/90",
-              circle: "text-blue-500",
-              btn: "text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-200"
+              border: "border-blue-200 dark:border-blue-800/50",
+              bg: "bg-blue-100/95 dark:bg-blue-900/90",
+              title: "text-blue-950 dark:text-blue-100",
+              desc: "text-blue-800 dark:text-blue-300",
+              circle: "text-blue-600",
+              btn: "text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
             }
           };
 
@@ -2384,7 +2391,7 @@ export default function Dashboard() {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto border ${style.border} ${style.bg} py-2 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-top-10 fade-in duration-300`}
+              className={`pointer-events-auto border ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-out slide-out-to-top-10 fade-out" : "animate-in slide-in-from-top-10 fade-in"}`}
             >
               <div className="flex-1 min-w-0 pr-2">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
@@ -2394,7 +2401,7 @@ export default function Dashboard() {
               <div className="relative flex items-center justify-center w-7 h-7 shrink-0">
                 <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 24 24">
                   <circle
-                    className="text-slate-300/50 dark:text-slate-600/50"
+                    className="text-slate-400/30 dark:text-slate-500/30"
                     strokeWidth="2"
                     stroke="currentColor"
                     fill="transparent"
@@ -2413,12 +2420,12 @@ export default function Dashboard() {
                     r="10"
                     cx="12"
                     cy="12"
-                    style={{ animation: "toast-circle-progress 5s linear forwards" }}
+                    style={{ animation: "toast-circle-progress 4.7s linear forwards" }}
                   />
                 </svg>
                 <button
-                  onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
-                  className={`${style.btn} cursor-pointer p-1 rounded-full hover:bg-slate-200/50 dark:hover:bg-slate-700/50 relative z-10 flex items-center justify-center transition-colors`}
+                  onClick={() => removeToast(t.id)}
+                  className={`${style.btn} cursor-pointer p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 relative z-10 flex items-center justify-center transition-colors`}
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
