@@ -1182,7 +1182,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 border-r-blue-400/80 dark:border-r-blue-600/50 lg:border-r-0 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 border-r-blue-500 dark:border-r-blue-450 lg:border-r-0 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1195,7 +1195,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-400/80 dark:border-r-blue-600/50 whitespace-nowrap order-3 lg:order-2 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-500 dark:border-r-blue-450 whitespace-nowrap order-3 lg:order-2 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
