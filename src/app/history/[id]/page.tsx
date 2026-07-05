@@ -1082,10 +1082,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
             <button
               onClick={handleTogglePin}
-              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer ${
+              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer transition-all duration-200 ${
                 meeting.is_pinned
-                  ? "bg-blue-50 border-blue-200 text-blue-500"
-                  : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 dark:bg-slate-900 dark:border-slate-800"
+                  ? "bg-blue-50 border-blue-200 text-blue-500 dark:bg-blue-950/40 dark:border-blue-900/50 dark:text-blue-400"
+                  : "bg-white border-slate-200 text-slate-400 hover:text-blue-500 hover:bg-blue-50/50 hover:border-blue-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-blue-400 dark:hover:bg-blue-950/20 dark:hover:border-blue-900/50"
               }`}
               title="Ghim"
             >
@@ -1093,10 +1093,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </button>
             <button
               onClick={handleToggleFavorite}
-              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer ${
+              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer transition-all duration-200 ${
                 meeting.is_favorite
-                  ? "bg-amber-50 border-amber-200 text-amber-500"
-                  : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 dark:bg-slate-900 dark:border-slate-800"
+                  ? "bg-amber-50 border-amber-200 text-amber-500 dark:bg-amber-950/40 dark:border-amber-900/50 dark:text-amber-400"
+                  : "bg-white border-slate-200 text-slate-400 hover:text-amber-500 hover:bg-amber-50/50 hover:border-amber-200 dark:bg-slate-900 dark:border-slate-800 dark:hover:text-amber-400 dark:hover:bg-amber-950/20 dark:hover:border-amber-900/50"
               }`}
               title="Yêu thích"
             >
@@ -1166,9 +1166,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       className={`hidden lg:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "25%",
-                        transform: activeIndex >= 2 
-                          ? `translateX(calc(${activeIndex * 100}% - 1.5px))` 
-                          : `translateX(${activeIndex * 100}%)`,
+                        transform: `translateX(${activeIndex * 100}%)`,
                       }}
                     />
                     
