@@ -1484,7 +1484,7 @@ export default function Dashboard() {
                         const typeLabel = createdFrom === "youtube"
                           ? "YOUTUBE"
                           : createdFrom === "upload"
-                          ? "FILE AUDIO"
+                          ? "FILE UPLOAD"
                           : "TRỰC TIẾP";
 
                         const typeStyles = createdFrom === "youtube"
