@@ -8,7 +8,8 @@ import { createClient } from "@/lib/supabase/client";
 import { 
   Plus, Search, Settings, Calendar, Pin, Star, Trash2, Mic, Volume2, 
   RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight,
-  Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown
+  Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown,
+  ChevronUp
 } from "lucide-react";
 
 export default function Dashboard() {
@@ -27,6 +28,12 @@ export default function Dashboard() {
   const [endDate, setEndDate] = useState("");
   const [globalSearchResults, setGlobalSearchResults] = useState<any[]>([]);
   const [isSearchingGlobally, setIsSearchingGlobally] = useState(false);
+  const [visibleMeetingsCount, setVisibleMeetingsCount] = useState(15);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const statusDropdownRef = useRef<HTMLDivElement>(null);
 
   // New Meeting configuration states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -40,6 +47,7 @@ export default function Dashboard() {
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([]);
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
   const isLoadedRef = useRef(false);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   // Custom Modal state
   const [modalConfig, setModalConfig] = useState<{
@@ -219,6 +227,38 @@ export default function Dashboard() {
     };
   }, [showCreateModal]);
 
+  // Reset pagination count when active tab changes
+  useEffect(() => {
+    setVisibleMeetingsCount(15);
+  }, [activeTab]);
+
+  // Scroll listener to toggle showScrollTop state
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 300) {
+        setShowScrollTop(true);
+      } else {
+        setShowScrollTop(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(event.target as Node)) {
+        setShowStatusDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+
   // Handle global search in transcripts
   useEffect(() => {
     if (!searchQuery.trim() && !startDate && !endDate) {
@@ -299,49 +339,178 @@ export default function Dashboard() {
     }
   };
 
-  // Run global search across transcripts using pg_trgm ILIKE query
+  const getSummarySnippet = (text: string, query: string) => {
+    if (!text || !query) return "";
+
+    const removeAccents = (str: string) => {
+      const map: { [key: string]: string } = {
+        'à': 'a', 'á': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
+        'ă': 'a', 'ằ': 'a', 'ắ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
+        'â': 'a', 'ầ': 'a', 'ấ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
+        'è': 'e', 'é': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
+        'ê': 'e', 'ề': 'e', 'ế': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
+        'ì': 'i', 'í': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
+        'ò': 'o', 'ó': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
+        'ô': 'o', 'ồ': 'o', 'ố': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
+        'ơ': 'o', 'ờ': 'o', 'ớ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
+        'ù': 'u', 'ú': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
+        'ư': 'u', 'ừ': 'u', 'ứ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
+        'ỳ': 'y', 'ý': 'y', 'ỷ': 'y', 'ỹ': 'y', 'Ỵ': 'y',
+        'đ': 'd',
+        'À': 'A', 'Á': 'A', 'Ả': 'A', 'Ã': 'A', 'Ạ': 'A',
+        'Ă': 'A', 'Ằ': 'A', 'Ắ': 'A', 'Ẳ': 'A', 'Ẵ': 'A', 'Ặ': 'A',
+        'Â': 'A', 'Ầ': 'A', 'Ấ': 'A', 'Ẩ': 'A', 'Ẫ': 'A', 'Ậ': 'A',
+        'È': 'E', 'É': 'E', 'Ẻ': 'E', 'Ẽ': 'E', 'Ẹ': 'E',
+        'Ê': 'E', 'Ề': 'E', 'Ế': 'E', 'Ể': 'E', 'Ễ': 'E', 'Ệ': 'E',
+        'Ì': 'I', 'Í': 'I', 'Ỉ': 'I', 'Ĩ': 'I', 'Ị': 'I',
+        'Ò': 'O', 'Ó': 'O', 'Ỏ': 'O', 'Õ': 'O', 'Ọ': 'O',
+        'Ô': 'O', 'Ồ': 'O', 'Ố': 'O', 'Ổ': 'O', 'Ỗ': 'O', 'Ộ': 'O',
+        'Ơ': 'O', 'Ờ': 'O', 'Ớ': 'O', 'Ở': 'O', 'Ỡ': 'O', 'Ợ': 'O',
+        'Ù': 'U', 'Ú': 'U', 'Ủ': 'U', 'Ũ': 'U', 'Ụ': 'U',
+        'Ư': 'U', 'Ừ': 'U', 'Ứ': 'U', 'Ử': 'U', 'Ữ': 'U', 'Ự': 'U',
+        'Ý': 'Y', 'Ý': 'Y', 'Ỷ': 'Y', 'Ỹ': 'Y', 'Ỵ': 'Y',
+        'Đ': 'D'
+      };
+      return str.split('').map(char => map[char] || char).join('');
+    };
+
+    const cleanText = removeAccents(text).toLowerCase();
+    const cleanQuery = removeAccents(query).toLowerCase();
+    
+    const index = cleanText.indexOf(cleanQuery);
+    if (index === -1) return text.slice(0, 120) + (text.length > 120 ? "..." : "");
+    
+    const start = Math.max(0, index - 50);
+    const end = Math.min(text.length, index + query.length + 60);
+    
+    let snippet = text.slice(start, end);
+    if (start > 0) snippet = "..." + snippet;
+    if (end < text.length) snippet = snippet + "...";
+    return snippet;
+  };
+
+  // Run global search across transcripts, titles, and summaries using pg_trgm ILIKE query with unaccent support
   const runGlobalSearch = async () => {
     setIsSearchingGlobally(true);
     try {
-      let query = supabase
-        .from("transcripts")
-        .select(`
-          id, original_text, corrected_text, translated_text, start_ms,
-          meetings ( id, title, created_at )
-        `);
+      // 1. Search in transcripts
+      const { data, error } = await supabase.rpc("search_transcripts", {
+        search_term: searchQuery,
+        start_date: startDate || null,
+        end_date: endDate || null
+      });
 
-      if (searchQuery.trim()) {
-        query = query.or(`original_text.ilike.%${searchQuery}%,corrected_text.ilike.%${searchQuery}%,translated_text.ilike.%${searchQuery}%`);
-      }
+      if (error) throw error;
 
+      // 2. Search in meeting titles
+      let meetingsQuery = supabase
+        .from("meetings")
+        .select("id, title, created_at");
+      
       if (startDate) {
-        query = query.gte("created_at", `${startDate}T00:00:00Z`);
+        meetingsQuery = meetingsQuery.gte("created_at", startDate);
       }
       if (endDate) {
-        query = query.lte("created_at", `${endDate}T23:59:59Z`);
+        meetingsQuery = meetingsQuery.lte("created_at", `${endDate}T23:59:59.999Z`);
       }
 
-      const { data, error } = await query.limit(50);
-      if (error) throw error;
+      const { data: titleMatches, error: titleError } = await meetingsQuery.ilike("title", `%${searchQuery}%`);
+      if (titleError) console.error("Title search error:", titleError);
+
+      // 3. Search in AI summaries
+      let summariesQuery = supabase
+        .from("ai_summaries")
+        .select(`
+          meeting_id,
+          executive_summary,
+          reprocessed_executive_summary,
+          meetings!inner ( title, created_at )
+        `)
+        .or(`executive_summary.ilike.%${searchQuery}%,reprocessed_executive_summary.ilike.%${searchQuery}%`);
+        
+      if (startDate) {
+        summariesQuery = summariesQuery.gte("meetings.created_at", startDate);
+      }
+      if (endDate) {
+        summariesQuery = summariesQuery.lte("meetings.created_at", `${endDate}T23:59:59.999Z`);
+      }
+
+      const { data: summaryMatches, error: summaryError } = await summariesQuery;
+      if (summaryError) console.error("Summary search error:", summaryError);
 
       // Group transcripts by meeting for nicer UI
       const grouped: { [key: string]: any } = {};
       data?.forEach((item: any) => {
-        const m = item.meetings;
-        if (!m) return;
+        if (!grouped[item.meeting_id]) {
+          grouped[item.meeting_id] = {
+            meeting_id: item.meeting_id,
+            title: item.meeting_title,
+            created_at: item.meeting_created_at,
+            matches: [],
+          };
+        }
+        grouped[item.meeting_id].matches.push({
+          text: item.corrected_text || item.original_text,
+          translation: item.translated_text,
+          start_ms: item.start_ms,
+        });
+      });
+
+      // Merge title matches if not already in grouped results
+      titleMatches?.forEach((m: any) => {
         if (!grouped[m.id]) {
           grouped[m.id] = {
             meeting_id: m.id,
             title: m.title,
             created_at: m.created_at,
+            matches: [
+              {
+                text: "Khớp tiêu đề cuộc họp",
+                translation: "",
+                start_ms: 0,
+                isTitleMatch: true,
+              }
+            ],
+          };
+        }
+      });
+
+      // Merge summary matches
+      summaryMatches?.forEach((sm: any) => {
+        const parentMeeting = sm.meetings;
+        if (!parentMeeting) return;
+        
+        if (!grouped[sm.meeting_id]) {
+          grouped[sm.meeting_id] = {
+            meeting_id: sm.meeting_id,
+            title: parentMeeting.title,
+            created_at: parentMeeting.created_at,
             matches: [],
           };
         }
-        grouped[m.id].matches.push({
-          text: item.corrected_text || item.original_text,
-          translation: item.translated_text,
-          start_ms: item.start_ms,
-        });
+        
+        const cleanQuery = searchQuery.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        const matchInSummary = (text: string) => {
+          if (!text) return false;
+          const cleanText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+          return cleanText.includes(cleanQuery);
+        };
+        
+        if (matchInSummary(sm.executive_summary)) {
+          grouped[sm.meeting_id].matches.push({
+            text: getSummarySnippet(sm.executive_summary, searchQuery),
+            translation: "",
+            start_ms: 0,
+            isSummaryMatch: true,
+          });
+        } else if (matchInSummary(sm.reprocessed_executive_summary)) {
+          grouped[sm.meeting_id].matches.push({
+            text: getSummarySnippet(sm.reprocessed_executive_summary, searchQuery),
+            translation: "",
+            start_ms: 0,
+            isSummaryMatch: true,
+          });
+        }
       });
 
       setGlobalSearchResults(Object.values(grouped));
@@ -624,12 +793,25 @@ export default function Dashboard() {
     );
   };
 
-  // Filter meetings list by tabs
+  // Filter meetings list by tabs and status
   const filteredMeetings = meetings.filter((m) => {
-    if (activeTab === "pinned") return m.is_pinned;
-    if (activeTab === "favorite") return m.is_favorite;
+    if (activeTab === "pinned" && !m.is_pinned) return false;
+    if (activeTab === "favorite" && !m.is_favorite) return false;
+    if (statusFilter !== "all" && m.status !== statusFilter) return false;
     return true;
   });
+
+  const formatDate = (dateString: string) => {
+    const d = new Date(dateString);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}/${month}/${day}`;
+  };
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   const formatDuration = (ms: number) => {
     if (!ms) return "0 phút";
@@ -637,6 +819,127 @@ export default function Dashboard() {
     return `${mins} phút`;
   };
 
+  // Infinite scroll observer
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel) return;
+    if (filteredMeetings.length <= visibleMeetingsCount) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleMeetingsCount((prev) => prev + 15);
+        }
+      },
+      { rootMargin: "200px" }
+    );
+
+    observer.observe(sentinel);
+    return () => {
+      if (sentinel) observer.unobserve(sentinel);
+    };
+  }, [filteredMeetings.length, visibleMeetingsCount]);
+  const getFilterButtonStyles = () => {
+    if (showStatusDropdown && statusFilter === "all") {
+      return "bg-slate-100 dark:bg-slate-800 border-slate-300 text-slate-900 dark:border-slate-700 dark:text-slate-100";
+    }
+    
+    switch (statusFilter) {
+      case "recording":
+        return "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30";
+      case "completed":
+        return "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-455 dark:border-blue-900/30";
+      case "paused":
+        return "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30";
+      case "failed":
+        return "bg-rose-50 text-rose-750 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/30";
+      case "processing":
+        return "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-455 dark:border-amber-900/30";
+      default:
+        return "bg-white text-slate-605 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800";
+    }
+  };
+
+  const getClearButtonHoverStyles = () => {
+    switch (statusFilter) {
+      case "recording": return "hover:bg-red-200/60 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400";
+      case "completed": return "hover:bg-blue-200/60 dark:hover:bg-blue-900/60 text-blue-600 dark:text-blue-400";
+      case "paused": return "hover:bg-purple-200/60 dark:hover:bg-purple-900/60 text-purple-600 dark:text-purple-400";
+      case "failed": return "hover:bg-rose-200/60 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400";
+      case "processing": return "hover:bg-amber-200/60 dark:hover:bg-amber-900/60 text-amber-600 dark:text-amber-400";
+      default: return "";
+    }
+  };
+
+  const highlightText = (text: string, query: string) => {
+    if (!query || !text) return text;
+
+    const removeAccents = (str: string) => {
+      const map: { [key: string]: string } = {
+        'à': 'a', 'á': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
+        'ă': 'a', 'ằ': 'a', 'ắ': 'a', 'ẳ': 'a', 'ẵ': 'a', 'ặ': 'a',
+        'â': 'a', 'ầ': 'a', 'ấ': 'a', 'ẩ': 'a', 'ẫ': 'a', 'ậ': 'a',
+        'è': 'e', 'é': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
+        'ê': 'e', 'ề': 'e', 'ế': 'e', 'ể': 'e', 'ễ': 'e', 'ệ': 'e',
+        'ì': 'i', 'í': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
+        'ò': 'o', 'ó': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
+        'ô': 'o', 'ồ': 'o', 'ố': 'o', 'ổ': 'o', 'ỗ': 'o', 'ộ': 'o',
+        'ơ': 'o', 'ờ': 'o', 'ớ': 'o', 'ở': 'o', 'ỡ': 'o', 'ợ': 'o',
+        'ù': 'u', 'ú': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
+        'ư': 'u', 'ừ': 'u', 'ứ': 'u', 'ử': 'u', 'ữ': 'u', 'ự': 'u',
+        'ỳ': 'y', 'ý': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y',
+        'đ': 'd',
+        'À': 'A', 'Á': 'A', 'Ả': 'A', 'Ã': 'A', 'Ạ': 'A',
+        'Ă': 'A', 'Ằ': 'A', 'Ắ': 'A', 'Ẳ': 'A', 'Ẵ': 'A', 'Ặ': 'A',
+        'Â': 'A', 'Ầ': 'A', 'Ấ': 'A', 'Ẩ': 'A', 'Ẫ': 'A', 'Ậ': 'A',
+        'È': 'E', 'É': 'E', 'Ẻ': 'E', 'Ẽ': 'E', 'Ẹ': 'E',
+        'Ê': 'E', 'Ề': 'E', 'Ế': 'E', 'Ể': 'E', 'Ễ': 'E', 'Ệ': 'E',
+        'Ì': 'I', 'Í': 'I', 'Ỉ': 'I', 'Ĩ': 'I', 'Ị': 'I',
+        'Ò': 'O', 'Ó': 'O', 'Ỏ': 'O', 'Õ': 'O', 'Ọ': 'O',
+        'Ô': 'O', 'Ồ': 'O', 'Ố': 'O', 'Ổ': 'O', 'Ỗ': 'O', 'Ộ': 'O',
+        'Ơ': 'O', 'Ờ': 'O', 'Ớ': 'O', 'Ở': 'O', 'Ỡ': 'O', 'Ợ': 'O',
+        'Ù': 'U', 'Ú': 'U', 'Ủ': 'U', 'Ũ': 'U', 'Ụ': 'U',
+        'Ư': 'U', 'Ừ': 'U', 'Ứ': 'U', 'Ử': 'U', 'Ữ': 'U', 'Ự': 'U',
+        'Ỳ': 'Y', 'Ý': 'Y', 'Ỷ': 'Y', 'Ỹ': 'Y', 'Ỵ': 'Y',
+        'Đ': 'D'
+      };
+      return str.split('').map(char => map[char] || char).join('');
+    };
+
+    const cleanText = removeAccents(text).toLowerCase();
+    const cleanQuery = removeAccents(query).toLowerCase();
+
+    if (!cleanText.includes(cleanQuery)) {
+      return text;
+    }
+
+    const queryLen = cleanQuery.length;
+    const result: React.ReactNode[] = [];
+    let lastIndex = 0;
+    
+    let index = cleanText.indexOf(cleanQuery);
+    while (index !== -1) {
+      if (index > lastIndex) {
+        result.push(text.slice(lastIndex, index));
+      }
+      
+      const matchedOriginalText = text.slice(index, index + queryLen);
+      result.push(
+        <mark key={index} className="bg-yellow-200 dark:bg-yellow-800 text-slate-900 dark:text-slate-100 px-0.5 rounded-sm font-semibold">
+          {matchedOriginalText}
+        </mark>
+      );
+      
+      lastIndex = index + queryLen;
+      index = cleanText.indexOf(cleanQuery, lastIndex);
+    }
+    
+    if (lastIndex < text.length) {
+      result.push(text.slice(lastIndex));
+    }
+    
+    return <>{result}</>;
+  };
   return (
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans`}>
       {/* HEADER */}
@@ -658,7 +961,7 @@ export default function Dashboard() {
             </button>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="flex items-center space-x-2 bg-mesh hover:bg-mesh-hover text-white px-4 h-10 rounded-md font-semibold text-sm transition-all shadow-md shadow-indigo-500/15 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              className="flex items-center space-x-2 btn-flat-rainbow px-5 h-10 rounded-xl font-bold text-sm transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Tạo Cuộc Họp Mới</span>
@@ -699,60 +1002,61 @@ export default function Dashboard() {
         )}
 
         {/* SEARCH AND FILTERS */}
-        <section className="glass p-6 rounded-2xl shadow-lg shadow-indigo-500/5 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Tìm kiếm nội dung, từ khóa hoặc câu dịch trên tất cả các cuộc họp..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-11 pr-10 h-12 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
-                title="Xóa tìm kiếm"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+        <section className="glass p-4 sm:py-3.5 sm:px-5 rounded-2xl shadow-lg shadow-indigo-500/5">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Tìm kiếm nội dung, từ khóa..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9.5 pr-9 h-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                  title="Xóa tìm kiếm"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
 
-          <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500">
-            <div className="flex items-center space-x-2">
-              <Calendar className="w-4 h-4" />
-              <span>Từ ngày:</span>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="px-2 h-9 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-sm text-slate-500 w-full lg:w-auto">
+              <div className="flex-1 sm:flex-initial flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mr-2 shrink-0 uppercase tracking-wider">Từ:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-850 dark:text-slate-200 text-xs w-full cursor-pointer"
+                />
+              </div>
+              <div className="flex-1 sm:flex-initial flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mr-2 shrink-0 uppercase tracking-wider">Đến:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-850 dark:text-slate-200 text-xs w-full cursor-pointer"
+                />
+              </div>
+              {(searchQuery || startDate || endDate) && (
+                <button
+                  onClick={() => {
+                    setSearchQuery("");
+                    setStartDate("");
+                    setEndDate("");
+                    setIsSearchingGlobally(false);
+                  }}
+                  className="text-blue-500 hover:text-blue-600 font-semibold text-xs whitespace-nowrap ml-2 cursor-pointer w-full sm:w-auto text-center sm:text-left mt-2 sm:mt-0"
+                >
+                  Xóa bộ lọc
+                </button>
+              )}
             </div>
-            <div className="flex items-center space-x-2">
-              <span>Đến ngày:</span>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="px-2 h-9 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-            </div>
-            {(searchQuery || startDate || endDate) && (
-              <button
-                onClick={() => {
-                  setSearchQuery("");
-                  setStartDate("");
-                  setEndDate("");
-                  setIsSearchingGlobally(false);
-                }}
-                className="text-blue-500 hover:text-blue-600 font-medium cursor-pointer"
-              >
-                Xóa bộ lọc
-              </button>
-            )}
           </div>
         </section>
 
@@ -776,7 +1080,7 @@ export default function Dashboard() {
                   >
                     <div className="flex justify-between items-start">
                       <h4 className="font-semibold text-lg text-slate-950 dark:text-slate-100 group-hover:text-blue-500">
-                        {m.title}
+                        {highlightText(m.title, searchQuery)}
                       </h4>
                       <span className="text-xs text-slate-400">
                         {new Date(m.created_at).toLocaleDateString("vi-VN")}
@@ -785,13 +1089,31 @@ export default function Dashboard() {
                     <div className="space-y-2 pl-3 border-l-2 border-blue-500">
                       {m.matches.slice(0, 3).map((match: any, idx: number) => (
                         <div key={idx} className="text-sm">
-                          <p className="text-slate-800 dark:text-slate-200 font-medium">
-                            "{match.text}"
-                          </p>
-                          {match.translation && (
-                            <p className="text-slate-400 italic">
-                              "{match.translation}"
+                          {match.isTitleMatch ? (
+                            <p className="text-slate-400 dark:text-slate-500 italic font-medium flex items-center space-x-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700" />
+                              <span>{match.text}</span>
                             </p>
+                          ) : match.isSummaryMatch ? (
+                            <div className="space-y-0.5">
+                              <span className="text-[10px] font-bold text-amber-600 dark:text-amber-500 uppercase tracking-wider block">
+                                Khớp trong tóm tắt AI
+                              </span>
+                              <p className="text-slate-800 dark:text-slate-200 font-medium">
+                                "{highlightText(match.text, searchQuery)}"
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-slate-800 dark:text-slate-200 font-medium">
+                                "{highlightText(match.text, searchQuery)}"
+                              </p>
+                              {match.translation && (
+                                <p className="text-slate-400 dark:text-slate-400 italic">
+                                  "{highlightText(match.translation, searchQuery)}"
+                                </p>
+                              )}
+                            </>
                           )}
                         </div>
                       ))}
@@ -809,37 +1131,165 @@ export default function Dashboard() {
         ) : (
           <section className="space-y-6">
             {/* TABS */}
-            <div className="flex border-b border-slate-200 dark:border-slate-800">
-              <button
-                onClick={() => setActiveTab("recent")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
-                  activeTab === "recent"
-                    ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                    : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                }`}
-              >
-                Gần đây
-              </button>
-              <button
-                onClick={() => setActiveTab("pinned")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
-                  activeTab === "pinned"
-                    ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                    : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                }`}
-              >
-                Đã ghim
-              </button>
-              <button
-                onClick={() => setActiveTab("favorite")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
-                  activeTab === "favorite"
-                    ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                    : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                }`}
-              >
-                Yêu thích (★)
-              </button>
+            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800">
+              <div className="flex">
+                <button
+                  onClick={() => setActiveTab("recent")}
+                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                    activeTab === "recent"
+                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  }`}
+                >
+                  Gần đây
+                </button>
+                <button
+                  onClick={() => setActiveTab("pinned")}
+                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                    activeTab === "pinned"
+                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  }`}
+                >
+                  Đã ghim
+                </button>
+                <button
+                  onClick={() => setActiveTab("favorite")}
+                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                    activeTab === "favorite"
+                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  }`}
+                >
+                  Yêu thích (★)
+                </button>
+              </div>
+
+              <div ref={statusDropdownRef} className="relative mb-2.5">
+                <button
+                  onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print ${getFilterButtonStyles()}`}
+                >
+                  {statusFilter !== "all" && (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStatusFilter("all");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`mr-0.5 p-0.5 rounded-full transition-colors cursor-pointer ${getClearButtonHoverStyles()}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </span>
+                  )}
+                  <span>
+                    {statusFilter === "all"
+                      ? "Trạng thái"
+                      : statusFilter === "recording"
+                      ? "Trạng thái: Đang họp"
+                      : statusFilter === "completed"
+                      ? "Trạng thái: Đã xong"
+                      : statusFilter === "paused"
+                      ? "Trạng thái: Tạm dừng"
+                      : statusFilter === "failed"
+                      ? "Trạng thái: Lỗi xử lý"
+                      : "Trạng thái: Đang xử lý"}
+                  </span>
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
+                </button>
+
+                {showStatusDropdown && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-30 overflow-hidden py-0 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <button
+                      onClick={() => {
+                        setStatusFilter("all");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between border-b border-slate-100 dark:border-slate-800/60 ${
+                        statusFilter === "all" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      <span>Tất cả trạng thái</span>
+                      {statusFilter === "all" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStatusFilter("recording");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between ${
+                        statusFilter === "recording" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-red-500" />
+                        <span>ĐANG HỌP</span>
+                      </div>
+                      {statusFilter === "recording" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStatusFilter("completed");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between ${
+                        statusFilter === "completed" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        <span>ĐÃ XONG</span>
+                      </div>
+                      {statusFilter === "completed" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStatusFilter("paused");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between ${
+                        statusFilter === "paused" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-350"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-purple-500" />
+                        <span>TẠM DỪNG</span>
+                      </div>
+                      {statusFilter === "paused" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStatusFilter("failed");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between ${
+                        statusFilter === "failed" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-355"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-rose-600" />
+                        <span>LỖI XỬ LÝ</span>
+                      </div>
+                      {statusFilter === "failed" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStatusFilter("processing");
+                        setShowStatusDropdown(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between ${
+                        statusFilter === "processing" ? "text-blue-600 dark:text-blue-450 font-semibold bg-blue-50/10 dark:bg-blue-950/10" : "text-slate-600 dark:text-slate-355"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-500" />
+                        <span>ĐANG XỬ LÝ</span>
+                      </div>
+                      {statusFilter === "processing" && <Check className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* LIST */}
@@ -870,29 +1320,43 @@ export default function Dashboard() {
                 Không có cuộc họp nào được ghi nhận ở mục này.
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredMeetings.map((m) => (
-                  <div
-                    key={m.id}
-                    className="flex flex-col bg-white/70 dark:bg-slate-900/50 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm hover:shadow-2xl hover:shadow-blue-500/10 hover:-translate-y-1.5 transition-all duration-500 ease-out group border border-white/50 dark:border-slate-800 hover:border-blue-500/30"
-                  >
+              <div className="space-y-8 animate-in fade-in duration-500">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredMeetings.slice(0, visibleMeetingsCount).map((m) => (
                     <div
-                      className="p-6 flex-1 cursor-pointer space-y-4"
-                      onClick={() => router.push(m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`)}
+                      key={m.id}
+                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
                     >
-                      <div className="flex items-start justify-between">
-                        <span
-                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold tracking-wider ${
-                            m.status === "recording"
-                              ? "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 pulse"
+                      <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${
+                              m.status === "recording"
+                                ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30 pulse"
+                                : m.status === "completed"
+                                ? "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-450 dark:border-blue-900/30"
+                                : m.status === "paused"
+                                ? "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30"
+                                : m.status === "failed"
+                                ? "bg-rose-50 text-rose-750 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/30"
+                                : "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-450 dark:border-amber-900/30"
+                            }`}
+                          >
+                            {m.status === "recording"
+                              ? "ĐANG HỌP"
                               : m.status === "completed"
-                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                              : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                          }`}
-                        >
-                          {m.status === "recording" ? "ĐANG HỌP" : m.status === "completed" ? "ĐÃ XONG" : "ĐANG XỬ LÝ"}
-                        </span>
-                        <div className="flex space-x-2 no-print" onClick={(e) => e.stopPropagation()}>
+                              ? "ĐÃ XONG"
+                              : m.status === "paused"
+                              ? "TẠM DỪNG"
+                              : m.status === "failed"
+                              ? "LỖI XỬ LÝ"
+                              : "ĐANG XỬ LÝ"}
+                          </span>
+                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                            {m.source_language} ➔ {m.target_language}
+                          </span>
+                        </div>
+                        <div className="flex space-x-1.5 no-print" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => togglePin(m.id, m.is_pinned)}
                             className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
@@ -909,41 +1373,43 @@ export default function Dashboard() {
                           >
                             <Star className="w-4 h-4 fill-current" />
                           </button>
+                          <button
+                            onClick={() => deleteMeeting(m.id)}
+                            className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
-                          {m.title}
-                        </h4>
-                        <div className="text-[13px] font-medium text-slate-400 flex items-center space-x-2">
-                          <span>{new Date(m.created_at).toLocaleDateString("vi-VN")}</span>
-                          <span>•</span>
-                          <span>{formatDuration(m.duration_ms)}</span>
-                        </div>
-                      </div>
-
-                      <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                        {m.ai_summaries?.executive_summary || "(Cuộc họp chưa được tóm tắt)"}
-                      </p>
-                    </div>
-
-                    <div className="px-6 py-4 bg-slate-100/50 border-t border-slate-200/50 dark:bg-slate-950/50 dark:border-slate-800/50 flex justify-between items-center text-xs">
-                      <span className="text-slate-400 font-bold uppercase tracking-wider">
-                        {m.source_language} ➔ {m.target_language}
-                      </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteMeeting(m.id);
-                        }}
-                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors cursor-pointer"
+                      <div
+                        className="p-5 pt-4 flex-1 cursor-pointer space-y-3"
+                        onClick={() => router.push(m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`)}
                       >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        <div className="space-y-1">
+                          <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
+                            {highlightText(m.title, searchQuery)}
+                          </h4>
+                          <div className="text-[13px] font-medium text-slate-400 flex items-center space-x-2">
+                            <span>{formatDate(m.created_at)}</span>
+                            <span>•</span>
+                            <span>{formatDuration(m.duration_ms)}</span>
+                          </div>
+                        </div>
+
+                        <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
+                          {m.ai_summaries?.executive_summary ? highlightText(m.ai_summaries.executive_summary, searchQuery) : "(Cuộc họp chưa được tóm tắt)"}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                <div ref={loadMoreSentinelRef} className="h-14 flex items-center justify-center">
+                  {filteredMeetings.length > visibleMeetingsCount && (
+                    <span className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
+                  )}
+                </div>
               </div>
             )}
           </section>
@@ -959,61 +1425,61 @@ export default function Dashboard() {
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]"
+            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]"
           >
             
             {/* Header */}
-            <header className="flex justify-between items-center px-8 py-5.5 shrink-0 bg-white">
+            <header className="flex justify-between items-center px-8 py-5.5 shrink-0 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+                <div className="w-10 h-10 bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
                   <LayoutGrid className="w-5 h-5" />
                 </div>
                 <div>
-                  <h1 className="text-[20px] leading-none font-extrabold text-slate-900 tracking-tight">Cấu hình Cuộc họp</h1>
-                  <p className="text-[12px] text-slate-500 font-medium mt-1">Thiết lập các thông số trước khi bắt đầu</p>
+                  <h1 className="text-[20px] leading-none font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">Cấu hình Cuộc họp</h1>
+                  <p className="text-[12px] text-slate-500 dark:text-slate-400 font-medium mt-1">Thiết lập các thông số trước khi bắt đầu</p>
                 </div>
               </div>
               <button 
                 onClick={() => setShowCreateModal(false)}
-                className="w-8 h-8 flex items-center justify-center bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 rounded-full transition-colors cursor-pointer"
+                className="w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-800 dark:hover:text-slate-200 rounded-full transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </header>
 
             {/* Main Content Area - Bento Grid */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-3 bg-white">
+            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-3 bg-white dark:bg-slate-900">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 auto-rows-auto">
                 
                 {/* Block 1: Audio (Span 4 cols, Row span 2) */}
-                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50">
+                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] dark:bg-blue-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50 dark:border-blue-900/30">
                   <div className="flex items-center gap-2">
-                    <div className="text-blue-600 bg-blue-100 p-1.5 rounded-lg flex items-center justify-center">
+                    <div className="text-blue-600 bg-blue-100 dark:bg-blue-950/50 p-1.5 rounded-lg flex items-center justify-center">
                       <Mic className="w-4 h-4" />
                     </div>
-                    <h2 className="text-[13px] font-bold text-blue-900 uppercase tracking-wide">Thiết bị & Âm thanh</h2>
+                    <h2 className="text-[13px] font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wide">Thiết bị & Âm thanh</h2>
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[11px] font-bold text-blue-700 uppercase tracking-wide">Chọn Microphone</label>
+                    <label className="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Chọn Microphone</label>
                     <div className="relative">
                       <select
                         value={selectedDevice}
                         onChange={(e) => setSelectedDevice(e.target.value)}
-                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-xl pl-3.5 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                        className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-xl pl-3.5 pr-8 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer appearance-none"
                       >
                         {audioDevices.map((d) => (
-                          <option key={d.deviceId} value={d.deviceId}>
+                          <option key={d.deviceId} value={d.deviceId} className="dark:bg-slate-900 dark:text-slate-200">
                             {d.label || `Microphone ${d.deviceId.substr(0, 5)}`}
                           </option>
                         ))}
-                        {audioDevices.length === 0 && <option value="">Không tìm thấy thiết bị Microphone</option>}
+                        {audioDevices.length === 0 && <option value="" className="dark:bg-slate-900 dark:text-slate-200">Không tìm thấy thiết bị Microphone</option>}
                       </select>
                       <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-blue-400 pointer-events-none" />
                     </div>
                   </div>
 
-                  <div className="bg-white/60 p-3 rounded-xl border border-white flex flex-col gap-3">
+                  <div className="bg-white/60 dark:bg-slate-950/40 p-3 rounded-xl border border-white dark:border-slate-800/40 flex flex-col gap-3">
                     <div className="flex items-center gap-3">
                       <button
                         onClick={startMicTest}
@@ -1025,7 +1491,7 @@ export default function Dashboard() {
                       >
                         <Mic className="w-4 h-4" />
                       </button>
-                      <div className="flex-1 h-2 bg-blue-100 rounded-full overflow-hidden">
+                      <div className="flex-1 h-2 bg-blue-100 dark:bg-blue-950 rounded-full overflow-hidden">
                         <div
                           ref={micBarRef}
                           className="h-full bg-blue-500 rounded-full"
@@ -1035,36 +1501,36 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-3 bg-white/60 p-3 rounded-xl border border-white flex-1">
+                  <div className="flex flex-col gap-3 bg-white/60 dark:bg-slate-950/40 p-3 rounded-xl border border-white dark:border-slate-800/40 flex-1">
                     <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={echoCancellation} onChange={(e) => setEchoCancellation(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Hủy tiếng vọng</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Hủy tiếng vọng</span>
                     </label>
                     <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={noiseSuppression} onChange={(e) => setNoiseSuppression(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Chống ồn</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Chống ồn</span>
                     </label>
                     <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={autoGainControl} onChange={(e) => setAutoGainControl(e.target.checked)} className="hidden" />
-                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white border-2 border-blue-200 text-transparent'}`}>
+                      <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 group-hover:text-blue-700 transition-colors">Tự động chỉnh âm (AGC)</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Tự động chỉnh âm (AGC)</span>
                     </label>
                   </div>
 
-                  <div className="flex items-center justify-between bg-white/80 p-3 rounded-xl border border-white mt-auto">
+                  <div className="flex items-center justify-between bg-white/80 dark:bg-slate-950/60 p-3 rounded-xl border border-white dark:border-slate-800/60 mt-auto">
                     <div>
-                      <span className="text-[13px] font-bold text-blue-900 block">Deepgram Chunk</span>
-                      <span className="text-[11px] font-medium text-blue-600/70">Độ trễ phân tích</span>
+                      <span className="text-[13px] font-bold text-blue-900 dark:text-blue-300 block">Deepgram Chunk</span>
+                      <span className="text-[11px] font-medium text-blue-600/70 dark:text-blue-400/70">Độ trễ phân tích</span>
                     </div>
-                    <div className="flex items-center bg-white/80 rounded-lg border border-blue-100/50 overflow-hidden shadow-sm">
+                    <div className="flex items-center bg-white/80 dark:bg-slate-900 rounded-lg border border-blue-100/50 dark:border-blue-900/30 overflow-hidden shadow-sm">
                       <button 
                         type="button"
                         onMouseDown={(e) => {
@@ -1080,7 +1546,7 @@ export default function Dashboard() {
                         }}
                         onTouchEnd={stopChunkSizeChange}
                         onKeyDown={(e) => handleChunkSizeKeyDown(e, "decrement")}
-                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer select-none"
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 transition-colors cursor-pointer select-none"
                       >
                         <Minus className="w-4 h-4" />
                       </button>
@@ -1090,7 +1556,7 @@ export default function Dashboard() {
                         max={150}
                         value={chunkSize}
                         onChange={(e) => setChunkSize(parseInt(e.target.value) || 100)}
-                        className="w-10 text-center bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-blue-700 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        className="w-10 text-center bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-blue-700 dark:text-blue-400 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <button 
                         type="button"
@@ -1107,7 +1573,7 @@ export default function Dashboard() {
                         }}
                         onTouchEnd={stopChunkSizeChange}
                         onKeyDown={(e) => handleChunkSizeKeyDown(e, "increment")}
-                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer select-none"
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950 transition-colors cursor-pointer select-none"
                       >
                         <Plus className="w-4 h-4" />
                       </button>
@@ -1116,69 +1582,69 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 2: Meeting Info (Span 8 cols, Row span 1) */}
-                <section className="lg:col-span-8 bg-[#F0FDF4] rounded-3xl p-3.5 flex flex-col gap-3 border border-emerald-100/50">
+                <section className="lg:col-span-8 bg-[#F0FDF4] dark:bg-emerald-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-emerald-100/50 dark:border-emerald-900/30">
                   <div className="flex items-center gap-2">
-                    <div className="text-emerald-600 bg-emerald-100 p-1.5 rounded-lg flex items-center justify-center">
+                    <div className="text-emerald-600 bg-emerald-100 dark:bg-emerald-950/50 p-1.5 rounded-lg flex items-center justify-center">
                       <Info className="w-4 h-4" />
                     </div>
-                    <h2 className="text-[13px] font-bold text-emerald-900 uppercase tracking-wide">Thông tin Cuộc họp</h2>
+                    <h2 className="text-[13px] font-bold text-emerald-900 dark:text-emerald-300 uppercase tracking-wide">Thông tin Cuộc họp</h2>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Tiêu đề cuộc họp</label>
+                      <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Tiêu đề cuộc họp</label>
                       <input
                         type="text"
                         value={meetingTitle}
                         onChange={(e) => setMeetingTitle(e.target.value)}
-                        className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl px-3 py-2 text-[13px] font-semibold text-slate-800"
+                        className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl px-3 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200"
                       />
                     </div>
                     
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Ngữ cảnh (Context)</label>
+                      <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Ngữ cảnh (Context)</label>
                       <div className="relative">
                         <select
                           value={meetingContext}
                           onChange={(e) => setMeetingContext(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer appearance-none"
                         >
-                          <option value="general">Họp chung (Giao tiếp thường nhật)</option>
-                          <option value="factory">Nhà máy sản xuất (Cơ khí, quy trình, QC)</option>
-                          <option value="it">Công nghệ thông tin (IT, lập trình, phần mềm)</option>
-                          <option value="business">Kinh doanh / Hợp đồng (Pháp lý, giá cả)</option>
+                          <option value="general" className="dark:bg-slate-900 dark:text-slate-200">Họp chung (Giao tiếp thường nhật)</option>
+                          <option value="factory" className="dark:bg-slate-900 dark:text-slate-200">Nhà máy sản xuất (Cơ khí, quy trình, QC)</option>
+                          <option value="it" className="dark:bg-slate-900 dark:text-slate-200">Công nghệ thông tin (IT, lập trình, phần mềm)</option>
+                          <option value="business" className="dark:bg-slate-900 dark:text-slate-200">Kinh doanh / Hợp đồng (Pháp lý, giá cả)</option>
                         </select>
                         <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Ngôn ngữ chính</label>
+                      <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Ngôn ngữ chính</label>
                       <div className="relative">
                         <select
                           value={sourceLanguage}
                           onChange={(e) => setSourceLanguage(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer appearance-none"
                         >
-                          <option value="ja">Tiếng Nhật (ja)</option>
-                          <option value="vi">Tiếng Việt (vi)</option>
-                          <option value="en">Tiếng Anh (en)</option>
+                          <option value="ja" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Nhật (ja)</option>
+                          <option value="vi" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Việt (vi)</option>
+                          <option value="en" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Anh (en)</option>
                         </select>
                         <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[11px] font-bold text-emerald-700 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
+                      <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
                       <div className="relative">
                         <select
                           value={targetLanguage}
                           onChange={(e) => setTargetLanguage(e.target.value)}
-                          className="w-full bg-white/80 border border-white/50 focus:bg-white focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 cursor-pointer appearance-none"
+                          className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-emerald-500 focus:ring-0 focus:shadow-[0_4px_12px_rgba(16,185,129,0.1)] outline-none transition-all rounded-xl pl-3 pr-8 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer appearance-none"
                         >
-                          <option value="vi">Tiếng Việt (vi)</option>
-                          <option value="ja">Tiếng Nhật (ja)</option>
-                          <option value="en">Tiếng Anh (en)</option>
+                          <option value="vi" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Việt (vi)</option>
+                          <option value="ja" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Nhật (ja)</option>
+                          <option value="en" className="dark:bg-slate-900 dark:text-slate-200">Tiếng Anh (en)</option>
                         </select>
                         <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
@@ -1187,13 +1653,13 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 3: People (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FAF5FF] rounded-3xl flex flex-col gap-3 border border-purple-100/50 p-3.5 h-[280px]">
+                <section className="lg:col-span-4 bg-[#FAF5FF] dark:bg-purple-950/10 rounded-3xl flex flex-col gap-3 border border-purple-100/50 dark:border-purple-900/30 p-3.5 h-[280px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
-                      <div className="text-purple-600 bg-purple-100 p-1.5 rounded-lg flex items-center justify-center">
+                      <div className="text-purple-600 bg-purple-100 dark:bg-purple-950/50 p-1.5 rounded-lg flex items-center justify-center">
                         <Users className="w-4 h-4" />
                       </div>
-                      <h2 className="text-[13px] font-bold text-purple-900 uppercase tracking-wide">Người nói</h2>
+                      <h2 className="text-[13px] font-bold text-purple-900 dark:text-purple-300 uppercase tracking-wide">Người nói</h2>
                     </div>
                     <button 
                       onClick={addSpeakerField}
@@ -1206,8 +1672,8 @@ export default function Dashboard() {
                   <div className="flex flex-col gap-1.5 flex-1 min-h-0">
                     <div className="flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-2 flex-1">
                       {expectedSpeakers.map((sp, idx) => (
-                        <div key={idx} className={`flex items-center gap-3 bg-white/80 p-1.5 pr-9 rounded-lg border border-white shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
-                          <div className={`w-7 h-7 rounded-md font-extrabold flex items-center justify-center text-[11px] shrink-0 ${idx === 0 ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
+                        <div key={idx} className={`flex items-center gap-3 bg-white/80 dark:bg-slate-950/60 p-1.5 pr-9 rounded-lg border border-white dark:border-slate-800/60 shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
+                          <div className={`w-7 h-7 rounded-md font-extrabold flex items-center justify-center text-[11px] shrink-0 ${idx === 0 ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400'}`}>
                             {idx + 1}
                           </div>
                           <div className="flex-1 min-w-0 flex items-center justify-between">
@@ -1215,13 +1681,13 @@ export default function Dashboard() {
                               type="text"
                               value={sp.display_name}
                               onChange={(e) => updateSpeaker(idx, "display_name", e.target.value)}
-                              className="bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-slate-800 w-[55%] outline-none"
+                              className="bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-slate-800 dark:text-slate-200 w-[55%] outline-none"
                             />
                             <div className="relative">
                               <button
                                 type="button"
                                 onClick={() => setOpenSpeakerDropdown(openSpeakerDropdown === idx ? null : idx)}
-                                className={`bg-transparent border-none p-0 text-[11px] font-bold uppercase text-right cursor-pointer flex items-center justify-end gap-0.5 outline-none ${idx === 0 ? 'text-purple-600' : 'text-slate-500'}`}
+                                className={`bg-transparent border-none p-0 text-[11px] font-bold uppercase text-right cursor-pointer flex items-center justify-end gap-0.5 outline-none ${idx === 0 ? 'text-purple-600 dark:text-purple-400' : 'text-slate-500 dark:text-slate-400'}`}
                               >
                                 {sp.language_code === 'auto' ? 'AUTO' : sp.language_code === 'vi' ? 'TIẾNG VIỆT' : sp.language_code === 'ja' ? 'TIẾNG NHẬT' : 'TIẾNG ANH'}
                                 <ChevronDown className="w-2.5 h-2.5 text-slate-400 shrink-0" />
@@ -1230,7 +1696,7 @@ export default function Dashboard() {
                               {openSpeakerDropdown === idx && (
                                 <>
                                   <div className="fixed inset-0 z-40 cursor-default" onClick={() => setOpenSpeakerDropdown(null)} />
-                                  <div className="absolute right-0 mt-2 w-28 bg-white border border-slate-100 rounded-xl shadow-lg z-50 py-0.5 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                                  <div className="absolute right-0 mt-2 w-28 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-lg z-50 py-0.5 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
                                     {[
                                       { code: 'auto', label: 'AUTO' },
                                       { code: 'vi', label: 'TIẾNG VIỆT' },
@@ -1244,7 +1710,7 @@ export default function Dashboard() {
                                           updateSpeaker(idx, "language_code", lang.code);
                                           setOpenSpeakerDropdown(null);
                                         }}
-                                        className={`w-full text-left px-2 py-1.5 text-[11px] font-bold transition-colors cursor-pointer hover:bg-slate-50 ${sp.language_code === lang.code ? 'text-purple-600 bg-purple-50' : 'text-slate-600'}`}
+                                        className={`w-full text-left px-2 py-1.5 text-[11px] font-bold transition-colors cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 ${sp.language_code === lang.code ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/45' : 'text-slate-600 dark:text-slate-350'}`}
                                       >
                                         {lang.label}
                                       </button>
@@ -1265,13 +1731,13 @@ export default function Dashboard() {
                       ))}
                       <div 
                         onClick={addSpeakerField}
-                        className="flex items-center gap-3 bg-white/50 p-1.5 pr-3 rounded-lg border border-white/50 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
+                        className="flex items-center gap-3 bg-white/50 dark:bg-slate-950/30 p-1.5 pr-3 rounded-lg border border-white/50 dark:border-slate-800/30 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
                       >
-                        <div className="w-7 h-7 rounded-md bg-slate-100 text-slate-500 font-extrabold flex items-center justify-center text-[11px] shrink-0">
+                        <div className="w-7 h-7 rounded-md bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-450 font-extrabold flex items-center justify-center text-[11px] shrink-0">
                           <Plus className="w-3 h-3" />
                         </div>
                         <div className="flex-1 min-w-0 flex items-center justify-between">
-                          <span className="text-[12px] font-medium text-slate-400 italic">Thêm người nói...</span>
+                          <span className="text-[12px] font-medium text-slate-400 dark:text-slate-500 italic">Thêm người nói...</span>
                         </div>
                       </div>
                     </div>
@@ -1279,13 +1745,13 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 4: Glossary (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FFFBEB] rounded-3xl flex flex-col gap-3 border border-amber-100/50 p-3.5 h-[280px]">
+                <section className="lg:col-span-4 bg-[#FFFBEB] dark:bg-amber-950/10 rounded-3xl flex flex-col gap-3 border border-amber-100/50 dark:border-amber-900/30 p-3.5 h-[280px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
-                      <div className="text-amber-600 bg-amber-100 p-1.5 rounded-lg flex items-center justify-center">
+                      <div className="text-amber-600 bg-amber-100 dark:bg-amber-950/50 p-1.5 rounded-lg flex items-center justify-center">
                         <BookOpen className="w-4 h-4" />
                       </div>
-                      <h2 className="text-[13px] font-bold text-amber-900 uppercase tracking-wide">Từ điển riêng</h2>
+                      <h2 className="text-[13px] font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wide">Từ điển riêng</h2>
                     </div>
                     <button 
                       onClick={addGlossaryField}
@@ -1297,7 +1763,7 @@ export default function Dashboard() {
 
                   <div className="flex flex-col gap-1 w-full flex-1 overflow-y-auto custom-scrollbar pr-2 content-start">
                     {glossary.map((g, idx) => (
-                      <div key={idx} className="flex items-center justify-between bg-white/80 px-2.5 py-1 rounded-md border border-white shadow-sm">
+                      <div key={idx} className="flex items-center justify-between bg-white/80 dark:bg-slate-950/60 px-2.5 py-1 rounded-md border border-white dark:border-slate-800/60 shadow-sm">
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           <textarea
                             rows={1}
@@ -1308,7 +1774,7 @@ export default function Dashboard() {
                               e.target.style.height = e.target.scrollHeight + 'px';
                               updateGlossary(idx, "source", e.target.value);
                             }}
-                            className="font-bold text-slate-800 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            className="font-bold text-slate-800 dark:text-slate-200 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
                             style={{ minHeight: '18px' }}
                           />
                           <ArrowRight className="text-amber-300 w-3.5 h-3.5 shrink-0" />
@@ -1321,7 +1787,7 @@ export default function Dashboard() {
                               e.target.style.height = e.target.scrollHeight + 'px';
                               updateGlossary(idx, "target", e.target.value);
                             }}
-                            className="font-bold text-amber-700 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
+                            className="font-bold text-amber-700 dark:text-amber-400 text-[12px] bg-transparent border-none p-0 outline-none resize-none flex-1 min-w-0 overflow-hidden"
                             style={{ minHeight: '18px' }}
                           />
                         </div>
@@ -1335,19 +1801,19 @@ export default function Dashboard() {
                     ))}
                   </div>
 
-                  <div className="mt-auto bg-amber-100/50 p-2.5 rounded-xl flex gap-2 items-start">
+                  <div className="mt-auto bg-amber-100/50 dark:bg-amber-950/20 p-2.5 rounded-xl flex gap-2 items-start">
                     <Lightbulb className="text-amber-600 w-4.5 h-4.5 shrink-0" />
-                    <p className="text-[11px] font-medium text-amber-900/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
+                    <p className="text-[11px] font-medium text-amber-900/80 dark:text-amber-300/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
                   </div>
                 </section>
               </div>
             </main>
 
             {/* Footer */}
-            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-4 bg-white shrink-0 border-t border-slate-100">
+            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-4 bg-white dark:bg-slate-900 shrink-0 border-t border-slate-100 dark:border-slate-800">
               <button
                 onClick={resetSetupDefaults}
-                className="flex items-center gap-2 text-slate-500 font-bold text-[12px] hover:text-slate-800 hover:bg-slate-100 px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-bold text-[12px] hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
               >
                 <RotateCcw className="w-4.5 h-4.5" /> ĐẶT LẠI
               </button>
@@ -1355,13 +1821,13 @@ export default function Dashboard() {
               <div className="flex gap-3 w-full sm:w-auto mt-4 sm:mt-0">
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 sm:flex-none bg-slate-100 text-slate-700 rounded-xl px-5 py-2.5 font-bold text-[13px] hover:bg-slate-200 transition-all active:scale-95 cursor-pointer"
+                  className="flex-1 sm:flex-none bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-5 py-2.5 font-bold text-[13px] hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
                 >
                   HỦY BỎ
                 </button>
                 <button
                   onClick={handleStartMeeting}
-                  className="flex-1 sm:flex-none bg-[#005bbf] text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] cursor-pointer"
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
                 >
                   VÀO PHÒNG HỌP <ArrowRight className="w-4 h-4" />
                 </button>
@@ -1442,6 +1908,15 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+      )}
+       {showScrollTop && (
+        <button
+          onClick={scrollToTop}
+          className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-500/20 shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1 active:translate-y-0 cursor-pointer animate-in fade-in slide-in-from-bottom-4 duration-300"
+          title="Cuộn lên đầu trang"
+        >
+          <ChevronUp className="w-5 h-5" />
+        </button>
       )}
     </div>
   );
