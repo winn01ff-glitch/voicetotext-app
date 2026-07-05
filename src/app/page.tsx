@@ -2071,7 +2071,7 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 3: People (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FAF5FF] dark:bg-purple-950/10 rounded-3xl flex flex-col gap-3 border border-purple-100/50 dark:border-purple-900/30 p-3.5 h-[280px]">
+                <section className="lg:col-span-4 bg-[#FAF5FF] dark:bg-purple-950/10 rounded-3xl flex flex-col gap-3 border border-purple-100/50 dark:border-purple-900/30 p-3.5 h-[283px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       <div className="text-purple-600 bg-purple-100 dark:bg-purple-950/50 p-1.5 rounded-lg flex items-center justify-center">
@@ -2167,7 +2167,7 @@ export default function Dashboard() {
                 </section>
 
                 {/* Block 4: Glossary (Span 4 cols, Row span 1) */}
-                <section className="lg:col-span-4 bg-[#FFFBEB] dark:bg-amber-950/10 rounded-3xl flex flex-col gap-3 border border-amber-100/50 dark:border-amber-900/30 p-3.5 h-[280px]">
+                <section className="lg:col-span-4 bg-[#FFFBEB] dark:bg-amber-950/10 rounded-3xl flex flex-col gap-3 border border-amber-100/50 dark:border-amber-900/30 p-3.5 h-[283px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       <div className="text-amber-600 bg-amber-100 dark:bg-amber-950/50 p-1.5 rounded-lg flex items-center justify-center">
