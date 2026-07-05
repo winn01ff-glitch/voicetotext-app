@@ -9,7 +9,8 @@ import { useDeepgramLive } from "@/hooks/useDeepgramLive";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle,
-  Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles
+  Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff,
+  Moon, Sun, Plus
 } from "lucide-react";
 
 interface MeetingRoomProps {
@@ -91,6 +92,64 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     speakerName: string;
   } | null>(null);
 
+  // Continuous live transcript states (accumulated, no speaker labels)
+  const [liveTranscriptText, setLiveTranscriptText] = useState<string>("");
+  const liveTranscriptTextRef = useRef<string>("");
+  liveTranscriptTextRef.current = liveTranscriptText;
+  const [liveInterimText, setLiveInterimText] = useState<string>("");
+  const [copiedLive, setCopiedLive] = useState(false);
+  const [copiedDrafts, setCopiedDrafts] = useState(false);
+  const liveScrollRef = useRef<HTMLDivElement>(null);
+
+  // Custom Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: "info" | "confirm" | "success" | "error";
+    onConfirm?: () => void;
+    onCancel?: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    type: "info",
+  });
+
+  const showCustomAlert = (message: string, type: "success" | "error" | "info" = "info", title: string = "Thông báo") => {
+    return new Promise<void>((resolve) => {
+      setModalConfig({
+        isOpen: true,
+        title,
+        message,
+        type,
+        onConfirm: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve();
+        },
+      });
+    });
+  };
+
+  const showCustomConfirm = (message: string, title: string = "Xác nhận") => {
+    return new Promise<boolean>((resolve) => {
+      setModalConfig({
+        isOpen: true,
+        title,
+        message,
+        type: "confirm",
+        onConfirm: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  };
+
   const partialTranscript = useMemo(() => {
     if (!realtimeText) return null;
     return {
@@ -123,6 +182,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // Speaker mapping & merge states
   const [showMergeModal, setShowMergeModal] = useState(false);
+  const [showEndConfirmationModal, setShowEndConfirmationModal] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [speakerToMergeSrc, setSpeakerToMergeSrc] = useState("");
   const [speakerToMergeDest, setSpeakerToMergeDest] = useState("");
 
@@ -135,6 +196,18 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
   const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
+
+  const toggleTheme = () => {
+    const nextTheme = !isDarkMode;
+    setIsDarkMode(nextTheme);
+    if (nextTheme) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+  };
 
   // Load meeting configs on mount
   useEffect(() => {
@@ -178,32 +251,67 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[s.speaker_tag] = s.color_hex;
       });
 
-      // Fetch existing transcripts (for recovery)
-      const { data: txs } = await supabase
-        .from("transcripts")
-        .select(`
-          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, created_at,
-          speakers ( display_name, color_hex, speaker_tag )
-        `)
-        .eq("meeting_id", meetingId)
-        .order("start_ms", { ascending: true });
+      // Fetch live transcript text from cache
+      const cachedLive = localStorage.getItem(`meeting_live_transcript_${meetingId}`);
+      if (cachedLive) {
+        setLiveTranscriptText(cachedLive);
+        console.log("Recovered live transcript from localStorage cache");
+      }
 
-      if (txs) {
-        setTranscripts(
-          txs.map((t: any) => ({
-            id: t.id,
-            text: t.original_text,
-            correctedText: t.corrected_text,
-            translatedText: t.translated_text,
-            speakerTag: t.speakers?.speaker_tag || "speaker_0",
-            speakerName: t.speakers?.display_name || "Unknown",
-            startMs: t.start_ms,
-            endMs: t.end_ms,
-            confidence: t.confidence,
-            status: "Translated",
-            createdAt: t.created_at,
-          }))
-        );
+      // Recover recording duration cache
+      const cachedDuration = localStorage.getItem(`meeting_recording_duration_${meetingId}`);
+      if (cachedDuration) {
+        const duration = parseInt(cachedDuration) || 0;
+        setRecordingDuration(duration);
+        if (duration > 0) {
+          localStorage.setItem("active_meeting_id", meetingId);
+        }
+        console.log("Recovered recording duration from localStorage:", cachedDuration);
+      }
+
+      // Fetch existing transcripts (check local cache first for active recovery)
+      const cachedTx = localStorage.getItem(`meeting_transcripts_${meetingId}`);
+      if (cachedTx) {
+        try {
+          const parsed = JSON.parse(cachedTx);
+          if (Array.isArray(parsed)) {
+            // Reset stuck "processing" status back to "draft" on reload
+            const cleaned = parsed.map((t) => 
+              t.status === "processing" ? { ...t, status: "draft" } : t
+            );
+            setTranscripts(cleaned);
+            console.log("Recovered transcripts from localStorage cache and cleaned processing states");
+          }
+        } catch (e) {
+          console.error("Failed to parse cached transcripts:", e);
+        }
+      } else {
+        const { data: txs } = await supabase
+          .from("transcripts")
+          .select(`
+            id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, created_at,
+            speakers ( display_name, color_hex, speaker_tag )
+          `)
+          .eq("meeting_id", meetingId)
+          .order("start_ms", { ascending: true });
+
+        if (txs) {
+          setTranscripts(
+            txs.map((t: any) => ({
+              id: t.id,
+              text: t.original_text,
+              correctedText: t.corrected_text,
+              translatedText: t.translated_text,
+              speakerTag: t.speakers?.speaker_tag || "speaker_1",
+              speakerName: t.speakers?.display_name || "Unknown",
+              startMs: t.start_ms,
+              endMs: t.end_ms,
+              confidence: t.confidence,
+              status: "Translated",
+              createdAt: t.created_at,
+            }))
+          );
+        }
       }
 
       // Fetch action items
@@ -223,7 +331,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       setLoading(false);
     } catch (err) {
       console.error(err);
-      alert("Không thể tải thông tin cuộc họp.");
+      await showCustomAlert("Không thể tải thông tin cuộc họp.", "error");
       router.push("/");
     }
   };
@@ -241,10 +349,47 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     isFullScreen
   ]);
 
+  // Sync transcripts to local cache
+  useEffect(() => {
+    if (meetingId && !loading) {
+      if (transcripts.length > 0) {
+        localStorage.setItem(`meeting_transcripts_${meetingId}`, JSON.stringify(transcripts));
+        const now = new Date();
+        setLastSavedTime(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`);
+      } else {
+        localStorage.removeItem(`meeting_transcripts_${meetingId}`);
+      }
+    }
+  }, [transcripts, meetingId, loading]);
+
+  // Sync live transcript to local cache
+  useEffect(() => {
+    if (meetingId && !loading) {
+      if (liveTranscriptText) {
+        localStorage.setItem(`meeting_live_transcript_${meetingId}`, liveTranscriptText);
+        const now = new Date();
+        setLastSavedTime(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`);
+      } else {
+        localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
+      }
+    }
+  }, [liveTranscriptText, meetingId, loading]);
+
+  // Sync recording duration to local cache
+  useEffect(() => {
+    if (meetingId && !loading) {
+      if (recordingDuration > 0) {
+        localStorage.setItem(`meeting_recording_duration_${meetingId}`, recordingDuration.toString());
+      } else {
+        localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
+      }
+    }
+  }, [recordingDuration, meetingId, loading]);
+
   // Toast helper
-  const addToast = (title: string, desc: string) => {
+  const addToast = (title: string, desc: string, type: "success" | "info" | "warning" | "error" = "info") => {
     const id = Math.random().toString(36).substr(2, 9);
-    setToasts((prev) => [...prev, { id, title, desc }]);
+    setToasts((prev) => [...prev, { id, title, desc, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 5000);
@@ -396,57 +541,56 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
       if (!dgData.text.trim()) return;
 
-      // Allocate speaker color immediately on frontend if not exists
-      if (dgData.speakerTag && !speakerColorsRef.current[dgData.speakerTag]) {
-        const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
-        const existingCount = Object.keys(speakerColorsRef.current).length;
-        const color = colors[existingCount % colors.length];
-        speakerColorsRef.current[dgData.speakerTag] = color;
-      }
+      // Helper: ensure speaker color & display name exist
+      const ensureSpeaker = (tag: string) => {
+        if (tag && !speakerColorsRef.current[tag]) {
+          const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+          const existingCount = Object.keys(speakerColorsRef.current).length;
+          speakerColorsRef.current[tag] = colors[existingCount % colors.length];
+        }
+        const sp = speakers.find((s) => s.speaker_tag === tag);
+        const name = sp ? sp.display_name : tag.replace("speaker_", "Speaker ");
+        if (!sp && tag) {
+          const newColor = speakerColorsRef.current[tag] || "#cbd5e1";
+          setSpeakers((prev) => {
+            if (prev.some((s) => s.speaker_tag === tag)) return prev;
+            return [...prev, { id: `temp-${tag}`, speaker_tag: tag, display_name: name, color_hex: newColor }];
+          });
+        }
+        return name;
+      };
 
-      // Find speaker display name
-      const sp = speakers.find((s) => s.speaker_tag === dgData.speakerTag);
-      const speakerName = sp ? sp.display_name : dgData.speakerTag.replace("speaker_", "Speaker ");
+      // Get speaker tag from Deepgram
+      const speakerTag = dgData.speakerTag || "speaker_1";
+      const speakerName = ensureSpeaker(speakerTag);
 
-      if (!sp && dgData.speakerTag) {
-        const newColor = speakerColorsRef.current[dgData.speakerTag] || "#cbd5e1";
-        const tempSpeaker = {
-          id: `temp-${dgData.speakerTag}`,
-          speaker_tag: dgData.speakerTag,
-          display_name: speakerName,
-          color_hex: newColor,
-        };
-        setSpeakers((prev) => {
-          if (prev.some((s) => s.speaker_tag === dgData.speakerTag)) return prev;
-          return [...prev, tempSpeaker];
-        });
-      }
-
-      // 1. If interim (not final): update the separate realtime card state and return
+      // 1. If interim (not final): update interim text for live area & fullscreen
       if (!dgData.isFinal) {
+        setLiveInterimText(dgData.text);
         setRealtimeText({
           text: "",
           interimText: dgData.text,
-          speakerTag: dgData.speakerTag,
+          speakerTag,
           speakerName,
         });
         return;
       }
 
-      // 2. If final: clear realtime state and buffer it
+      // 2. If final: append raw Deepgram text to continuous live transcript & clear interim
+      setLiveTranscriptText(prev => prev ? prev + " " + dgData.text : dgData.text);
+      setLiveInterimText("");
       setRealtimeText(null);
 
-      // Check current transcripts state from ref to avoid closures
+      // 3. Create draft block
       const currentTranscripts = transcriptsRef.current;
       const lastBlock = currentTranscripts.length > 0 ? currentTranscripts[currentTranscripts.length - 1] : null;
       const timeGap = lastBlock ? (dgData.startMs - lastBlock.endMs) : 0;
       
-      const isSameSpeaker = lastBlock && lastBlock.speakerTag === dgData.speakerTag;
+      const isSameSpeaker = lastBlock && lastBlock.speakerTag === speakerTag;
       const isDraft = lastBlock && lastBlock.status === "draft";
       const isRecent = timeGap < 30000;
 
       if (isSameSpeaker && isDraft && isRecent) {
-        // Append text to existing draft block
         const isJp = meeting?.source_language === "ja" || meeting?.source_language === "auto";
         const joinChar = isJp ? "" : " ";
         const updatedText = (lastBlock.text + joinChar + dgData.text.trim()).trim();
@@ -454,32 +598,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         setTranscripts((prev) =>
           prev.map((t) =>
             t.id === lastBlock.id
-              ? {
-                  ...t,
-                  text: updatedText,
-                  endMs: dgData.endMs,
-                }
+              ? { ...t, text: updatedText, endMs: dgData.endMs }
               : t
           )
         );
       } else {
-        // Speaker changed, or first block, or long silence -> create new draft block
-        const newBlockId = Math.random().toString(36).substr(2, 9);
         const newBlock = {
-          id: newBlockId,
+          id: Math.random().toString(36).substr(2, 9),
           text: dgData.text.trim(),
           interimText: "",
           correctedText: "",
           translatedText: "",
-          speakerTag: dgData.speakerTag,
+          speakerTag,
           speakerName,
-          startMs: dgData.startMs || Date.now(),
-          endMs: dgData.endMs || Date.now(),
+          startMs: typeof dgData.startMs === "number" ? dgData.startMs : 0,
+          endMs: typeof dgData.endMs === "number" ? dgData.endMs : 0,
           confidence: dgData.confidence,
           status: "draft" as any,
           createdAt: new Date().toISOString(),
         };
-
         setTranscripts((prev) => [...prev, newBlock]);
       }
     },
@@ -499,12 +636,24 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       )
     );
 
+    const completedTranscripts = transcriptsRef.current.filter((t) => t.status !== "draft" && t.status !== "processing" && t.status !== "Dịch lỗi - Thử lại");
+    const history = completedTranscripts.slice(-15).map((tx) => ({
+      speaker_tag: tx.speakerTag || "unknown",
+      speaker_name: tx.speakerName || "Unknown",
+      text: tx.text,
+      translation: tx.translatedText
+    }));
+    const last_transcript = completedTranscripts.length > 0 ? completedTranscripts[completedTranscripts.length - 1] : null;
+
     try {
       const res = await fetch("/api/process-transcript-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           meeting_id: meetingId,
+          fullTranscript: liveTranscriptTextRef.current,
+          history,
+          last_transcript,
           drafts: draftsToProcess.map((d) => ({
             id: d.id,
             speakerTag: d.speakerTag,
@@ -590,7 +739,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   };
 
   const handleMicError = (err: string) => {
-    alert(`Lỗi ghi âm: ${err}`);
+    addToast("Lỗi ghi âm", err, "error");
   };
 
   const handleStatusChange = (newStatus: any) => {
@@ -622,6 +771,27 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     onStatusChange: handleStatusChange,
   });
 
+  // Timer for recording duration
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    if (status === "recording") {
+      interval = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } else if (status === "idle" && transcripts.length === 0) {
+      setRecordingDuration(0);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [status, transcripts.length]);
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
+
   // Automatically check permission and enter preparing state on load
   useEffect(() => {
     if (meeting) {
@@ -633,11 +803,46 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   useEffect(() => {
     if (status !== "recording") {
       setRealtimeText(null);
+      setLiveInterimText("");
       processDraftsBatch();
     }
   }, [status]);
 
-  // Auto-process drafts when silence is detected (5 seconds) & Auto-scroll drafts
+  // Auto-scroll live transcript area to bottom
+  useEffect(() => {
+    if (liveScrollRef.current) {
+      liveScrollRef.current.scrollTop = liveScrollRef.current.scrollHeight;
+    }
+  }, [liveTranscriptText, liveInterimText]);
+
+  // Synchronize new speakers from transcripts to speakers state & database
+  useEffect(() => {
+    if (loading || transcripts.length === 0) return;
+
+    const missingTags = Array.from(
+      new Set(transcripts.map((t) => t.speakerTag).filter(Boolean))
+    ).filter((tag) => !speakers.some((s) => s.speaker_tag === tag));
+
+    if (missingTags.length === 0) return;
+
+    const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
+
+    missingTags.forEach(async (tag) => {
+      if (!speakerColorsRef.current[tag]) {
+        const existingCount = Object.keys(speakerColorsRef.current).length;
+        speakerColorsRef.current[tag] = colors[existingCount % colors.length];
+      }
+      const newColor = speakerColorsRef.current[tag] || "#cbd5e1";
+      const name = tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker ");
+
+      setSpeakers((prev) => {
+        if (prev.some((s) => s.speaker_tag === tag)) return prev;
+        return [...prev, { id: `temp-${tag}`, speaker_tag: tag, display_name: name, color_hex: newColor }];
+      });
+    });
+  }, [transcripts, speakers, loading, meetingId]);
+
+  // Auto-process drafts when silence is detected (3 seconds) & Auto-scroll drafts
   useEffect(() => {
     // Auto-scroll drafts container to bottom
     if (draftsContainerRef.current) {
@@ -649,7 +854,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
     const timer = setTimeout(() => {
       processDraftsBatch();
-    }, 5000);
+    }, 3000);
 
     return () => clearTimeout(timer);
   }, [transcripts]);
@@ -664,7 +869,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Merge speakers action
   const handleMergeSpeakers = async () => {
     if (!speakerToMergeSrc || !speakerToMergeDest || speakerToMergeSrc === speakerToMergeDest) {
-      alert("Vui lòng chọn hai Speaker khác nhau để gộp.");
+      addToast("Trùng người nói", "Vui lòng chọn hai người nói khác nhau.", "warning");
       return;
     }
 
@@ -696,10 +901,48 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       );
 
       setShowMergeModal(false);
-      alert(`Gộp Speaker ${speakerToMergeSrc.replace("speaker_", "")} vào ${destSpeaker.display_name} thành công!`);
+      addToast("Gộp thành công", `Đã gộp Speaker ${speakerToMergeSrc.replace("speaker_", "")} vào ${destSpeaker.display_name}.`, "success");
     } catch (err) {
       console.error("Merge speakers error:", err);
-      alert("Có lỗi xảy ra khi gộp người phát biểu.");
+      addToast("Lỗi gộp người", "Không thể gộp người nói.", "error");
+    }
+  };
+
+  const handleRestartMeeting = async () => {
+    try {
+      // Stop active recording stream if any
+      stopRecording();
+      setStatus("preparing");
+
+      // 1. Delete all transcripts of this meeting from database
+      const { error: deleteError } = await supabase
+        .from("transcripts")
+        .delete()
+        .eq("meeting_id", meetingId);
+
+      if (deleteError) throw deleteError;
+
+      // 2. Reset local state
+      setTranscripts([]);
+      setRecordingDuration(0);
+      setLiveTranscriptText("");
+      if (liveTranscriptTextRef) {
+        liveTranscriptTextRef.current = "";
+      }
+
+      // 3. Clear local storage cache
+      localStorage.removeItem("active_meeting_id");
+      localStorage.removeItem(`meeting_transcripts_${meetingId}`);
+      localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
+      localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
+
+      // 4. Close modal
+      setShowEndConfirmationModal(false);
+
+      addToast("Đã làm mới", "Đã xóa sạch nội dung cuộc họp.", "success");
+    } catch (err) {
+      console.error("Lỗi khi bắt đầu lại cuộc họp:", err);
+      addToast("Lỗi bắt đầu lại", "Không thể làm mới cuộc họp.", "error");
     }
   };
 
@@ -726,7 +969,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       );
     } catch (err) {
       console.error("Failed to update bubble speaker:", err);
-      alert("Không thể đổi người phát biểu. Vui lòng thử lại.");
+      addToast("Lỗi đổi vai", "Không thể chuyển vai người nói.", "error");
     }
   };
 
@@ -754,7 +997,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // End meeting & trigger Quality model AI summary progress bar
   const handleEndMeeting = async () => {
-    if (!confirm("Bạn muốn kết thúc ghi âm cuộc họp và tạo tóm tắt thông minh?")) return;
     
     stopRecording();
     setIsFinishing(true);
@@ -777,12 +1019,15 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }, 1500);
 
     try {
+      const finalizedTranscripts = transcriptsRef.current.filter((t) => t.status !== "draft" && t.status !== "processing" && t.status !== "Dịch lỗi - Thử lại");
       const res = await fetch("/api/end-meeting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           meeting_id: meetingId,
           duration_ms: duration,
+          transcripts: finalizedTranscripts,
+          raw_transcript: liveTranscriptTextRef.current,
         }),
       });
 
@@ -792,8 +1037,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       setSummaryProgress(100);
       clearInterval(interval);
 
-      // Clean active meeting key in localStorage
+      // Clean active meeting key and cached transcripts in localStorage
       localStorage.removeItem("active_meeting_id");
+      localStorage.removeItem(`meeting_transcripts_${meetingId}`);
+      localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
+      localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
 
       // Redirect to history details
       setTimeout(() => {
@@ -802,19 +1050,57 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     } catch (err) {
       console.error(err);
       clearInterval(interval);
-      alert("Lỗi khi kết thúc cuộc họp và tạo tóm tắt.");
+      addToast("Lỗi kết thúc", "Không thể tạo tóm tắt cuộc họp.", "error");
       setIsFinishing(false);
       setStatus("completed");
     }
   };
 
-
+  const isStarted = transcripts.length > 0 || status === "recording" || status === "processing" || recordingDuration > 0;
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950">
-        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mb-4" />
-        <span className="text-slate-500 font-medium">Đang kết nối phòng họp...</span>
+      <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900/60 font-sans overflow-hidden select-none">
+        <div className="flex-1 flex flex-col w-full max-w-[1366px] 2xl:max-w-[1600px] mx-auto bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 border-x border-slate-200/60 dark:border-slate-800/80 overflow-hidden">
+          {/* Header skeleton */}
+          <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-4 h-16 flex items-center justify-between shrink-0">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+              <div className="w-36 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+            </div>
+            <div className="flex items-center space-x-3">
+              <div className="w-32 h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+              <div className="w-20 h-8 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+            </div>
+          </header>
+
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+            {/* Sidebar skeleton */}
+            <div className="w-full md:w-[360px] bg-white/60 dark:bg-slate-900/40 border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-4 md:p-7 flex flex-col gap-6 shrink-0 overflow-y-auto">
+              <div className="space-y-3">
+                <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+              </div>
+              <div className="space-y-3">
+                <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="h-32 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+              </div>
+              <div className="space-y-3">
+                <div className="w-28 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="h-40 rounded-xl bg-slate-200 dark:bg-slate-800 animate-pulse w-full" />
+              </div>
+            </div>
+
+            {/* Main content skeleton */}
+            <div className="flex-1 flex flex-col p-4 md:p-7 bg-white dark:bg-slate-950 overflow-hidden">
+              <div className="flex-1 flex flex-col justify-center items-center space-y-4">
+                <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="w-48 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="w-80 h-3 rounded bg-slate-100 dark:bg-slate-900 animate-pulse" />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -822,15 +1108,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // If finishing, render Progress Page
   if (isFinishing) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 px-6">
-        <div className="max-w-md w-full space-y-6 text-center">
-          <RefreshCw className="w-12 h-12 text-blue-500 animate-spin mx-auto" />
-          <div className="space-y-2">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 px-6 select-none">
+        <div className="max-w-md w-full space-y-6 text-center flex flex-col items-center">
+          <div className="w-14 h-14 rounded-full bg-slate-200 dark:bg-slate-800 animate-pulse mb-2 flex items-center justify-center">
+            <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
+          </div>
+          <div className="space-y-2 w-full">
             <h3 className="font-bold text-xl text-slate-900 dark:text-slate-100">
               Đang tạo báo cáo tóm tắt cuộc họp
             </h3>
             <p className="text-sm text-slate-500">
-              Gemini 3.5 Pro đang xử lý phân tích cuộc thoại để trích xuất báo cáo tổng quan, quyết định và danh sách công việc...
+              Trợ lý AI đang xử lý phân tích cuộc thoại để trích xuất báo cáo tổng quan, quyết định và danh sách công việc...
             </p>
           </div>
           <div className="w-full bg-slate-200 dark:bg-slate-800 h-3 rounded-full overflow-hidden relative">
@@ -855,7 +1143,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         {/* Exit Full Screen Button */}
         <button
           onClick={() => setIsFullScreen(false)}
-          className="absolute top-8 right-8 flex items-center space-x-2 px-4 h-10 bg-white/10 hover:bg-white/20 text-white rounded-md text-sm transition-all"
+          className="absolute top-8 right-8 flex items-center space-x-2 px-4 h-10 bg-white/10 hover:bg-white/20 text-white rounded-md text-sm transition-all cursor-pointer"
         >
           <Minimize2 className="w-4 h-4" />
           <span>Thoát Toàn Màn Hình</span>
@@ -907,23 +1195,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans overflow-hidden">
-      {/* HEADER */}
+    <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900/60 font-sans overflow-hidden">
+      <div className="flex-1 flex flex-col w-full max-w-[1366px] 2xl:max-w-[1600px] mx-auto bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 border-x border-slate-200/60 dark:border-slate-800/80 overflow-hidden">
+        {/* HEADER */}
       <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-4 h-16 flex items-center justify-between shrink-0">
         <div className="flex items-center space-x-3">
           <button
             onClick={() => router.push("/")}
-            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+            title="Quay lại danh sách"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex items-center space-x-2">
-            <h1 className="font-bold text-lg leading-none">{meeting.title}</h1>
+            <h1 className="font-bold text-lg leading-none" title={meeting?.title}>{meeting?.title}</h1>
           </div>
         </div>
 
-        {/* Auto Save Status */}
-        <div className="flex items-center space-x-4 text-xs">
+        {/* Auto Save Status & Actions */}
+        <div className="flex items-center space-x-3 text-xs">
           {lastSavedTime ? (
             <span className="text-slate-400 font-medium flex items-center space-x-1">
               <CheckCircle className="w-3.5 h-3.5 text-green-500" />
@@ -932,9 +1222,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           ) : (
             <span className="text-slate-400 font-medium italic">Đang đồng bộ cơ sở dữ liệu...</span>
           )}
+
           <button
             onClick={() => setIsFullScreen(true)}
-            className="flex items-center space-x-1 px-3 h-8 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+            className="flex items-center space-x-1 px-3 h-9 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
           >
             <Maximize2 className="w-3.5 h-3.5" />
             <span>Phụ đề Live (iPad)</span>
@@ -958,7 +1249,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         status === "recording" ? "bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.6)]" : "bg-slate-300"
                       }`}
                     ></span>
-                    <span className="text-sm font-bold text-slate-700 dark:text-slate-300 capitalize">{status === "recording" ? "Đang ghi âm" : "Tạm dừng"}</span>
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                      {status === "recording" 
+                        ? `Đang ghi âm (${formatDuration(recordingDuration)})` 
+                        : recordingDuration > 0 
+                          ? `Tạm dừng (${formatDuration(recordingDuration)})` 
+                          : "Tạm dừng"}
+                    </span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Volume2 className="w-4 h-4 text-slate-400" />
@@ -988,19 +1285,27 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </button>
                 ) : (
                   <button
-                    onClick={startRecording}
+                    onClick={() => {
+                      localStorage.setItem("active_meeting_id", meetingId);
+                      startRecording();
+                    }}
                     className="flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-md shadow-indigo-500/30 cursor-pointer"
                   >
                     <Mic className="w-4 h-4" />
-                    <span>{transcripts.length > 0 ? "Tiếp tục" : "Ghi âm"}</span>
+                    <span>{transcripts.length > 0 || recordingDuration > 0 ? "Tiếp tục" : "Bắt đầu"}</span>
                   </button>
                 )}
 
                 <button
-                  onClick={handleEndMeeting}
-                  className="flex items-center justify-center space-x-2 bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer shadow-sm"
+                  onClick={() => setShowEndConfirmationModal(true)}
+                  disabled={!isStarted}
+                  className={`flex items-center justify-center space-x-2 bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400 rounded-xl h-11 text-sm font-bold transition-all shadow-sm ${
+                    !isStarted
+                      ? "opacity-40 cursor-not-allowed pointer-events-none"
+                      : "hover:bg-red-100 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+                  }`}
                 >
-                  <Square className="w-4 h-4" />
+                  <StopCircle className="w-4 h-4" />
                   <span>Kết thúc</span>
                 </button>
               </div>
@@ -1034,7 +1339,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Người phát biểu</h4>
               <button
                 onClick={() => setShowMergeModal(true)}
-                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-2 py-1 rounded-md flex items-center space-x-1 transition-colors"
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 px-2 py-1 rounded-md flex items-center space-x-1 transition-colors cursor-pointer"
               >
                 <Merge className="w-3.5 h-3.5" />
                 <span>Gộp người</span>
@@ -1097,13 +1402,22 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
         {/* Right Column: Real-time Transcript Virtualized Feed */}
         <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950 p-6 relative">
-          <div
-            ref={parentRef}
-            className="flex-1 overflow-y-auto custom-scrollbar pr-4 pb-4 space-y-4"
-          >
-            <div className="flex flex-col gap-3">
+          {transcripts.length === 0 && !partialTranscript && !liveTranscriptText ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 select-none">
+              <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
+              <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>
+              <p className="text-xs text-slate-400 max-w-[280px] mt-1">
+                Nhấn nút "Bắt đầu" hoặc bắt đầu nói để trợ lý tự động chuyển đổi ngôn ngữ thời gian thực.
+              </p>
+            </div>
+          ) : (
+            <div
+              ref={parentRef}
+              className="flex-1 overflow-y-auto custom-scrollbar pr-4 pb-4 space-y-4"
+            >
+            <div className="flex flex-col gap-2">
               {transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").map((t) => {
-                const needsReview = t.confidence < 0.7;
+                const needsReview = t.confidence < 0.8;
                 const isDraft = t.status === "draft";
                 const isProcessing = t.status === "processing";
                 const isError = t.status === "Dịch lỗi - Thử lại";
@@ -1112,11 +1426,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 return (
                   <div key={t.id} className="animate-fly-up">
                     <div 
-                      className="flex flex-col p-3.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 relative group border-l-4"
+                      className="flex flex-col p-2.5 rounded-xl shadow-sm hover:shadow-md transition-all duration-300 bg-white border border-slate-100 dark:bg-slate-900 dark:border-slate-800/60 relative group border-l-4"
                       style={{ borderLeftColor: speakerColor }}
                     >
                       {/* Bubble Header */}
-                      <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center space-x-2">
                            <div className="relative inline-block" style={{ color: speakerColor }}>
                             {/* Visual pill: hugs text naturally and aligns left */}
@@ -1196,7 +1510,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         {/* Original Text Block */}
                         <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed whitespace-pre-wrap">
                           {needsReview ? (
-                            <span className="bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 px-1.5 py-[1px] rounded border border-red-100/50 dark:border-red-900/30 inline whitespace-pre-wrap">
+                            <span className="bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-200 dark:border-amber-900/30 inline whitespace-pre-wrap">
                               {t.correctedText || t.text}
                             </span>
                           ) : (
@@ -1206,7 +1520,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
                         {/* Separator & Translated Text Block */}
                         {t.translatedText && (
-                          <div className="mt-2.5 pt-2.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
+                          <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
                             <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium group/trans relative inline-flex items-center mr-2">
                               <span className="whitespace-pre-wrap">{t.translatedText}</span>
                               <button
@@ -1227,145 +1541,279 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               {/* Scroll anchor */}
               <div ref={messagesEndRef} className="h-2" />
             </div>
-
-            {/* Empty Room Instruction */}
-            {transcripts.length === 0 && !partialTranscript && (
-              <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
-                <h4 className="font-semibold text-slate-600 dark:text-slate-400">Phòng họp đã sẵn sàng</h4>
-                <p className="text-xs text-slate-400 max-w-[280px] mt-1">
-                  Nhấn nút "Ghi âm" hoặc bắt đầu nói để trợ lý tự động chuyển đổi ngôn ngữ thời gian thực.
-                </p>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Separator Divider */}
-          <div className="w-full h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-4 shrink-0 shadow-sm"></div>
+          <div className="w-full h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-3 shrink-0 shadow-sm"></div>
 
-          {/* Pinned Fixed-Size Live Listening Box */}
-          <div className="h-20 shrink-0 bg-slate-50/40 dark:bg-slate-900/30 backdrop-blur-md border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2.5 flex flex-col justify-between shadow-sm transition-all duration-300">
-            {/* Header */}
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase">
+          {/* Continuous Live Transcript Area — 4 lines: title + interim + 2 scrollable */}
+          <div className="shrink-0 bg-slate-50/40 dark:bg-slate-900/30 backdrop-blur-md border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2 flex flex-col shadow-sm transition-all duration-300">
+            {/* Line 1: Fixed title + icons */}
+            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
               <div className="flex items-center space-x-1.5">
                 <span className={`w-1.5 h-1.5 rounded-full ${status === "recording" ? "bg-blue-500 dark:bg-blue-400 animate-pulse" : "bg-slate-300 dark:bg-slate-700"}`}></span>
-                <span className="text-blue-600 dark:text-blue-400 font-extrabold">Đang nghe trực tiếp</span>
+                <span className="text-blue-600 dark:text-blue-400 font-extrabold">Nghe trực tiếp</span>
               </div>
+              {liveTranscriptText && (
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(liveTranscriptText);
+                      setCopiedLive(true);
+                      setTimeout(() => setCopiedLive(false), 1500);
+                    }}
+                    className={`p-1 rounded transition-all cursor-pointer ${
+                      copiedLive 
+                        ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 scale-110" 
+                        : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    }`}
+                    title={copiedLive ? "Đã sao chép!" : "Sao chép nội dung"}
+                  >
+                    {copiedLive ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const btn = document.activeElement as HTMLElement;
+                      btn?.classList.add("scale-0", "opacity-0");
+                      setTimeout(() => {
+                        setLiveTranscriptText("");
+                        btn?.classList.remove("scale-0", "opacity-0");
+                      }, 200);
+                    }}
+                    className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-950/20 transition-all duration-200 cursor-pointer"
+                    title="Xóa nội dung nghe trực tiếp"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
-            {/* Body (Holds 2 lines of text) */}
-            <div className="flex-1 flex items-center mt-1.5">
-              <p className="text-sm font-bold italic text-slate-700 dark:text-slate-200 line-clamp-2 leading-relaxed w-full">
-                {realtimeText && (realtimeText.text || realtimeText.interimText) ? (
-                  <>
-                    <span>{realtimeText.text}</span>
-                    {realtimeText.interimText && (
-                      <span className="opacity-80 ml-1">{realtimeText.interimText}...</span>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-slate-350 dark:text-slate-650 not-italic font-medium">Đang chờ âm thanh phát biểu...</span>
-                )}
-              </p>
+            {/* Body: 3 scrollable lines with accumulated transcript */}
+            <div 
+              ref={liveScrollRef}
+              className="h-[54px] overflow-y-auto custom-scrollbar mt-1"
+            >
+              {liveTranscriptText || liveInterimText ? (
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-[18px]">
+                  {liveTranscriptText}
+                  {liveInterimText && (
+                    <span className="text-slate-400 dark:text-slate-500 italic font-medium">{liveInterimText}...</span>
+                  )}
+                </p>
+              ) : (
+                <div className="flex items-center h-full">
+                  <span className="text-slate-300 dark:text-slate-700 text-xs font-medium">Đang chờ âm thanh phát biểu...</span>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Draft Preview Box: fixed height, lighter color, below live listening box */}
-          {transcripts.some((t) => t.status === "draft" || t.status === "processing") ? (
-            <div 
-              className="mt-2 h-20 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 p-2 flex flex-col justify-between shadow-sm"
-            >
-              {/* Draft Box Header: Fixed at the top, never scrolls away */}
-              <div className="flex items-center justify-between text-[9px] font-bold text-slate-400 dark:text-slate-550 uppercase tracking-wider select-none shrink-0 pb-1 border-b border-slate-100/5 dark:border-slate-800/10">
-                <div className="flex items-center space-x-1.5">
-                  <span className={`w-1 h-1 rounded-full ${transcripts.some((t) => t.status === "processing") ? "bg-emerald-500 animate-ping" : "bg-slate-400 animate-pulse"}`}></span>
-                  <span>
-                    {transcripts.some((t) => t.status === "processing") ? "Đang xử lý & Biên dịch..." : "Bản nháp hiện tại"}
-                  </span>
-                </div>
+          {/* Speaker Classification Box — same height as live box */}
+          <div className="mt-1.5 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 px-4 py-2 flex flex-col shadow-sm">
+            {/* Header */}
+            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
+              {/* Left Side: Status, Title, and Auto 5s Badge */}
+              <div className="flex items-center space-x-1.5">
+                <span className={`w-1.5 h-1.5 rounded-full ${transcripts.some((t) => t.status === "processing") ? "bg-emerald-500 animate-ping" : transcripts.some((t) => t.status === "draft") ? "bg-amber-400 animate-pulse" : "bg-slate-300 dark:bg-slate-700"}`}></span>
                 {transcripts.some((t) => t.status === "processing") ? (
-                  <div className="flex items-center space-x-1 text-[8px] text-emerald-600 dark:text-emerald-400 font-extrabold bg-emerald-50 dark:bg-emerald-950/30 px-1.5 py-0.5 rounded animate-pulse">
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-                    <span>Đang chốt dịch...</span>
-                  </div>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
+                    Đang phân vai...
+                  </span>
                 ) : (
-                  <div className="flex items-center space-x-2">
-                    <span className="hidden sm:inline-block text-[8px] text-slate-450 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1.5 py-0.5 rounded">
-                      Tự động dịch sau 5s im lặng
-                    </span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        processDraftsBatch();
-                      }}
-                      disabled={isProcessingBatch}
-                      className="flex items-center space-x-1 text-[9px] text-blue-600 dark:text-blue-400 font-extrabold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all active:scale-95 shadow-sm cursor-pointer"
-                      title="Dịch ngay lập tức các câu nháp thô"
-                    >
-                      <Sparkles className="w-2.5 h-2.5 animate-pulse" />
-                      <span>Dịch ngay</span>
-                    </button>
-                  </div>
+                  <span className="text-slate-500 dark:text-slate-400 font-extrabold">Phân vai người nói</span>
+                )}
+                {transcripts.some((t) => t.status === "draft") && !transcripts.some((t) => t.status === "processing") && (
+                  <span className="hidden sm:inline-flex items-center text-[8px] text-slate-400 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1 h-3.5 rounded normal-case ml-1.5 shadow-sm leading-none">
+                    Auto 3s
+                  </span>
                 )}
               </div>
-
-              {/* Draft List: Scrollable container */}
-              <div 
-                ref={draftsContainerRef}
-                className="flex-1 overflow-y-auto custom-scrollbar mt-1 pr-1 space-y-1.5"
-              >
-                {transcripts.filter((t) => t.status === "draft" || t.status === "processing").map((t) => {
-                  const speakerColor = speakerColorsRef.current[t.speakerTag] || "#cbd5e1";
-                  const isProcessing = t.status === "processing";
+              {/* Right Side: Phân vai ngay + Separator | + Copy + Delete */}
+              {transcripts.length > 0 && (
+                <div className="flex items-center space-x-1">
+                  {transcripts.some((t) => t.status === "draft") && !transcripts.some((t) => t.status === "processing") && (
+                    <>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          processDraftsBatch();
+                        }}
+                        disabled={isProcessingBatch}
+                        className="flex items-center space-x-1 text-[9px] text-blue-600 dark:text-blue-400 font-extrabold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all active:scale-95 shadow-sm cursor-pointer normal-case mr-1"
+                        title="Phân vai ngay lập tức"
+                      >
+                        <Sparkles className="w-2.5 h-2.5 animate-pulse" />
+                        <span>Phân vai ngay</span>
+                      </button>
+                      <span className="text-slate-200 dark:text-slate-800 mx-1.5 font-normal select-none">|</span>
+                    </>
+                  )}
+                  <button
+                    onClick={() => {
+                      const textToCopy = transcripts.map((d) => `${d.speakerName}: ${d.text}`).join("\n");
+                      navigator.clipboard.writeText(textToCopy);
+                      setCopiedDrafts(true);
+                      setTimeout(() => setCopiedDrafts(false), 1500);
+                    }}
+                    className={`p-1 rounded transition-all cursor-pointer ${
+                      copiedDrafts 
+                        ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 scale-110" 
+                        : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    }`}
+                    title={copiedDrafts ? "Đã sao chép!" : "Sao chép toàn bộ hội thoại gốc"}
+                  >
+                    {copiedDrafts ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const confirmClear = await showCustomConfirm("Bạn có chắc chắn muốn xóa toàn bộ lịch sử cuộc trò chuyện này không?");
+                      if (!confirmClear) return;
+                      const btn = document.activeElement as HTMLElement;
+                      btn?.classList.add("scale-0", "opacity-0");
+                      try {
+                        await supabase.from("transcripts").delete().eq("meeting_id", meetingId);
+                        setTranscripts([]);
+                      } catch (err) {
+                        console.error("Lỗi khi xóa cuộc trò chuyện:", err);
+                      } finally {
+                        btn?.classList.remove("scale-0", "opacity-0");
+                      }
+                    }}
+                    className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-950/20 transition-all duration-200 cursor-pointer"
+                    title="Xóa toàn bộ cuộc trò chuyện"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+            {/* Body: 3-line scrollable draft list */}
+            <div 
+              ref={draftsContainerRef}
+              className="h-[54px] overflow-y-auto custom-scrollbar mt-1"
+            >
+              {(() => {
+                const draftItems = transcripts.slice(-20);
+                if (draftItems.length === 0) {
+                  return (
+                    <div className="flex items-center h-full">
+                      <span className="text-[10px] text-slate-350 dark:text-slate-650 font-medium italic">Không có đoạn chờ phân vai</span>
+                    </div>
+                  );
+                }
+                return draftItems.map((draft) => {
+                  const speakerColor = speakerColorsRef.current[draft.speakerTag] || "#cbd5e1";
+                  const isProcessing = draft.status === "processing";
+                  const isDraft = draft.status === "draft";
+                  const isCompleted = !isProcessing && !isDraft;
                   return (
                     <div 
-                      key={t.id} 
-                      className={`text-xs flex flex-col gap-0.5 animate-in fade-in slide-in-from-bottom-1 duration-200 pl-1.5 border-l ${isProcessing ? "animate-pulse opacity-50" : ""}`} 
-                      style={{ borderLeftColor: speakerColor }}
+                      key={draft.id}
+                      className={`leading-[18px] ${isProcessing ? "animate-pulse opacity-50" : ""} ${isCompleted ? "opacity-75" : ""}`}
                     >
-                      <span className="font-extrabold text-[10px] opacity-80" style={{ color: speakerColor }}>
-                        {t.speakerName} {isProcessing && "..."}
-                      </span>
-                      <p className="text-slate-500 dark:text-slate-400 pl-0.5 font-semibold leading-relaxed">
-                        {t.text}
+                      <p className="text-xs text-slate-700 dark:text-slate-200 leading-[18px]">
+                        <span className="font-extrabold" style={{ color: speakerColor }}>
+                          {draft.speakerName}:
+                        </span>
+                        <span className="font-semibold ml-1">{draft.text}</span>
+                        {isCompleted && (
+                          <span className="text-[10px] text-emerald-500 ml-1.5 font-bold" title="Đã phân vai và dịch">✓</span>
+                        )}
                       </p>
                     </div>
                   );
-                })}
-              </div>
+                });
+              })()}
             </div>
-          ) : (
-            <div className="mt-2 h-20 shrink-0 rounded-xl border border-dashed border-slate-200/20 dark:border-slate-800/10 bg-slate-50/5 dark:bg-slate-950/5 flex items-center justify-center shadow-sm">
-              <span className="text-[10px] text-slate-350 dark:text-slate-650 font-medium italic">Không có bản nháp chờ xử lý</span>
-            </div>
-          )}
+          </div>
         </main>
       </div>
 
       {/* TOASTS NOTIFICATIONS PANEL */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className="pointer-events-auto border border-blue-100 bg-blue-50/95 dark:border-blue-900/50 dark:bg-blue-950/90 p-4 rounded-lg shadow-lg flex items-start space-x-3 animate-in slide-in-from-bottom-5 fade-in duration-300"
-          >
-            <div className="flex-1">
-              <h5 className="font-bold text-xs text-blue-900 dark:text-blue-300">{t.title}</h5>
-              <p className="text-xs text-blue-700 dark:text-blue-400 mt-0.5">{t.desc}</p>
-            </div>
-            <button
-              onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
-              className="text-blue-400 hover:text-blue-600"
+      <style>{`
+        @keyframes toast-progress {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+      `}</style>
+      <div className="fixed top-[6px] right-6 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+        {toasts.map((t) => {
+          const config = {
+            success: {
+              border: "border-emerald-100 dark:border-emerald-900/50",
+              bg: "bg-emerald-50/95 dark:bg-emerald-950/90",
+              title: "text-emerald-900 dark:text-emerald-300",
+              desc: "text-emerald-700/90 dark:text-emerald-400/90",
+              bar: "bg-emerald-500",
+              btn: "text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-200"
+            },
+            warning: {
+              border: "border-amber-100 dark:border-amber-900/50",
+              bg: "bg-amber-50/95 dark:bg-amber-950/90",
+              title: "text-amber-900 dark:text-amber-300",
+              desc: "text-amber-700/90 dark:text-amber-400/90",
+              bar: "bg-amber-500",
+              btn: "text-amber-400 hover:text-amber-600 dark:hover:text-amber-200"
+            },
+            error: {
+              border: "border-red-100 dark:border-red-900/50",
+              bg: "bg-red-50/95 dark:bg-red-950/90",
+              title: "text-red-900 dark:text-red-300",
+              desc: "text-red-700/90 dark:text-red-400/90",
+              bar: "bg-red-500",
+              btn: "text-red-400 hover:text-red-600 dark:hover:text-red-200"
+            },
+            info: {
+              border: "border-blue-100 dark:border-blue-900/50",
+              bg: "bg-blue-50/95 dark:bg-blue-950/90",
+              title: "text-blue-900 dark:text-blue-300",
+              desc: "text-blue-700/90 dark:text-blue-400/90",
+              bar: "bg-blue-500",
+              btn: "text-blue-400 hover:text-blue-600 dark:hover:text-blue-200"
+            }
+          };
+
+          const style = config[(t.type as keyof typeof config) || "info"] || config.info;
+
+          return (
+            <div
+              key={t.id}
+              className={`pointer-events-auto border ${style.border} ${style.bg} p-2.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-right-full fade-in duration-300`}
             >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ))}
+              <div className="flex-1 min-w-0 pr-2">
+                <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
+                <p className={`text-[11px] font-medium leading-snug mt-0.5 ${style.desc}`}>{t.desc}</p>
+              </div>
+              <button
+                onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
+                className={`${style.btn} cursor-pointer p-1 rounded-lg hover:bg-slate-200/20 shrink-0 self-center`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              
+              {/* Progress bar */}
+              <div 
+                className={`absolute bottom-0 left-0 h-[2.5px] ${style.bar}`}
+                style={{
+                  animation: "toast-progress 5s linear forwards"
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* MERGE SPEAKERS MODAL */}
       {showMergeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200">
+        <div 
+          onClick={() => setShowMergeModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-default"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200 cursor-default"
+          >
             <h3 className="font-bold text-lg mb-4 flex items-center space-x-2">
               <Merge className="w-5 h-5 text-blue-500" />
               <span>Gộp Người Phát Biểu</span>
@@ -1414,13 +1862,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             <div className="flex justify-end space-x-3 mt-6">
               <button
                 onClick={() => setShowMergeModal(false)}
-                className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md"
+                className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md cursor-pointer"
               >
                 Hủy bỏ
               </button>
               <button
                 onClick={handleMergeSpeakers}
-                className="px-4 h-9 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md shadow-sm"
+                className="px-4 h-9 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md shadow-sm cursor-pointer"
               >
                 Thực hiện Gộp
               </button>
@@ -1428,6 +1876,140 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           </div>
         </div>
       )}
+
+      {/* END MEETING CONFIRMATION MODAL */}
+      {showEndConfirmationModal && (
+        <div 
+          onClick={() => setShowEndConfirmationModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-default"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200 cursor-default"
+          >
+            {/* Header with Aligned Close Button */}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg flex items-center space-x-2 text-red-600 dark:text-red-500">
+                <StopCircle className="w-5 h-5" />
+                <span>Kết Thúc Cuộc Họp</span>
+              </h3>
+              
+              <button
+                onClick={() => setShowEndConfirmationModal(false)}
+                className="p-1.5 rounded-lg border border-transparent hover:border-slate-200 dark:hover:border-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                title="Đóng"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <p className="text-sm text-slate-650 dark:text-slate-400 mb-6">
+              Bạn có muốn kết thúc ghi âm cuộc họp để lưu trữ và tạo báo cáo tóm tắt thông minh (<strong>Tiếp theo</strong>), hay muốn xóa sạch dữ liệu để ghi âm lại từ đầu (<strong>Bắt đầu lại</strong>)?
+            </p>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2">
+              <button
+                onClick={() => setShowEndConfirmationModal(false)}
+                className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md cursor-pointer order-3 sm:order-1 hover:border-slate-350 dark:hover:border-slate-650"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={() => {
+                  setShowEndConfirmationModal(false);
+                  handleRestartMeeting();
+                }}
+                className="px-4 h-9 bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-900/50 text-xs font-semibold rounded-md shadow-sm cursor-pointer order-2 hover:border-amber-300 dark:hover:border-amber-700"
+              >
+                Bắt đầu lại
+              </button>
+              <button
+                onClick={() => {
+                  setShowEndConfirmationModal(false);
+                  handleEndMeeting();
+                }}
+                className="px-4 h-9 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-md shadow-sm cursor-pointer order-1 sm:order-3 dark:bg-red-700 dark:hover:bg-red-600 border border-transparent hover:border-red-700"
+              >
+                Tiếp theo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM MODAL */}
+      {modalConfig.isOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-all duration-300 animate-in fade-in"
+          onClick={() => {
+            if (modalConfig.onCancel) modalConfig.onCancel();
+            else if (modalConfig.onConfirm) modalConfig.onConfirm();
+          }}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all duration-300 scale-in select-none text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div className="flex items-center space-x-2">
+                {modalConfig.type === "success" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                    <CheckCircle className="w-4 h-4" />
+                  </span>
+                )}
+                {modalConfig.type === "error" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">
+                    <span className="font-bold text-sm">!</span>
+                  </span>
+                )}
+                {modalConfig.type === "confirm" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
+                    <span className="font-bold text-sm">?</span>
+                  </span>
+                )}
+                <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">{modalConfig.title}</h3>
+              </div>
+              <button 
+                onClick={modalConfig.onCancel || modalConfig.onConfirm}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6 whitespace-pre-wrap">
+              {modalConfig.message}
+            </p>
+
+            <div className="flex justify-end space-x-3">
+              {modalConfig.type === "confirm" ? (
+                <>
+                  <button
+                    onClick={modalConfig.onCancel}
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 rounded-lg text-sm font-semibold text-slate-600 dark:text-slate-350 transition-colors cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    onClick={modalConfig.onConfirm}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                  >
+                    Xác nhận
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={modalConfig.onConfirm}
+                  className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                >
+                  OK
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
     </div>
   );
 }

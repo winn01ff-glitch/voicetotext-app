@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, drafts } = body;
+    const { meeting_id, drafts, fullTranscript, history, last_transcript } = body;
 
     if (!meeting_id || !drafts || !Array.isArray(drafts) || drafts.length === 0) {
       return NextResponse.json({ error: "Missing required fields (meeting_id, drafts)" }, { status: 400 });
@@ -35,22 +35,19 @@ export async function POST(request: Request) {
       .select("source, target, source_language, target_language")
       .eq("meeting_id", meeting_id);
 
-    // 3. Fetch recent transcripts for history context
-    const { data: recentTxs } = await supabase
-      .from("transcripts")
-      .select("original_text, corrected_text, translated_text, speakers(speaker_tag, display_name)")
-      .eq("meeting_id", meeting_id)
-      .order("created_at", { ascending: false })
-      .limit(4);
+    // 2.5. Fetch all registered speakers for this meeting to map tags correctly
+    const { data: allSpeakers } = await supabase
+      .from("speakers")
+      .select("speaker_tag, display_name, language_code")
+      .eq("meeting_id", meeting_id);
 
-    const historyContext = (recentTxs || [])
-      .reverse()
-      .map((tx: any) => ({
-        speaker_tag: tx.speakers?.speaker_tag || "unknown",
-        speaker_name: tx.speakers?.display_name || "Unknown",
-        text: tx.corrected_text || tx.original_text,
-        translation: tx.translated_text
-      }));
+    // 3. Define historyContext using body-passed history
+    const historyContext = history || [];
+
+
+
+
+    const isMultiSpeakerMode = allSpeakers && allSpeakers.length > 2;
 
     // 4. Prepare drafts context
     const draftsContext = drafts.map((d: any, idx: number) => ({
@@ -64,10 +61,24 @@ export async function POST(request: Request) {
     const sourceLang = meeting.source_language;
     const context = meeting.meeting_context;
 
-    const systemPrompt = `
-You are an expert dialogue editor and translator. Your job is to process a sequence of raw speech transcript segments from a live bilingual conversation (Japanese and Vietnamese/English), correct transcription errors, and translate each turn.
+    // Fetch only the last 1000 characters of the raw continuous transcript for context
+    const trimmedFullTranscript = fullTranscript && fullTranscript.length > 1000 
+      ? "..." + fullTranscript.slice(-1000) 
+      : fullTranscript;
 
-CONVERSATION HISTORY (Use for xưng hô/politeness consistency and pronouns context):
+    const systemPrompt = `
+You are an expert dialogue editor and translator. Your job is to process raw speech transcript segments from a live conversation.
+
+PRIORITY WORKFLOW — CONTEXT-FIRST CLASSIFICATION:
+1. FIRST: Read the FULL CONTINUOUS TRANSCRIPT below to understand the complete conversation flow, who is asking questions, who is answering, and the overall context.
+2. SECOND: Read the RAW DIALOGUE SEQUENCE.
+3. CLASSIFY SPEAKERS based on your understanding of the conversation context (who would logically say what).
+4. Assign correct speaker tags from the REGISTERED SPEAKERS list based on dialog logic and history.
+
+REGISTERED SPEAKERS (Map to these tags: e.g. speaker_1, speaker_2):
+${JSON.stringify(allSpeakers || [])}
+
+CONVERSATION HISTORY (Use for reference and xưng hô/politeness consistency):
 ${JSON.stringify(historyContext)}
 
 CONTEXT OF THE MEETING:
@@ -76,53 +87,177 @@ ${context || "General business/technical discussion"}
 GLOSSARY (Must apply if matching words are found):
 ${JSON.stringify(glossaryList || [])}
 
-RAW DIALOGUE SEQUENCE:
+FULL CONTINUOUS TRANSCRIPT (READ THIS FIRST for complete context understanding):
+${trimmedFullTranscript || "(not available)"}
+
+RAW DIALOGUE SEQUENCE TO PROCESS (Input text stream):
 ${JSON.stringify(draftsContext)}
 
-TASK & STRICT RULES:
-1. STRICT SPEAKER GROUPING & NO DUPLICATES:
-   - Group consecutive turns of the SAME speaker in the output array. Do NOT return consecutive turns with the same speaker_tag.
-   - Clean up extreme stuttering or voice recognition word loops within a sentence (e.g., if a word like "ずっと" is repeated 5 times like "ずっとずっとずっとずっとずっと", clean it up to just "ずっと" or "ずっとずっと" to make the text clean and readable).
-   - If a speaker has duplicate phrases or loops across their consecutive raw turns (e.g. Turn 1: "フランスに住んでいます", Turn 2: "住んでいます"), merge them into a single clean sentence without duplicate repetitions.
+RULES:
+1. CONTEXT-FIRST SPEAKER CLASSIFICATION:
+   - Your understanding of the conversation context takes priority.
+   - The 'speaker_tag' in the RAW DIALOGUE SEQUENCE is a biometric voice-analysis hint from Deepgram. If it seems reasonable and fits the context, keep it. If it seems suspicious or illogical (e.g. a question and its answer are assigned to the same tag, or speaker tags flicker randomly), use your semantic context understanding to correct the speaker assignment.
+   - If a question and answer are both grouped in the same raw segment, SPLIT them and assign correct speakers.
+   - Use language clues: who speaks Japanese, English, or Vietnamese.
 
-2. LISTENING RESPONSES (AIZUCHI / BACKCHANNELING):
-   - In Japanese conversation, backchanneling words (like "なるほど", "うん", "はい", "そうですね", "ok", "oh") are spoken by the listener to show they are listening.
-   - Check the context: if an aizuchi word (like "なるほど") is appended to the end of a speaker's turn, it almost always belongs to the OTHER speaker (the listener responding to the speaker's statement). Assign it to the correct listener's turn in the JSON.
+2. STRICT SPEAKER GROUPING & NO DUPLICATES:
+   - Group consecutive turns of the SAME speaker. Do NOT return consecutive turns with the same speaker_tag.
+   - Clean extreme stuttering or word loops (5+ repetitions).
 
-3. BIOMETRIC-FIRST DIARIZATION & SPEAKER TAG PRESERVATION:
-   - The raw speaker tags (speaker_0, speaker_1, speaker_2, etc.) were generated by the audio transcription system using biometric voice clustering. You should respect these voice distinctions to keep different speakers separate.
+3. LISTENING RESPONSES (AIZUCHI / BACKCHANNELS):
+   - Listening responses (e.g. Japanese: "なるほど", "うん", "はい", "そうですね"; English: "yeah", "okay", "I see"; Vietnamese: "vâng", "dạ", "thế à") belong to the LISTENER, not the speaker.
+   - If a backchannel appears at the end or beginning of someone's turn, split and assign it to the other speaker.
 
-4. CORRECT SPEAKER CLASSIFICATION ERRORS:
-   - You MUST correct and re-assign speaker tags when you are contextually or linguistically certain that the tag is incorrect.
-   - For example, if a Japanese sentence is spoken by the Japanese speaker (e.g. Speaker 1) but raw diarization tagged it as Speaker B (e.g. speaker_0), you MUST change it to the correct speaker tag (e.g. speaker_1).
-   - Use the conversation history and language clues (e.g., who is the host, who is the Japanese partner, who is speaking Japanese vs. Vietnamese/English) to decide the correct speaker tag for each turn.
+4. ABSOLUTE WORD PRESERVATION & MINIMAL CORRECTION:
+   - For 'original_text': ONLY fix obvious speech recognition errors (wrong kanji, garbled characters, spelling typos).
+   - Do NOT merge, remove, rephrase, or restructure sentences.
+   - Keep EVERY word from raw input. Keep casual/polite register as spoken.
+   - Only fix: spelling errors, glossary substitutions, split word gluing, extreme stutter removal.
+   - NEVER change one valid word into a completely different word (e.g. NEVER change "そうか" to "そうそう", or "ね" to "はい").
 
-5. SPLIT SINGLE SEGMENTS WITH MULTIPLE SPEAKERS:
-   - If a single raw transcript segment contains text spoken by different people (e.g. a question followed immediately by a response, or a Japanese sentence followed immediately by a Vietnamese/English sentence, or two different Japanese speaker voices), you MUST split this single segment into two or more separate turns in the JSON array.
-   - **Crucially: Assign distinct, correct speaker tags (e.g. speaker_0 to the host, speaker_1 to the Japanese speaker) to each split turn! Do NOT assign the same speaker tag to both parts of the split conversation!**
-
-6. ABSOLUTE WORD PRESERVATION & NO ARBITRARY REWRITING (CRITICAL):
-   - Treat the raw transcript text in RAW DIALOGUE SEQUENCE as the absolute truth of what was spoken live.
-   - You MUST NOT rewrite, paraphrase, summarize, or try to "improve" the speaker's grammar or sentence structure.
-   - Every word in your output 'original_text' MUST come directly from the raw input sequence. Do NOT add any extra greetings, filler words, politeness adaptations, or explanatory sentences that were not present in the raw transcript.
-   - Keep the original casual/polite register exactly as it was spoken.
-   - Only perform spelling corrections, glossary substitutions, gluing of split words (e.g. "住んでい" + "ます" -> "住んでいます"), and removal of repeated stutters (like "ずっとずっと..." -> "ずっと").
-
-7. TRANSLATION:
-   - Translate each dialogue turn into "${targetLang}" contextually, keeping the translation natural and faithful to the original words.
+5. TRANSLATION:
+   - Translate each turn into "${targetLang}" naturally and faithfully.
+   - If the original text is already in "${targetLang}", the 'translated_text' MUST equal 'original_text' exactly.
 
 OUTPUT FORMAT:
-Return a valid JSON object ONLY. Do not write any markdown code fences, do not write explanations.
-JSON format must be exactly:
+Return valid JSON ONLY. No markdown, no explanations.
 {
   "cleaned_turns": [
     {
-      "speaker_tag": "the correct speaker tag (e.g. speaker_0 or speaker_1)",
-      "original_text": "cleaned and corrected text in the source language",
-      "translated_text": "translated text into ${targetLang}"
+      "speaker_tag": "correct speaker tag (e.g. speaker_1, speaker_2)",
+      "original_text": "corrected source text",
+      "translated_text": "translation into ${targetLang}"
     }
   ]
 }
+
+==================================================
+FEW-SHOT EXAMPLES FOR ALL LANGUAGES (JAPANESE, ENGLISH, VIETNAMESE)
+==================================================
+
+[EXAMPLE 1: JAPANESE -> VIETNAMESE]
+- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "はじめましてですね。初めまして、嬉しい つながることができて嬉しいです。ありがとうございます 今はるかさんは どこに住んでるんですか。"}]
+- OUTPUT JSON:
+{
+  "cleaned_turns": [
+    {
+      "speaker_tag": "speaker_2",
+      "original_text": "はじめましてですね。初めまして、嬉しいです。つながることができて嬉しいです。ありがとうございます。",
+      "translated_text": "Lần đầu gặp mặt nhỉ. Rất vui được gặp bạn, mình rất vui vì chúng ta có thể kết nối được với nhau. Cảm ơn bạn."
+    },
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "今、はるかさんはどこに住んでるんですか。",
+      "translated_text": "Hiện tại Haruka-san đang sống ở đâu thế?"
+    }
+  ]
+}
+
+[EXAMPLE 2: JAPANESE BACKCHANNELS & STRICT WORD PRESERVATION]
+- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "フランスでフランスにいた時にyoutube撮りましたよね最後そうかはいはいはいゲームの話とか覚えてます"}]
+- OUTPUT JSON:
+{
+  "cleaned_turns": [
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "フランスで、フランスにいた時にYouTube撮りましたよね。",
+      "translated_text": "Ở Pháp ấy? Lúc bạn ở Pháp chúng ta đã quay video YouTube đúng không nhỉ?"
+    },
+    {
+      "speaker_tag": "speaker_2",
+      "original_text": "ね。最後、そうか。はいはいはい。",
+      "translated_text": "Đúng thế, lần cuối cùng ấy. À ra vậy. Vâng vâng vâng."
+    },
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "ゲームの話とか覚えてます？",
+      "translated_text": "Bạn có nhớ vụ chúng ta nói về game không?"
+    }
+  ]
+}
+
+[EXAMPLE 3: ENGLISH -> VIETNAMESE]
+- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "hello how are you today i am fine thanks and you what is your name"}]
+- OUTPUT JSON:
+{
+  "cleaned_turns": [
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "Hello, how are you today?",
+      "translated_text": "Xin chào, hôm nay bạn thế nào?"
+    },
+    {
+      "speaker_tag": "speaker_2",
+      "original_text": "I am fine, thanks. And you?",
+      "translated_text": "Tôi khỏe, cảm ơn bạn. Còn bạn thì sao?"
+    },
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "What is your name?",
+      "translated_text": "Bạn tên là gì thế?"
+    }
+  ]
+}
+
+[EXAMPLE 4: VIETNAMESE -> VIETNAMESE]
+- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "xin chao cac ban hom nay chung ta hoc tiéng nhat nhe vang dung the"}]
+- OUTPUT JSON:
+{
+  "cleaned_turns": [
+    {
+      "speaker_tag": "speaker_1",
+      "original_text": "Xin chào các bạn, hôm nay chúng ta học tiếng Nhật nhé.",
+      "translated_text": "Xin chào các bạn, hôm nay chúng ta học tiếng Nhật nhé."
+    },
+    {
+      "speaker_tag": "speaker_2",
+      "original_text": "Vâng, đúng thế.",
+      "translated_text": "Vâng, đúng thế."
+    }
+  ]
+}
+
+==================================================
+OUTPUT
+==================================================
+
+Return ONLY valid JSON.
+
+Do not output Markdown.
+
+Do not explain reasoning.
+
+Do not wrap JSON in code fences.
+
+Schema
+
+{
+  "cleaned_turns":[
+    {
+      "speaker_tag":"speaker_1",
+      "original_text":"...",
+      "translated_text":"..."
+    }
+  ]
+}
+
+==================================================
+IMPORTANT RULES
+==================================================
+
+Never hallucinate.
+
+Never invent missing dialogue.
+
+Never merge different speakers into one turn.
+
+Never translate names.
+
+Never remove fillers unless they are obvious ASR duplication.
+
+Prefer preserving uncertain words over guessing.
+
+The output must preserve the chronological order of the conversation.
 `;
 
     // 4. Setup Gemini Client & Call API
@@ -145,33 +280,48 @@ JSON format must be exactly:
       result = await fallbackModel.generateContent(systemPrompt);
     }
 
-    const responseText = result.response.text().trim();
+    let responseText = result.response.text().trim();
+    
+    // Robustly extract the JSON object to ignore markdown wrappers or explanations
+    const startIdx = responseText.indexOf("{");
+    const endIdx = responseText.lastIndexOf("}");
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      responseText = responseText.substring(startIdx, endIdx + 1);
+    }
+    
     const aiResponse = JSON.parse(responseText);
     const cleanedTurns = aiResponse.cleaned_turns || [];
 
     // 5. Group consecutive turns of the same speaker inside the batch
     const groupedTurns: any[] = [];
     for (const turn of cleanedTurns) {
+      const mappedOriginalText = turn.original_text || turn.corrected_text || turn.raw_text || "";
+      const mappedTranslatedText = turn.translated_text || "";
+      const mappedSpeakerTag = turn.speaker_tag || "speaker_1";
+
       const prev = groupedTurns[groupedTurns.length - 1];
-      if (prev && prev.speaker_tag === turn.speaker_tag) {
-        prev.original_text = (prev.original_text + "\n" + turn.original_text).trim();
-        prev.translated_text = (prev.translated_text + "\n" + turn.translated_text).trim();
+      if (prev && prev.speaker_tag === mappedSpeakerTag) {
+        prev.original_text = (prev.original_text + "\n" + mappedOriginalText).trim();
+        prev.translated_text = (prev.translated_text + "\n" + mappedTranslatedText).trim();
       } else {
-        groupedTurns.push({ ...turn });
+        groupedTurns.push({
+          speaker_tag: mappedSpeakerTag,
+          original_text: mappedOriginalText,
+          translated_text: mappedTranslatedText
+        });
       }
     }
 
-    // 6. Fetch the last transcript in database for potential merge
-    const { data: lastTx } = await supabase
-      .from("transcripts")
-      .select(`
-        id, original_text, corrected_text, translated_text, start_ms, end_ms, created_at,
-        speakers ( id, speaker_tag, display_name )
-      `)
-      .eq("meeting_id", meeting_id)
-      .order("start_ms", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // 6. Map last_transcript to lastTx
+    const lastTx = last_transcript ? {
+      id: last_transcript.id,
+      original_text: last_transcript.text,
+      translated_text: last_transcript.translatedText,
+      start_ms: last_transcript.startMs,
+      end_ms: last_transcript.endMs,
+      speaker_tag: last_transcript.speakerTag,
+      speaker_name: last_transcript.speakerName
+    } : null;
 
     const finalizedBlocks: any[] = [];
     let startIndex = 0;
@@ -184,117 +334,55 @@ JSON format must be exactly:
     // Check if we can merge the first turn into lastTx
     if (
       lastTx &&
-      (lastTx as any).speakers?.speaker_tag === groupedTurns[0]?.speaker_tag &&
-      (startMsVal - (lastTx as any).end_ms) < 60000 &&
+      lastTx.speaker_tag === groupedTurns[0]?.speaker_tag &&
+      (startMsVal - lastTx.end_ms) < 60000 &&
       groupedTurns.length > 0
     ) {
       const firstTurn = groupedTurns[0];
-      const mergedOriginal = ((lastTx as any).original_text + "\n" + firstTurn.original_text).trim();
-      const mergedTranslated = ((lastTx as any).translated_text + "\n" + firstTurn.translated_text).trim();
+      const mergedOriginal = (lastTx.original_text + "\n" + firstTurn.original_text).trim();
+      const mergedTranslated = (lastTx.translated_text + "\n" + firstTurn.translated_text).trim();
       const turnEndMs = startMsVal + step;
 
-      // Update lastTx in DB
-      const { data: updatedTx } = await supabase
-        .from("transcripts")
-        .update({
-          original_text: mergedOriginal,
-          corrected_text: mergedOriginal,
-          translated_text: mergedTranslated,
-          end_ms: turnEndMs,
-        })
-        .eq("id", lastTx.id)
-        .select()
-        .single();
-
-      if (updatedTx) {
-        finalizedBlocks.push({
-          id: lastTx.id,
-          text: mergedOriginal,
-          correctedText: mergedOriginal,
-           translatedText: mergedTranslated,
-          speakerTag: firstTurn.speaker_tag,
-          speakerName: (lastTx as any).speakers?.display_name || (firstTurn.speaker_tag === "speaker_0" ? "Tôi" : firstTurn.speaker_tag.replace("speaker_", "Speaker ")),
-          startMs: (lastTx as any).start_ms,
-          endMs: turnEndMs,
-          confidence: 1.0,
-          status: "completed",
-          createdAt: (lastTx as any).created_at || new Date().toISOString(),
-        });
-      }
+      finalizedBlocks.push({
+        id: lastTx.id,
+        text: mergedOriginal,
+        correctedText: mergedOriginal,
+        translatedText: mergedTranslated,
+        speakerTag: firstTurn.speaker_tag,
+        speakerName: lastTx.speaker_name || (firstTurn.speaker_tag === "speaker_1" ? "Tôi" : firstTurn.speaker_tag.replace("speaker_", "Speaker ")),
+        startMs: lastTx.start_ms,
+        endMs: turnEndMs,
+        confidence: 1.0,
+        status: "completed",
+        createdAt: new Date().toISOString(),
+      });
       startIndex = 1; // Skip the first turn since we merged it
     }
 
-    // Insert remaining turns
+    // Generate remaining turns locally
     for (let i = startIndex; i < groupedTurns.length; i++) {
       const turn = groupedTurns[i];
-      const turnSpeakerTag = turn.speaker_tag || "speaker_0";
+      const turnSpeakerTag = turn.speaker_tag || "speaker_1";
       
-      // Resolve Speaker ID
-      let speakerId = null;
-      let resolvedSpeaker = null;
-      
-      const { data: speaker } = await supabase
-        .from("speakers")
-        .select("*")
-        .eq("meeting_id", meeting_id)
-        .eq("speaker_tag", turnSpeakerTag)
-        .maybeSingle();
-
-      if (speaker) {
-        speakerId = speaker.id;
-        resolvedSpeaker = speaker;
-      } else {
-        const { data: newSpeaker } = await supabase
-          .from("speakers")
-          .insert({
-            meeting_id,
-            speaker_tag: turnSpeakerTag,
-            display_name: turnSpeakerTag === "speaker_0" ? "Tôi" : turnSpeakerTag.replace("speaker_", "Speaker "),
-            color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
-          })
-          .select().single();
-        if (newSpeaker) {
-          speakerId = newSpeaker.id;
-          resolvedSpeaker = newSpeaker;
-        }
-      }
+      const speakerObj = allSpeakers?.find((s: any) => s.speaker_tag === turnSpeakerTag);
+      const speakerName = speakerObj?.display_name || (turnSpeakerTag === "speaker_1" ? "Tôi" : turnSpeakerTag.replace("speaker_", "Speaker "));
 
       const turnStartMs = startMsVal + step * i;
       const turnEndMs = startMsVal + step * (i + 1);
 
-      // Insert new Transcript
-      const { data: insertedTx } = await supabase
-        .from("transcripts")
-        .insert({
-          meeting_id,
-          speaker_id: speakerId,
-          original_text: turn.original_text,
-          corrected_text: turn.original_text,
-          translated_text: turn.translated_text,
-          translation_language: targetLang,
-          translation_provider: "Gemini",
-          start_ms: turnStartMs,
-          end_ms: turnEndMs,
-          confidence: 1.0,
-        })
-        .select()
-        .single();
-
-      if (insertedTx) {
-        finalizedBlocks.push({
-          id: insertedTx.id,
-          text: turn.original_text,
-          correctedText: turn.original_text,
-          translatedText: turn.translated_text,
-          speakerTag: turnSpeakerTag,
-          speakerName: resolvedSpeaker?.display_name || (turnSpeakerTag === "speaker_0" ? "Tôi" : turnSpeakerTag.replace("speaker_", "Speaker ")),
-          startMs: turnStartMs,
-          endMs: turnEndMs,
-          confidence: 1.0,
-          status: "completed",
-          createdAt: insertedTx.created_at || new Date().toISOString(),
-        });
-      }
+      finalizedBlocks.push({
+        id: crypto.randomUUID(),
+        text: turn.original_text,
+        correctedText: turn.original_text,
+        translatedText: turn.translated_text,
+        speakerTag: turnSpeakerTag,
+        speakerName: speakerName,
+        startMs: turnStartMs,
+        endMs: turnEndMs,
+        confidence: 1.0,
+        status: "completed",
+        createdAt: new Date().toISOString(),
+      });
     }
 
     return NextResponse.json({

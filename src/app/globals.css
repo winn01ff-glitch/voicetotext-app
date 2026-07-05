@@ -26,6 +26,21 @@ body {
   font-family: var(--font-geist-sans), Arial, sans-serif;
 }
 
+/* Cursor overrides: default pointer everywhere except inputs (text cursor) and clickable elements (hand cursor) */
+html, body {
+  cursor: default;
+}
+input, textarea, [contenteditable="true"], [type="text"], [type="search"], [type="url"], [type="email"], [type="number"], [type="password"] {
+  cursor: text;
+}
+button, a, select, option, [role="button"], .cursor-pointer, input[type="button"], input[type="submit"], input[type="checkbox"], input[type="radio"], label {
+  cursor: pointer;
+}
+/* Ensure child elements inside clickable elements inherit the pointer cursor correctly */
+button *, a *, [role="button"] *, .cursor-pointer * {
+  cursor: inherit;
+}
+
 /* Minimalist Clean UI design (Vercel style) */
 .glass {
   background: #ffffff;

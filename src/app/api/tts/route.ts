@@ -16,7 +16,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "DEEPGRAM_API_KEY environment variable is not configured" }, { status: 500 });
     }
 
-    const deepgram = new DeepgramClient();
+    const deepgram = new DeepgramClient({ apiKey });
     const response = await deepgram.speak.v1.audio.generate(
       {
         text,
@@ -24,16 +24,16 @@ export async function GET(request: Request) {
       }
     );
 
-    const stream = response.stream;
-    if (!stream) {
+    const buffer = await response.arrayBuffer();
+    if (!buffer) {
       throw new Error("Failed to get audio stream from Deepgram Aura");
     }
 
-    // Return the audio stream directly to the client as audio/mpeg
-    return new Response(stream as any, {
+    // Return the audio buffer directly to the client as audio/mpeg
+    return new Response(buffer, {
       headers: {
         "Content-Type": "audio/mpeg",
-        "Transfer-Encoding": "chunked",
+        "Content-Length": buffer.byteLength.toString(),
       },
     });
   } catch (err) {

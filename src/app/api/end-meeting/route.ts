@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, duration_ms } = body;
+    const { meeting_id, duration_ms, transcripts, raw_transcript } = body;
 
     if (!meeting_id) {
       return NextResponse.json({ error: "Missing meeting_id" }, { status: 400 });
@@ -18,12 +18,24 @@ export async function POST(request: Request) {
 
     const supabase = await createServerSupabaseClient();
 
+    // 0. Fetch meeting configuration first to get languages
+    const { data: meeting, error: meetingError } = await supabase
+      .from("meetings")
+      .select("target_language, source_language")
+      .eq("id", meeting_id)
+      .single();
+
+    if (meetingError || !meeting) {
+      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
+    }
+
     // 1. Update meeting status to processing
     const { error: updateStatusError } = await supabase
       .from("meetings")
       .update({
         status: "processing",
         duration_ms: duration_ms || 0,
+        raw_transcript: raw_transcript || "",
       })
       .eq("id", meeting_id);
 
@@ -35,23 +47,71 @@ export async function POST(request: Request) {
       .update({ status: "Generating" })
       .eq("meeting_id", meeting_id);
 
-    // 2. Fetch all transcripts
-    const { data: transcripts, error: transcriptsError } = await supabase
-      .from("transcripts")
-      .select("original_text, corrected_text, translated_text, start_ms, speaker_id, speakers(display_name)")
-      .eq("meeting_id", meeting_id)
-      .order("start_ms", { ascending: true });
+    // 2. Fetch or create speakers and insert transcripts
+    const { data: existingSpeakers } = await supabase
+      .from("speakers")
+      .select("id, speaker_tag")
+      .eq("meeting_id", meeting_id);
 
-    if (transcriptsError) throw transcriptsError;
+    const speakerTagToId: Record<string, string> = {};
+    if (existingSpeakers) {
+      existingSpeakers.forEach((s: any) => {
+        speakerTagToId[s.speaker_tag] = s.id;
+      });
+    }
 
-    // 3. Format transcripts into a text log
+    // Create missing speakers in DB
+    const uniqueSpeakerTags = Array.from(
+      new Set((transcripts || []).map((t: any) => t.speakerTag).filter(Boolean))
+    );
+
+    for (const tag of uniqueSpeakerTags as string[]) {
+      if (!speakerTagToId[tag]) {
+        const { data: newSpeaker } = await supabase
+          .from("speakers")
+          .insert({
+            meeting_id,
+            speaker_tag: tag,
+            display_name: tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker "),
+            color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+          })
+          .select()
+          .single();
+        if (newSpeaker) {
+          speakerTagToId[tag] = newSpeaker.id;
+        }
+      }
+    }
+
+    // Insert transcripts to DB
+    const insertRows = (transcripts || []).map((t: any) => ({
+      meeting_id,
+      speaker_id: speakerTagToId[t.speakerTag] || null,
+      original_text: t.text,
+      corrected_text: t.correctedText || t.text,
+      translated_text: t.translatedText,
+      translation_language: meeting.target_language || "vi",
+      translation_provider: "Gemini",
+      start_ms: t.startMs,
+      end_ms: t.endMs,
+      confidence: t.confidence || 1.0,
+    }));
+
+    if (insertRows.length > 0) {
+      const { error: insertError } = await supabase
+        .from("transcripts")
+        .insert(insertRows);
+      if (insertError) throw insertError;
+    }
+
+    // 3. Format transcripts into a text log for summary generation
     let transcriptLog = "";
     if (transcripts && transcripts.length > 0) {
       transcriptLog = transcripts
         .map((t: any) => {
-          const speakerName = t.speakers?.display_name || "Unknown";
-          const timeStr = new Date(t.start_ms).toISOString().substr(14, 5);
-          return `[${timeStr}] ${speakerName}: ${t.corrected_text || t.original_text} (Dịch: ${t.translated_text || "N/A"})`;
+          const speakerName = t.speakerName || "Unknown";
+          const timeStr = new Date(t.startMs).toISOString().substr(14, 5);
+          return `[${timeStr}] ${speakerName}: ${t.correctedText || t.text} (Dịch: ${t.translatedText || "N/A"})`;
         })
         .join("\n");
     } else {

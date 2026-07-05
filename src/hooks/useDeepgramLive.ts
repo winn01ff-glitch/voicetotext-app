@@ -178,18 +178,29 @@ export function useDeepgramLive({
 
     // Build URL options for Deepgram Live API
     const queryParams = new URLSearchParams({
-      model: "nova-2",
+      model: "nova-3",
       smart_format: "true",
+      filler_words: "true",
       interim_results: "true",
-      endpointing: "300", // Stabilize sentence finalization with 300ms pause threshold
-      diarize: "true", // Enable biometric speaker diarization
+      endpointing: "3000",  // 3s pause before finalizing segment
+      diarize: "true",
     });
 
-    if (sourceLanguage !== "auto") {
+    // Language setting — 'multi' reduces accuracy significantly vs specific language
+    if (sourceLanguage && sourceLanguage !== "auto") {
       queryParams.set("language", sourceLanguage);
     } else {
-      // Deepgram live streaming requires `language=multi` for automatic language detection.
       queryParams.set("language", "multi");
+    }
+
+    // Send glossary terms as Deepgram keywords for better recognition accuracy
+    if (glossary && glossary.length > 0) {
+      for (const item of glossary.slice(0, 100)) { // Max 100 keywords
+        const term = typeof item === "string" ? item : (item.term || item.source || item.keyword || "");
+        if (term.trim()) {
+          queryParams.append("keywords", term.trim());
+        }
+      }
     }
 
     const wsUrl = `wss://api.deepgram.com/v1/listen?${queryParams.toString()}`;
@@ -295,7 +306,7 @@ export function useDeepgramLive({
             const words = data.channel.alternatives[0].words || [];
             
             // Calculate predominant speaker tag
-            let speakerTag = "speaker_0";
+            let speakerTag = "speaker_1";
             if (words.length > 0) {
               const speakerCounts: Record<number, number> = {};
               let maxCount = 0;
@@ -310,7 +321,7 @@ export function useDeepgramLive({
                   }
                 }
               }
-              speakerTag = `speaker_${predominantSpeaker}`;
+              speakerTag = `speaker_${predominantSpeaker + 1}`;
             }
 
             let startMs = 0;
@@ -430,6 +441,7 @@ export function useDeepgramLive({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      isIntentionalStop.current = true;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }

@@ -35,13 +35,60 @@ export default function Dashboard() {
   const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
-    { speaker_tag: "speaker_0", display_name: "Tôi", language_code: "vi" },
-    { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
+    { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" },
   ]);
-  const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([
-    { source: "NG", target: "不良", source_language: "en", target_language: "ja" },
-  ]);
+  const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([]);
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
+  const isLoadedRef = useRef(false);
+
+  // Custom Modal state
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: "info" | "confirm" | "success" | "error";
+    onConfirm?: () => void;
+    onCancel?: () => void;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    type: "info",
+  });
+
+  const showCustomAlert = (message: string, type: "success" | "error" | "info" = "info", title: string = "Thông báo") => {
+    return new Promise<void>((resolve) => {
+      setModalConfig({
+        isOpen: true,
+        title,
+        message,
+        type,
+        onConfirm: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve();
+        },
+      });
+    });
+  };
+
+  const showCustomConfirm = (message: string, title: string = "Xác nhận") => {
+    return new Promise<boolean>((resolve) => {
+      setModalConfig({
+        isOpen: true,
+        title,
+        message,
+        type: "confirm",
+        onConfirm: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve(true);
+        },
+        onCancel: () => {
+          setModalConfig((prev) => ({ ...prev, isOpen: false }));
+          resolve(false);
+        },
+      });
+    });
+  };
 
   // Audio configuration
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -83,9 +130,58 @@ export default function Dashboard() {
     const savedDevice = localStorage.getItem("meeting_device_id");
     if (savedDevice !== null) setSelectedDevice(savedDevice);
 
+    // Load saved expected speakers
+    const savedSpeakers = localStorage.getItem("meeting_expected_speakers");
+    if (savedSpeakers !== null) {
+      try {
+        setExpectedSpeakers(JSON.parse(savedSpeakers));
+      } catch (e) {
+        console.error("Failed to parse speakers", e);
+        setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" }]);
+      }
+    } else {
+      setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" }]);
+    }
+
+    // Load saved glossary
+    const savedGlossary = localStorage.getItem("meeting_glossary");
+    if (savedGlossary !== null) {
+      try {
+        setGlossary(JSON.parse(savedGlossary));
+      } catch (e) {
+        console.error("Failed to parse glossary", e);
+        setGlossary([]);
+      }
+    } else {
+      setGlossary([]);
+    }
+
+    isLoadedRef.current = true;
     fetchMeetings();
     checkUnfinishedMeeting();
+
+    // Check if redirecting from another page to create meeting
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("create") === "true") {
+      setShowCreateModal(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    return () => {
+      stopChunkSizeChange();
+    };
   }, []);
+
+  // Save speakers & glossary to cache when updated
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("meeting_expected_speakers", JSON.stringify(expectedSpeakers));
+  }, [expectedSpeakers]);
+
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("meeting_glossary", JSON.stringify(glossary));
+  }, [glossary]);
 
   // Enumerate devices when modal opens
   useEffect(() => {
@@ -100,9 +196,22 @@ export default function Dashboard() {
       // Set default title
       const today = new Date().toISOString().split("T")[0];
       setMeetingTitle(`Cuộc họp ngày ${today}`);
+      setChunkSize(100);
     } else {
       stopMicTest();
     }
+  }, [showCreateModal]);
+
+  // Prevent background scrolling when modal is open
+  useEffect(() => {
+    if (showCreateModal) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [showCreateModal]);
 
   // Handle global search in transcripts
@@ -171,6 +280,10 @@ export default function Dashboard() {
   };
 
   const discardRecovery = () => {
+    if (recoveryMeeting) {
+      localStorage.removeItem(`meeting_transcripts_${recoveryMeeting.id}`);
+      localStorage.removeItem(`meeting_live_transcript_${recoveryMeeting.id}`);
+    }
     localStorage.removeItem("active_meeting_id");
     setRecoveryMeeting(null);
   };
@@ -260,7 +373,8 @@ export default function Dashboard() {
   };
 
   const deleteMeeting = async (id: string) => {
-    if (!confirm("Bạn có chắc chắn muốn xóa cuộc họp này cùng toàn bộ biên bản hội thoại?")) return;
+    const confirmed = await showCustomConfirm("Bạn có chắc chắn muốn xóa cuộc họp này cùng toàn bộ bản chi tiết hội thoại?");
+    if (!confirmed) return;
     try {
       const { error } = await supabase.from("meetings").delete().eq("id", id);
       if (error) throw error;
@@ -332,7 +446,7 @@ export default function Dashboard() {
       draw();
     } catch (err) {
       console.error("Mic test error:", err);
-      alert("Không thể truy cập Microphone để thử nghiệm.");
+      await showCustomAlert("Không thể truy cập Microphone để thử nghiệm.", "error");
       setIsTestingMic(false);
     }
   };
@@ -352,6 +466,53 @@ export default function Dashboard() {
     setMicLevel(0);
   };
 
+  // Long press for Deepgram Chunk size
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isTouchDeviceRef = useRef(false);
+
+  const startChunkSizeChange = (direction: "increment" | "decrement") => {
+    const change = () => {
+      setChunkSize((prev) => {
+        if (direction === "increment") {
+          return Math.min(150, prev + 10);
+        } else {
+          return Math.max(80, prev - 10);
+        }
+      });
+    };
+
+    change();
+
+    timeoutRef.current = setTimeout(() => {
+      intervalRef.current = setInterval(change, 100);
+    }, 400);
+  };
+
+  const stopChunkSizeChange = () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
+
+  const handleChunkSizeKeyDown = (e: React.KeyboardEvent, direction: "increment" | "decrement") => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setChunkSize((prev) => {
+        if (direction === "increment") {
+          return Math.min(150, prev + 10);
+        } else {
+          return Math.max(80, prev - 10);
+        }
+      });
+    }
+  };
+
   // Reset defaults for setup
   const resetSetupDefaults = () => {
     const today = new Date().toISOString().split("T")[0];
@@ -360,12 +521,9 @@ export default function Dashboard() {
     setSourceLanguage("auto");
     setTargetLanguage("vi");
     setExpectedSpeakers([
-      { speaker_tag: "speaker_0", display_name: "Tôi", language_code: "vi" },
-      { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
+      { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "ja" },
     ]);
-    setGlossary([
-      { source: "NG", target: "不良", source_language: "en", target_language: "ja" },
-    ]);
+    setGlossary([]);
     setEchoCancellation(true);
     setNoiseSuppression(true);
     setAutoGainControl(true);
@@ -376,7 +534,7 @@ export default function Dashboard() {
   // Create meeting on database and route to Live Room
   const handleStartMeeting = async () => {
     if (!meetingTitle.trim()) {
-      alert("Vui lòng điền tiêu đề cuộc họp.");
+      await showCustomAlert("Vui lòng điền tiêu đề cuộc họp.", "error");
       return;
     }
 
@@ -400,8 +558,6 @@ export default function Dashboard() {
         throw new Error(data.error || "Gặp lỗi khi tạo cuộc họp");
       }
 
-      // Store active meeting ID for recovery
-      localStorage.setItem("active_meeting_id", data.meeting_id);
       localStorage.setItem("meeting_echo_cancellation", String(echoCancellation));
       localStorage.setItem("meeting_noise_suppression", String(noiseSuppression));
       localStorage.setItem("meeting_auto_gain_control", String(autoGainControl));
@@ -412,16 +568,23 @@ export default function Dashboard() {
       router.push(`/meeting/${data.meeting_id}`);
     } catch (err) {
       console.error("Create meeting error:", err);
-      alert(`Không thể tạo cuộc họp: ${String(err)}`);
+      await showCustomAlert(`Không thể tạo cuộc họp: ${String(err)}`, "error");
     }
   };
 
-  // Add/Remove dynamic speakers
   const addSpeakerField = () => {
-    const nextIdx = expectedSpeakers.length;
+    let maxIdx = 1;
+    expectedSpeakers.forEach((sp) => {
+      const match = sp.speaker_tag.match(/speaker_(\d+)/);
+      if (match) {
+        const num = parseInt(match[1]);
+        if (num > maxIdx) maxIdx = num;
+      }
+    });
+    const nextIdx = maxIdx + 1;
     setExpectedSpeakers([
       ...expectedSpeakers,
-      { speaker_tag: `speaker_${nextIdx}`, display_name: `Speaker ${nextIdx}`, language_code: "auto" },
+      { speaker_tag: `speaker_${nextIdx}`, display_name: `Speaker ${nextIdx}`, language_code: "ja" },
     ]);
   };
 
@@ -468,18 +631,18 @@ export default function Dashboard() {
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans`}>
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+        <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => router.push("/")}>
-            <img src="/logo.png" alt="Logo" className="w-8 h-8 rounded-md shadow-md shadow-indigo-500/10" />
+            <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
             <span className="font-bold text-2xl tracking-tight text-blue-600 dark:text-blue-400">
-              Antigravity Voice
+              NOTE AIPRO
             </span>
           </div>
 
           <div className="flex items-center space-x-4">
             <button
               onClick={toggleTheme}
-              className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+              className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
             >
               {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
@@ -494,7 +657,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-8 space-y-8">
+      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-8 space-y-8">
         {/* RECOVERY POPUP */}
         {recoveryMeeting && (
           <div className="border border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20 p-4 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
@@ -510,13 +673,13 @@ export default function Dashboard() {
             <div className="flex space-x-3 shrink-0">
               <button
                 onClick={discardRecovery}
-                className="px-3 h-9 text-xs font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md transition-colors"
+                className="px-3 h-9 text-xs font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-md transition-colors cursor-pointer"
               >
                 Hủy bỏ nháp
               </button>
               <button
                 onClick={executeRecovery}
-                className="flex items-center space-x-1.5 px-3 h-9 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-md transition-colors shadow-sm"
+                className="flex items-center space-x-1.5 px-3 h-9 text-xs font-medium bg-amber-500 hover:bg-amber-600 text-white rounded-md transition-colors shadow-sm cursor-pointer"
               >
                 <span>Khôi phục họp</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -534,8 +697,17 @@ export default function Dashboard() {
               placeholder="Tìm kiếm nội dung, từ khóa hoặc câu dịch trên tất cả các cuộc họp..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-11 pr-4 h-12 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+              className="w-full pl-11 pr-10 h-12 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
             />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                title="Xóa tìm kiếm"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500">
@@ -566,7 +738,7 @@ export default function Dashboard() {
                   setEndDate("");
                   setIsSearchingGlobally(false);
                 }}
-                className="text-blue-500 hover:text-blue-600 font-medium"
+                className="text-blue-500 hover:text-blue-600 font-medium cursor-pointer"
               >
                 Xóa bộ lọc
               </button>
@@ -630,7 +802,7 @@ export default function Dashboard() {
             <div className="flex border-b border-slate-200 dark:border-slate-800">
               <button
                 onClick={() => setActiveTab("recent")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all ${
+                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
                   activeTab === "recent"
                     ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                     : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -640,7 +812,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setActiveTab("pinned")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all ${
+                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
                   activeTab === "pinned"
                     ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                     : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -650,7 +822,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setActiveTab("favorite")}
-                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all ${
+                className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
                   activeTab === "favorite"
                     ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                     : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -662,7 +834,27 @@ export default function Dashboard() {
 
             {/* LIST */}
             {loading ? (
-              <div className="py-24 text-center text-slate-400">Đang tải cuộc họp...</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="flex flex-col bg-white/50 dark:bg-slate-900/30 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm border border-slate-200/50 dark:border-slate-800/50 p-6 space-y-4 animate-pulse"
+                  >
+                    <div className="flex justify-between items-center">
+                      <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-16" />
+                      <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-16" />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
+                    </div>
+                    <div className="pt-2 flex justify-between items-center border-t border-slate-100 dark:border-slate-800/40">
+                      <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-24" />
+                      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-12" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : filteredMeetings.length === 0 ? (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-24 text-center text-slate-400 rounded-xl">
                 Không có cuộc họp nào được ghi nhận ở mục này.
@@ -693,7 +885,7 @@ export default function Dashboard() {
                         <div className="flex space-x-2 no-print" onClick={(e) => e.stopPropagation()}>
                           <button
                             onClick={() => togglePin(m.id, m.is_pinned)}
-                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors ${
+                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
                               m.is_pinned ? "text-blue-500" : "text-slate-400 hover:text-slate-600"
                             }`}
                           >
@@ -701,7 +893,7 @@ export default function Dashboard() {
                           </button>
                           <button
                             onClick={() => toggleFavorite(m.id, m.is_favorite)}
-                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors ${
+                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
                               m.is_favorite ? "text-amber-500" : "text-slate-400 hover:text-slate-600"
                             }`}
                           >
@@ -722,7 +914,7 @@ export default function Dashboard() {
                       </div>
 
                       <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                        {m.ai_summaries?.executive_summary || "(Biên bản họp chưa được tóm tắt)"}
+                        {m.ai_summaries?.executive_summary || "(Cuộc họp chưa được tóm tắt)"}
                       </p>
                     </div>
 
@@ -735,7 +927,7 @@ export default function Dashboard() {
                           e.stopPropagation();
                           deleteMeeting(m.id);
                         }}
-                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors"
+                        className="text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -750,9 +942,15 @@ export default function Dashboard() {
 
       {/* CREATE MEETING MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-sm">
+        <div 
+          onClick={() => setShowCreateModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-sm"
+        >
           {/* Main Modal Container - Bento Edition */}
-          <div className="max-w-6xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]">
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="max-w-6xl w-full flex flex-col bg-white shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]"
+          >
             
             {/* Header */}
             <header className="flex justify-between items-center px-8 py-5.5 shrink-0 bg-white">
@@ -858,8 +1056,21 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center bg-white/80 rounded-lg border border-blue-100/50 overflow-hidden shadow-sm">
                       <button 
-                        onClick={() => setChunkSize(Math.max(80, chunkSize - 10))}
-                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                        type="button"
+                        onMouseDown={(e) => {
+                          if (isTouchDeviceRef.current) return;
+                          startChunkSizeChange("decrement");
+                        }}
+                        onMouseUp={stopChunkSizeChange}
+                        onMouseLeave={stopChunkSizeChange}
+                        onTouchStart={(e) => {
+                          isTouchDeviceRef.current = true;
+                          e.preventDefault();
+                          startChunkSizeChange("decrement");
+                        }}
+                        onTouchEnd={stopChunkSizeChange}
+                        onKeyDown={(e) => handleChunkSizeKeyDown(e, "decrement")}
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer select-none"
                       >
                         <Minus className="w-4 h-4" />
                       </button>
@@ -872,8 +1083,21 @@ export default function Dashboard() {
                         className="w-10 text-center bg-transparent border-none focus:ring-0 p-0 text-[13px] font-bold text-blue-700 appearance-none outline-none [-moz-appearance:_textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <button 
-                        onClick={() => setChunkSize(Math.min(150, chunkSize + 10))}
-                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                        type="button"
+                        onMouseDown={(e) => {
+                          if (isTouchDeviceRef.current) return;
+                          startChunkSizeChange("increment");
+                        }}
+                        onMouseUp={stopChunkSizeChange}
+                        onMouseLeave={stopChunkSizeChange}
+                        onTouchStart={(e) => {
+                          isTouchDeviceRef.current = true;
+                          e.preventDefault();
+                          startChunkSizeChange("increment");
+                        }}
+                        onTouchEnd={stopChunkSizeChange}
+                        onKeyDown={(e) => handleChunkSizeKeyDown(e, "increment")}
+                        className="w-7 h-8 flex items-center justify-center text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer select-none"
                       >
                         <Plus className="w-4 h-4" />
                       </button>
@@ -1133,6 +1357,79 @@ export default function Dashboard() {
                 </button>
               </div>
             </footer>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM MODAL */}
+      {modalConfig.isOpen && (
+        <div 
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 transition-all duration-300 animate-in fade-in"
+          onClick={() => {
+            if (modalConfig.onCancel) modalConfig.onCancel();
+            else if (modalConfig.onConfirm) modalConfig.onConfirm();
+          }}
+        >
+          <div 
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-md p-6 transform transition-all duration-300 scale-in select-none text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div className="flex items-center space-x-2">
+                {modalConfig.type === "success" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                    <Check className="w-4 h-4" />
+                  </span>
+                )}
+                {modalConfig.type === "error" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">
+                    <span className="font-bold text-sm">!</span>
+                  </span>
+                )}
+                {modalConfig.type === "confirm" && (
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
+                    <span className="font-bold text-sm">?</span>
+                  </span>
+                )}
+                <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">{modalConfig.title}</h3>
+              </div>
+              <button 
+                onClick={modalConfig.onCancel || modalConfig.onConfirm}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-6 whitespace-pre-wrap">
+              {modalConfig.message}
+            </p>
+
+            <div className="flex justify-end space-x-3">
+              {modalConfig.type === "confirm" ? (
+                <>
+                  <button
+                    onClick={modalConfig.onCancel}
+                    className="px-4 py-2 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850 rounded-lg text-sm font-semibold text-slate-600 dark:text-slate-350 transition-colors cursor-pointer"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    onClick={modalConfig.onConfirm}
+                    className="px-4 py-2 bg-[#005bbf] hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                  >
+                    Xác nhận
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={modalConfig.onConfirm}
+                  className="px-4 py-2 bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:bg-slate-800 dark:hover:bg-slate-200 rounded-lg text-sm font-semibold transition-colors cursor-pointer"
+                >
+                  OK
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}

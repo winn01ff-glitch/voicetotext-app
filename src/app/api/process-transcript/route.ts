@@ -35,6 +35,12 @@ export async function POST(request: Request) {
       .select("source, target, source_language, target_language")
       .eq("meeting_id", meeting_id);
 
+    // 2.5. Fetch all registered speakers for this meeting to map tags correctly
+    const { data: allSpeakers } = await supabase
+      .from("speakers")
+      .select("speaker_tag, display_name, language_code")
+      .eq("meeting_id", meeting_id);
+
     // 3. Resolve Speaker ID
     let speakerId = null;
     let resolvedSpeaker = null;
@@ -69,7 +75,7 @@ export async function POST(request: Request) {
     // 4. Fetch the last 3 transcripts to use as context for boundary alignment and merging
     const { data: recentTxs } = await supabase
       .from("transcripts")
-      .select("id, original_text, corrected_text, translated_text, start_ms, end_ms, speaker_id, speakers(speaker_tag, display_name)")
+      .select("id, original_text, corrected_text, translated_text, start_ms, end_ms, speaker_id, confidence, speakers(speaker_tag, display_name)")
       .eq("meeting_id", meeting_id)
       .order("start_ms", { ascending: false })
       .limit(3);
@@ -89,50 +95,47 @@ export async function POST(request: Request) {
     const context = meeting.meeting_context;
 
     const timeGap = history.length > 0 ? (start_ms - history[history.length - 1].end_ms) : 0;
-
     const systemPrompt = `
-You are an expert dialogue editor and translator. Your job is to process a new raw speech transcript segment in a live conversation, correct any transcription or speaker diarization boundary errors using the recent conversation history, split it into dialogue turns if multiple speakers spoke, and translate the text.
+You are a fast, lightweight conversation analyzer specializing in Japanese dialogue segmentation and translation.
 
-CONVERSATION HISTORY (Chronological order):
+Task:
+1. Split the raw Japanese segment into natural turns by speaker change. Never merge different speakers.
+2. Map each turn to the correct "speaker_tag" from the REGISTERED SPEAKERS.
+3. Keep the original text identical to the raw text, but you MAY correct obvious spelling/typos/wrong kanji in "corrected_text".
+   CRITICAL: Do NOT add, remove, or paraphrase any words. Do NOT add vocabulary that was never spoken. Preserve all filler words (e.g. えー, あの, まあ, うーん).
+4. Translate each turn into "${targetLang}".
+
+==================================================
+CONTEXT & DATA
+==================================================
+REGISTERED SPEAKERS:
+${JSON.stringify(allSpeakers || [])}
+
+CONVERSATION CONTEXT (Last few segments):
 ${JSON.stringify(historyContext)}
 
-NEW SEGMENT TO PROCESS:
-- Raw Speaker Tag: "${speaker_tag}" (Temporary Name: "${resolvedSpeaker?.display_name || "Unknown"}")
-- Raw Text: "${original_text}"
-- Time Gap since last segment: ${history.length > 0 ? timeGap : "N/A"} ms
-
-CONTEXT OF THE MEETING:
-${context || "General business/technical discussion"}
-
-GLOSSARY (Must apply if matching words are found):
+GLOSSARY (If matched, use these translations):
 ${JSON.stringify(glossaryList || [])}
 
-TASK:
-1. DIARIZATION/BOUNDARY CORRECTION:
-   Compare the last sentence in the history and the new raw text.
-   Identify if the new text starts with a word, syllable, or particle (e.g. Japanese question particle "か", "ね", "です", or Vietnamese endings "không", "à", "nhỉ") that actually belongs to the end of the previous speaker's sentence.
-   - If yes: Move it back to the end of the previous speaker's sentence. Record this in "corrected_previous_text" and translate it.
+INPUT RAW SEGMENT TO PROCESS:
+- Raw Speaker Tag: "${speaker_tag}" (Temporary Name: "${resolvedSpeaker?.display_name || "Unknown"}")
+- Raw Text: "${original_text}"
 
-2. SPLITTING INTO BLOCKS:
-   Analyze the new raw text.
-   - If the new raw text contains speech from multiple speakers (e.g. Person A asks a question and Person B answers immediately in the same text block), you MUST split the new raw text into separate chronological dialogue turns in the "blocks" array.
-   - If the new raw text is spoken entirely by one speaker, "blocks" should contain exactly one item.
-   - Assign the correct "speaker_tag" (e.g. speaker_0 or speaker_1) to each block.
+==================================================
+OUTPUT FORMAT
+==================================================
+Return VALID JSON ONLY. No markdown, no explanation.
 
-3. TRANSLATION:
-   - Translate each block's text into "${targetLang}" contextually and naturally (store in "translated_text").
-
-OUTPUT FORMAT:
-Return a valid JSON object ONLY. Do not write any markdown code fences, do not write explanations.
-JSON format must be exactly:
+Schema:
 {
   "corrected_previous_text": "updated previous original text (only if trailing words of previous speaker were moved back, otherwise empty string)",
   "corrected_previous_translation": "translation of corrected_previous_text (only if corrected_previous_text is updated, otherwise empty string)",
   "blocks": [
     {
-      "speaker_tag": "the correct speaker tag (e.g. speaker_0 or speaker_1)",
-      "text": "cleaned original text for this dialogue turn",
-      "translated_text": "translation of this turn into ${targetLang}"
+      "speaker_tag": "correct speaker tag (e.g. speaker_0 or speaker_1, MUST exactly match registered tags)",
+      "raw_text": "original raw transcript",
+      "corrected_text": "corrected Japanese text (ONLY fix obvious typos/Kanji, DO NOT rewrite or paraphrase)",
+      "translated_text": "translated text into ${targetLang}"
     }
   ]
 }
@@ -186,6 +189,7 @@ JSON format must be exactly:
 
     for (let i = 0; i < aiBlocks.length; i++) {
       const block = aiBlocks[i];
+      block.text = block.corrected_text || block.raw_text || block.text || "";
       const blockSpeakerTag = block.speaker_tag || speaker_tag;
       
       // Resolve speaker ID

@@ -13,13 +13,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Antigravity Voice - Trợ lý Họp Đa Ngôn Ngữ",
-  description: "Dịch thuật thời gian thực, chuyển giọng nói thành văn bản, phân biệt người nói và tóm tắt cuộc họp thông minh bằng Gemini 3.5 Pro.",
+  title: "NOTE AIPRO - Trợ lý Họp Đa Ngôn Ngữ",
+  description: "Dịch thuật thời gian thực, chuyển giọng nói thành văn bản, phân biệt người nói và tóm tắt cuộc họp thông minh bằng Trợ lý AI.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Antigravity Voice",
+    title: "NOTE AIPRO",
   },
 };
 

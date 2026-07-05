@@ -166,7 +166,7 @@ export function exportToPdf(
 
   html += `
     <div class="page-break"></div>
-    <h2>IV. BIÊN BẢN CHI TIẾT CUỘC HỌP</h2>
+    <h2>IV. BẢN CHI TIẾT CUỘC HỌP</h2>
     <table>
       <thead>
         <tr>

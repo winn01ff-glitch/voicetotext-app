@@ -47,7 +47,7 @@ export async function exportToDocx(
       alignment: AlignmentType.CENTER,
       children: [
         new TextRun({
-          text: "BIÊN BẢN HỌP ĐA NGÔN NGỮ",
+          text: "BẢN CHI TIẾT HỌP ĐA NGÔN NGỮ",
           bold: true,
           size: 32,
           color: "1E3A8A",
@@ -326,7 +326,7 @@ export async function exportToDocx(
       heading: HeadingLevel.HEADING_1,
       children: [
         new TextRun({
-          text: "IV. Biên Bản Chi Tiết Cuộc Họp",
+          text: "IV. Bản Chi Tiết Cuộc Họp",
           bold: true,
           color: "1E3A8A",
           font: "Geist Sans",
