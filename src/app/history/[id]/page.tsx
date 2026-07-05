@@ -1167,105 +1167,82 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
             </div>
 
-            {/* Main Tab Switcher */}
-            <div className="relative flex w-full p-0.5 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-lg shadow-inner select-none overflow-hidden">
-              <div
-                className="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
-                style={{
-                  width: "calc(50% - 2px)",
-                  transform: mainTab === "raw" ? "translateX(100%)" : "translateX(0%)",
-                }}
-              />
-              <button
-                onClick={() => setMainTab("processed")}
-                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                  mainTab === "processed"
-                    ? "text-white dark:text-slate-900"
-                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                }`}
-              >
-                <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                <span>Hội thoại đã xử lý</span>
-              </button>
-              <button
-                onClick={() => setMainTab("raw")}
-                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                  mainTab === "raw"
-                    ? "text-white dark:text-slate-900"
-                    : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5 shrink-0" />
-                <span>Hội thoại gốc</span>
-              </button>
+            {/* Unified 4-Tab Switcher (Underline style, grouped) */}
+            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 select-none pb-px">
+              {(() => {
+                const activeIndex = mainTab === "processed"
+                  ? (subTabProcessed === "summary" ? 0 : 1)
+                  : (subTabRaw === "summary" ? 2 : 3);
+                
+                const isRaw = activeIndex >= 2;
+                const indicatorBg = isRaw ? "bg-indigo-600 dark:bg-indigo-400" : "bg-blue-600 dark:bg-blue-400";
+                
+                return (
+                  <>
+                    <div
+                      className={`absolute bottom-0 h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
+                      style={{
+                        width: "25%",
+                        transform: `translateX(${activeIndex * 100}%)`,
+                      }}
+                    />
+                    
+                    <button
+                      onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                        activeIndex === 0
+                          ? "text-blue-600 dark:text-blue-400"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                      <span className="hidden sm:inline">Tóm tắt &amp; Hành động</span>
+                      <span className="sm:hidden">Tóm tắt</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
+                        activeIndex === 1
+                          ? "text-blue-600 dark:text-blue-400"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                      <span>Bản chi tiết ({filteredTranscripts.length})</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                        activeIndex === 2
+                          ? "text-indigo-600 dark:text-indigo-400"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                      <span>Hội thoại gốc</span>
+                    </button>
+                    
+                    <button
+                      onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 text-xs font-bold transition-colors duration-200 cursor-pointer ${
+                        activeIndex === 3
+                          ? "text-indigo-600 dark:text-indigo-400"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                      <span>Bản chi tiết gốc ({filteredReprocessedTranscripts.length})</span>
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
 
           {/* MAIN CONTENT AREA */}
           <div className="w-full space-y-6 text-left">
-            {/* SUB-TABS SELECT CARD */}
-            <div className="relative flex w-full p-0.5 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-lg shadow-inner mb-4 select-none overflow-hidden">
-              {/* Sliding Background Indicator */}
-              <div
-                className="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
-                style={{
-                  width: "calc(50% - 2px)",
-                  transform:
-                    (mainTab === "processed"
-                      ? subTabProcessed === "transcript"
-                      : subTabRaw === "transcript")
-                      ? "translateX(100%)"
-                      : "translateX(0%)",
-                }}
-              />
-              {mainTab === "processed" ? (
-                <>
-                  <button
-                    onClick={() => setSubTabProcessed("summary")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                      subTabProcessed === "summary"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    Tóm tắt &amp; Hành động (AI)
-                  </button>
-                  <button
-                    onClick={() => setSubTabProcessed("transcript")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                      subTabProcessed === "transcript"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    Bản chi tiết ({filteredTranscripts.length})
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    onClick={() => setSubTabRaw("summary")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                      subTabRaw === "summary"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    Tóm tắt &amp; Hành động (AI)
-                  </button>
-                  <button
-                    onClick={() => setSubTabRaw("transcript")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
-                      subTabRaw === "transcript"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                    }`}
-                  >
-                    Bản chi tiết ({filteredReprocessedTranscripts.length})
-                  </button>
-                </>
-              )}
-            </div>
 
         {/* MAIN TAB CONTENT CONTAINER */}
         {mainTab === "processed" ? (
