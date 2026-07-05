@@ -2393,7 +2393,7 @@ export default function Dashboard() {
         @keyframes toast-in {
           0% {
             opacity: 0;
-            transform: translateY(-20px) scale(0.96);
+            transform: translateY(-20px) scale(0.85);
           }
           100% {
             opacity: 1;
@@ -2407,11 +2407,11 @@ export default function Dashboard() {
           }
           100% {
             opacity: 0;
-            transform: translateY(-20px) scale(0.96);
+            transform: translateY(-20px) scale(0.85);
           }
         }
         .animate-toast-in {
-          animation: toast-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          animation: toast-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
         }
         .animate-toast-out {
           animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
