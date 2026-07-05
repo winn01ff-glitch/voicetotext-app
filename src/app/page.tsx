@@ -759,9 +759,7 @@ export default function Dashboard() {
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
-    setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day} - ${hours}:${minutes}`);
+    setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day}`);
     setMeetingContext("general");
     setSourceLanguage("auto");
     setTargetLanguage("vi");
@@ -2092,7 +2090,7 @@ export default function Dashboard() {
                   <div className="flex flex-col gap-1.5 flex-1 min-h-0">
                     <div className="flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-2 flex-1">
                       {expectedSpeakers.map((sp, idx) => (
-                        <div key={idx} className={`flex items-center gap-3 bg-white/80 dark:bg-slate-950/60 py-[5.5px] px-1.5 pr-9 rounded-lg border border-white dark:border-slate-800/60 shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
+                        <div key={idx} className={`flex items-center gap-3 bg-white/80 dark:bg-slate-950/60 py-[4px] px-1.5 pr-9 rounded-lg border border-white dark:border-slate-800/60 shadow-sm relative group transition-all ${openSpeakerDropdown === idx ? 'z-30 shadow-md border-purple-200' : 'z-0'}`}>
                           <div className={`w-7 h-7 rounded-md font-extrabold flex items-center justify-center text-[11px] shrink-0 ${idx === 0 ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400'}`}>
                             {idx + 1}
                           </div>
@@ -2116,7 +2114,11 @@ export default function Dashboard() {
                               {openSpeakerDropdown === idx && (
                                 <>
                                   <div className="fixed inset-0 z-40 cursor-default" onClick={() => setOpenSpeakerDropdown(null)} />
-                                  <div className="absolute right-0 mt-2 w-28 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-lg z-50 py-0.5 overflow-hidden animate-in fade-in slide-in-from-top-1 duration-150">
+                                  <div className={`absolute right-0 w-28 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-lg z-50 py-0.5 overflow-hidden animate-in fade-in duration-150 ${
+                                    idx >= 2 
+                                      ? 'bottom-full mb-2 origin-bottom slide-in-from-bottom-1' 
+                                      : 'top-full mt-2 origin-top slide-in-from-top-1'
+                                  }`}>
                                     {[
                                       { code: 'auto', label: 'AUTO' },
                                       { code: 'vi', label: 'TIẾNG VIỆT' },
@@ -2151,7 +2153,7 @@ export default function Dashboard() {
                       ))}
                       <div 
                         onClick={addSpeakerField}
-                        className="flex items-center gap-3 bg-white/50 dark:bg-slate-950/30 py-[5.5px] px-1.5 pr-3 rounded-lg border border-white/50 dark:border-slate-800/30 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
+                        className="flex items-center gap-3 bg-white/50 dark:bg-slate-950/30 py-[4px] px-1.5 pr-3 rounded-lg border border-white/50 dark:border-slate-800/30 shadow-sm opacity-60 cursor-pointer hover:opacity-100 transition-opacity"
                       >
                         <div className="w-7 h-7 rounded-md bg-slate-100 dark:bg-slate-900 text-slate-500 dark:text-slate-450 font-extrabold flex items-center justify-center text-[11px] shrink-0">
                           <Plus className="w-3 h-3" />
