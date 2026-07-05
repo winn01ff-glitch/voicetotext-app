@@ -27,7 +27,11 @@ body {
 }
 
 /* Cursor overrides: default pointer everywhere except inputs (text cursor) and clickable elements (hand cursor) */
-html, body {
+html {
+  cursor: default;
+  scrollbar-gutter: stable;
+}
+body {
   cursor: default;
 }
 input, textarea, [contenteditable="true"], [type="text"], [type="search"], [type="url"], [type="email"], [type="number"], [type="password"] {
