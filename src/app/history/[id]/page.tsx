@@ -10,7 +10,7 @@ import { exportToPdf } from "@/lib/pdf-helper";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Moon, Sun, Plus, Sparkles, ChevronDown
+  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown
 } from "lucide-react";
 
 interface HistoryDetailProps {
@@ -901,7 +901,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     );
   };
 
-  const playTts = (id: string, text: string) => {
+  const playTts = (id: string, text: string, isOriginal: boolean = false) => {
     if (!text) return;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       if (activeSpeech && activeSpeech.id === id) {
@@ -913,13 +913,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       
-      const voice = voices.find((v) => v.name === selectedVoice);
-      if (voice) {
-        utterance.voice = voice;
-        utterance.lang = voice.lang;
+      if (isOriginal) {
+        const srcLang = meeting?.source_language || "ja";
+        utterance.lang = srcLang === "ja" ? "ja-JP" : srcLang === "vi" ? "vi-VN" : "en-US";
       } else {
-        const targetLang = meeting?.target_language || "vi";
-        utterance.lang = targetLang === "vi" ? "vi-VN" : targetLang === "ja" ? "ja-JP" : "en-US";
+        const voice = voices.find((v) => v.name === selectedVoice);
+        if (voice) {
+          utterance.voice = voice;
+          utterance.lang = voice.lang;
+        } else {
+          const targetLang = meeting?.target_language || "vi";
+          utterance.lang = targetLang === "vi" ? "vi-VN" : targetLang === "ja" ? "ja-JP" : "en-US";
+        }
       }
 
       utterance.onstart = () => {
@@ -1630,11 +1635,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
                           </div>
                           <div className="flex items-center gap-0.5">
-                            {t.translatedText && (
-                              <button onClick={() => playTts(t.id, t.translatedText)} className={`p-1.5 rounded transition-colors cursor-pointer ${activeSpeech?.id === t.id ? "text-red-500 bg-red-50 animate-pulse" : "text-slate-400 hover:text-blue-600 hover:bg-blue-50"}`} title="Nghe">
-                                {activeSpeech?.id === t.id ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                              </button>
-                            )}
                             <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
                               <Sparkles className="w-3.5 h-3.5" />
                             </button>
@@ -1655,21 +1655,97 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-start justify-between gap-2">
-                              <p className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold leading-relaxed flex-1 ${needsReview ? "bg-amber-50/50 text-amber-800 px-1.5 py-[1px] rounded border border-dashed border-amber-250 inline" : ""}`}>
+                            <div 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                              }}
+                              className="group/cell leading-relaxed cursor-pointer"
+                            >
+                              <span className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 text-amber-800 px-1.5 py-[1px] rounded border border-dashed border-amber-250 inline" : ""}`}>
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
-                              </p>
-                              <button onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
-                                {copiedKey === `tx_orig_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                              </button>
+                              </span>
+                              <span 
+                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                  activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                }`}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playTts(t.id, t.correctedText || t.originalText, true);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                >
+                                  {activeSpeech?.id === t.id ? (
+                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
+                                  ) : (
+                                    <Volume2 className="w-3 h-3" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  title="Sao chép gốc"
+                                >
+                                  {copiedKey === `tx_orig_${t.id}` ? (
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </span>
                             </div>
                           )}
                           {t.translatedText && (
-                            <div className="flex items-start justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/50">
-                              <p className="text-[13px] text-slate-500 dark:text-slate-400 italic leading-relaxed flex-1">{highlightText(t.translatedText, searchQuery)}</p>
-                              <button onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
-                                {copiedKey === `tx_trans_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                              </button>
+                            <div 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                              }}
+                              className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
+                            >
+                              <span className="text-[13px] text-slate-500 dark:text-slate-400 italic">
+                                {highlightText(t.translatedText, searchQuery)}
+                              </span>
+                              <span 
+                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                  activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                }`}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playTts(t.id, t.translatedText, false);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                >
+                                  {activeSpeech?.id === t.id ? (
+                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
+                                  ) : (
+                                    <Volume2 className="w-3 h-3" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(t.translatedText, `tx_trans_${t.id}`);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  title="Sao chép bản dịch"
+                                >
+                                  {copiedKey === `tx_trans_${t.id}` ? (
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1761,84 +1837,107 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               ) : (
                                 <div 
                                   onClick={(e) => {
-                                    if (isTouchDevice) {
-                                      e.stopPropagation();
-                                      setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                    }
+                                    e.stopPropagation();
+                                    setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
                                   }}
-                                  className="group/cell flex items-start gap-2 justify-between"
+                                  className="group/cell leading-relaxed cursor-pointer"
                                 >
-                                  <div className="space-y-1 flex-1">
-                                    <p className={`text-slate-900 dark:text-slate-100 font-semibold leading-relaxed ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
-                                      {highlightText(t.correctedText || t.originalText, searchQuery)}
-                                    </p>
-                                    {t.isEdited && (
-                                      <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1">
-                                        Đã sửa tay
-                                      </span>
-                                    )}
-                                  </div>
-                                  <button
-                                    onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)}
-                                    className={`p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-all cursor-pointer shrink-0 mt-0.5 ${activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'}`}
-                                    title="Sao chép gốc"
+                                  <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
+                                    {highlightText(t.correctedText || t.originalText, searchQuery)}
+                                  </span>
+                                  {t.isEdited && (
+                                    <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
+                                      Đã sửa tay
+                                    </span>
+                                  )}
+                                  <span 
+                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                      activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    }`}
                                   >
-                                    {copiedKey === `tx_orig_${t.id}` ? (
-                                      <Check className="w-3.5 h-3.5 text-green-500" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        playTts(t.id, t.correctedText || t.originalText, true);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                    >
+                                      {activeSpeech?.id === t.id ? (
+                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                      ) : (
+                                        <Volume2 className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      title="Sao chép gốc"
+                                    >
+                                      {copiedKey === `tx_orig_${t.id}` ? (
+                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </span>
                                 </div>
                               )}
                             </td>
                             <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed">
-                              <div 
-                                onClick={(e) => {
-                                  if (isTouchDevice) {
+                              {t.translatedText && (
+                                <div 
+                                  onClick={(e) => {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                  }
-                                }}
-                                className="group/cell flex items-start gap-2 justify-between"
-                              >
-                                <span className="flex-1">
-                                  {highlightText(t.translatedText || "", searchQuery)}
-                                </span>
-                                {t.translatedText && (
-                                  <button
-                                    onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)}
-                                    className={`p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-all cursor-pointer shrink-0 mt-0.5 ${activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'}`}
-                                    title="Sao chép bản dịch"
+                                  }}
+                                  className="group/cell leading-relaxed cursor-pointer"
+                                >
+                                  <span>
+                                    {highlightText(t.translatedText, searchQuery)}
+                                  </span>
+                                  <span 
+                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                      activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    }`}
                                   >
-                                    {copiedKey === `tx_trans_${t.id}` ? (
-                                      <Check className="w-3.5 h-3.5 text-green-500" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
-                                )}
-                              </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        playTts(t.id, t.translatedText, false);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                    >
+                                      {activeSpeech?.id === t.id ? (
+                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                      ) : (
+                                        <Volume2 className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyText(t.translatedText, `tx_trans_${t.id}`);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      title="Sao chép bản dịch"
+                                    >
+                                      {copiedKey === `tx_trans_${t.id}` ? (
+                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </span>
+                                </div>
+                              )}
                             </td>
                             <td className="py-4 px-4 align-top text-center">
                               <div className="flex items-center justify-center space-x-1.5">
-                                {t.translatedText && (
-                                  <button
-                                    onClick={() => playTts(t.id, t.translatedText)}
-                                    className={`p-1 rounded transition-colors cursor-pointer ${
-                                      activeSpeech?.id === t.id
-                                        ? "text-red-500 bg-red-50 dark:bg-red-950/30 dark:text-red-400 animate-pulse"
-                                        : "text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30"
-                                    }`}
-                                    title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe giọng dịch"}
-                                  >
-                                    {activeSpeech?.id === t.id ? (
-                                      <Square className="w-4 h-4 fill-current" />
-                                    ) : (
-                                      <Play className="w-4 h-4 fill-current" />
-                                    )}
-                                  </button>
-                                )}
                                 <button
                                   onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")}
                                   className={`p-1 rounded transition-colors cursor-pointer ${
@@ -2398,11 +2497,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
                           </div>
                           <div className="flex items-center gap-0.5">
-                            {t.translatedText && (
-                              <button onClick={() => playTts(t.id, t.translatedText)} className={`p-1.5 rounded transition-colors cursor-pointer ${activeSpeech?.id === t.id ? "text-red-500 bg-red-50 animate-pulse" : "text-slate-400 hover:text-blue-600 hover:bg-blue-50"}`} title="Nghe">
-                                {activeSpeech?.id === t.id ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
-                              </button>
-                            )}
                             <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
                               <Sparkles className="w-3.5 h-3.5" />
                             </button>
@@ -2422,19 +2516,97 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               </button>
                             </div>
                           ) : (
-                            <div className="flex items-start justify-between gap-2">
-                              <p className="text-[13px] text-slate-900 dark:text-slate-100 font-semibold leading-relaxed flex-1">{highlightText(t.correctedText || t.originalText, searchQuery)}</p>
-                              <button onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
-                                {copiedKey === `tx_orig_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                              </button>
+                            <div 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                              }}
+                              className="group/cell leading-relaxed cursor-pointer"
+                            >
+                              <span className="text-[13px] text-slate-900 dark:text-slate-100 font-semibold">
+                                {highlightText(t.correctedText || t.originalText, searchQuery)}
+                              </span>
+                              <span 
+                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                  activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                }`}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playTts(t.id, t.correctedText || t.originalText, true);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                >
+                                  {activeSpeech?.id === t.id ? (
+                                    <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                  ) : (
+                                    <Volume2 className="w-3 h-3" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  title="Sao chép gốc"
+                                >
+                                  {copiedKey === `tx_orig_${t.id}` ? (
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </span>
                             </div>
                           )}
                           {t.translatedText && (
-                            <div className="flex items-start justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/50">
-                              <p className="text-[13px] text-slate-500 dark:text-slate-400 italic leading-relaxed flex-1">{highlightText(t.translatedText, searchQuery)}</p>
-                              <button onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
-                                {copiedKey === `tx_trans_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                              </button>
+                            <div 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                              }}
+                              className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
+                            >
+                              <span className="text-[13px] text-slate-500 dark:text-slate-400 italic">
+                                {highlightText(t.translatedText, searchQuery)}
+                              </span>
+                              <span 
+                                className={`inline-flex items-center ml-2 space-x-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                  activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                }`}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    playTts(t.id, t.translatedText, false);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                >
+                                  {activeSpeech?.id === t.id ? (
+                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
+                                  ) : (
+                                    <Volume2 className="w-3 h-3" />
+                                  )}
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyText(t.translatedText, `tx_trans_${t.id}`);
+                                  }}
+                                  className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                  title="Sao chép bản dịch"
+                                >
+                                  {copiedKey === `tx_trans_${t.id}` ? (
+                                    <Check className="w-3 h-3 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-3 h-3" />
+                                  )}
+                                </button>
+                              </span>
                             </div>
                           )}
                         </div>
@@ -2521,84 +2693,107 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               ) : (
                                 <div 
                                   onClick={(e) => {
-                                    if (isTouchDevice) {
-                                      e.stopPropagation();
-                                      setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                    }
+                                    e.stopPropagation();
+                                    setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
                                   }}
-                                  className="group/cell flex items-start gap-2 justify-between"
+                                  className="group/cell leading-relaxed cursor-pointer"
                                 >
-                                  <div className="space-y-1 flex-1">
-                                    <p className="text-slate-900 dark:text-slate-100 font-semibold leading-relaxed">
-                                      {highlightText(t.correctedText || t.originalText, searchQuery)}
-                                    </p>
-                                    {t.isEdited && (
-                                      <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1">
-                                        Đã sửa tay
-                                      </span>
-                                    )}
-                                  </div>
-                                  <button
-                                    onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)}
-                                    className={`p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-all cursor-pointer shrink-0 mt-0.5 ${activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'}`}
-                                    title="Sao chép gốc"
+                                  <span className="text-slate-900 dark:text-slate-100 font-semibold">
+                                    {highlightText(t.correctedText || t.originalText, searchQuery)}
+                                  </span>
+                                  {t.isEdited && (
+                                    <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
+                                      Đã sửa tay
+                                    </span>
+                                  )}
+                                  <span 
+                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                      activeTouchKey === `tx_orig_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    }`}
                                   >
-                                    {copiedKey === `tx_orig_${t.id}` ? (
-                                      <Check className="w-3.5 h-3.5 text-green-500" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        playTts(t.id, t.correctedText || t.originalText, true);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                    >
+                                      {activeSpeech?.id === t.id ? (
+                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                      ) : (
+                                        <Volume2 className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      title="Sao chép gốc"
+                                    >
+                                      {copiedKey === `tx_orig_${t.id}` ? (
+                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </span>
                                 </div>
                               )}
                             </td>
                             <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed">
-                              <div 
-                                onClick={(e) => {
-                                  if (isTouchDevice) {
+                              {t.translatedText && (
+                                <div 
+                                  onClick={(e) => {
                                     e.stopPropagation();
                                     setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                  }
-                                }}
-                                className="group/cell flex items-start gap-2 justify-between"
-                              >
-                                <span className="flex-1">
-                                  {highlightText(t.translatedText || "", searchQuery)}
-                                </span>
-                                {t.translatedText && (
-                                  <button
-                                    onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)}
-                                    className={`p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-all cursor-pointer shrink-0 mt-0.5 ${activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'}`}
-                                    title="Sao chép bản dịch"
+                                  }}
+                                  className="group/cell leading-relaxed cursor-pointer"
+                                >
+                                  <span>
+                                    {highlightText(t.translatedText, searchQuery)}
+                                  </span>
+                                  <span 
+                                    className={`inline-flex items-center ml-2 space-x-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-1.5 py-0.5 rounded shadow-sm transition-opacity duration-200 align-middle select-none ${
+                                      activeTouchKey === `tx_trans_${t.id}` ? 'opacity-100' : 'opacity-0 group-hover/cell:opacity-100'
+                                    }`}
                                   >
-                                    {copiedKey === `tx_trans_${t.id}` ? (
-                                      <Check className="w-3.5 h-3.5 text-green-500" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
-                                )}
-                              </div>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        playTts(t.id, t.translatedText, false);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors"
+                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                    >
+                                      {activeSpeech?.id === t.id ? (
+                                        <VolumeX className="w-3.5 h-3.5 text-red-500 animate-pulse" />
+                                      ) : (
+                                        <Volume2 className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleCopyText(t.translatedText, `tx_trans_${t.id}`);
+                                      }}
+                                      className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 rounded transition-all cursor-pointer"
+                                      title="Sao chép bản dịch"
+                                    >
+                                      {copiedKey === `tx_trans_${t.id}` ? (
+                                        <Check className="w-3.5 h-3.5 text-green-500" />
+                                      ) : (
+                                        <Copy className="w-3.5 h-3.5" />
+                                      )}
+                                    </button>
+                                  </span>
+                                </div>
+                              )}
                             </td>
                             <td className="py-4 px-4 align-top text-center">
                               <div className="flex items-center justify-center space-x-1.5">
-                                {t.translatedText && (
-                                  <button
-                                    onClick={() => playTts(t.id, t.translatedText)}
-                                    className={`p-1 rounded transition-colors cursor-pointer ${
-                                      activeSpeech?.id === t.id
-                                        ? "text-red-500 bg-red-50 dark:bg-red-950/30 dark:text-red-400 animate-pulse"
-                                        : "text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30"
-                                    }`}
-                                    title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe giọng dịch"}
-                                  >
-                                    {activeSpeech?.id === t.id ? (
-                                      <Square className="w-4 h-4 fill-current" />
-                                    ) : (
-                                      <Play className="w-4 h-4 fill-current" />
-                                    )}
-                                  </button>
-                                )}
                                 <button
                                   onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")}
                                   className={`p-1 rounded transition-colors cursor-pointer ${
