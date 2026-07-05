@@ -1160,6 +1160,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   ? "bg-gradient-to-r from-emerald-500 to-teal-600 dark:from-emerald-400 dark:to-teal-500" 
                   : "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500";
                 
+                const dividerColor = isRaw
+                  ? "border-r-emerald-500/60 dark:border-r-emerald-600/40"
+                  : "border-r-blue-400/80 dark:border-r-blue-600/50";
+                
                 return (
                   <>
                     {/* Desktop-only sliding underline indicator */}
@@ -1171,12 +1175,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       }}
                     />
                     
+                    {/* Mobile-only 2D sliding underline indicator */}
+                    <div
+                      className={`lg:hidden absolute h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
+                      style={{
+                        width: "50%",
+                        top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 2px)" : "calc(100% - 2px)",
+                        transform: `translateX(${(activeIndex === 0 || activeIndex === 1) ? 0 : 100}%)`,
+                      }}
+                    />
+                    
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 border-blue-200/60 dark:border-blue-800/40 lg:border-r-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 ${dividerColor} lg:border-r-0 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 0
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 border-b-2 border-blue-600 dark:border-blue-450 lg:border-b-0"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 border-b-2 border-slate-200/50 dark:border-slate-800/40 lg:border-b-0"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
@@ -1186,10 +1200,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-blue-200/60 dark:border-blue-800/40 lg:border-blue-400/80 dark:lg:border-blue-600/60 whitespace-nowrap order-3 lg:order-2 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 ${dividerColor} lg:border-r-blue-400/80 dark:lg:border-r-blue-600/60 whitespace-nowrap order-3 lg:order-2 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 1
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 border-b-2 border-blue-600 dark:border-blue-450 lg:border-b-0"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 border-b-2 border-slate-200/50 dark:border-slate-800/40 lg:border-b-0"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
@@ -1198,10 +1212,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 lg:order-3 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 lg:order-3 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 2
-                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5 border-b-2 border-emerald-600 dark:border-emerald-450 lg:border-b-0"
-                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300 border-b-2 border-slate-200/50 dark:border-slate-800/40 lg:border-b-0"
+                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
+                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
@@ -1210,10 +1224,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 lg:order-4 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 lg:order-4 border-b-2 border-slate-200/50 dark:border-slate-800/40 ${
                         activeIndex === 3
-                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5 border-b-2 border-emerald-600 dark:border-emerald-450 lg:border-b-0"
-                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300 border-b-2 border-slate-200/50 dark:border-slate-800/40 lg:border-b-0"
+                          ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
+                          : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
                       }`}
                     >
                       <FileText className="w-3.5 h-3.5 shrink-0" />
