@@ -71,19 +71,18 @@ export default function Dashboard() {
     message: "",
     type: "info",
   });
+  type Toast = { id: number; message: string; type: "success" | "error" | "info" };
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextToastId = useRef(0);
 
   const showCustomAlert = (message: string, type: "success" | "error" | "info" = "info", title: string = "Thông báo") => {
     return new Promise<void>((resolve) => {
-      setModalConfig({
-        isOpen: true,
-        title,
-        message,
-        type,
-        onConfirm: () => {
-          setModalConfig((prev) => ({ ...prev, isOpen: false }));
-          resolve();
-        },
-      });
+      const id = nextToastId.current++;
+      setToasts((prev) => [...prev, { id, message, type }]);
+      setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== id));
+        resolve();
+      }, 3000);
     });
   };
 
@@ -2323,6 +2322,42 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      
+      {/* TOAST NOTIFICATIONS */}
+      <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 pointer-events-none">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`pointer-events-auto flex items-center space-x-3 px-4 py-3 rounded-lg shadow-lg border animate-in slide-in-from-right-8 fade-in duration-300 min-w-[250px] max-w-sm ${
+              t.type === "success"
+                ? "bg-white dark:bg-slate-900 border-emerald-200 dark:border-emerald-900/50"
+                : t.type === "error"
+                ? "bg-white dark:bg-slate-900 border-rose-200 dark:border-rose-900/50"
+                : "bg-white dark:bg-slate-900 border-blue-200 dark:border-blue-900/50"
+            }`}
+          >
+            {t.type === "success" && (
+              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
+                <Check className="w-4 h-4" />
+              </span>
+            )}
+            {t.type === "error" && (
+              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">
+                <span className="font-bold text-sm">!</span>
+              </span>
+            )}
+            {t.type === "info" && (
+              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
+                <span className="font-bold text-sm">i</span>
+              </span>
+            )}
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              {t.message}
+            </p>
+          </div>
+        ))}
+      </div>
+
        {showScrollTop && (
         <button
           onClick={scrollToTop}
