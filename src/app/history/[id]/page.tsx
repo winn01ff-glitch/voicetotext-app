@@ -129,9 +129,26 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     message: "",
     type: "info",
   });
+  type Toast = { id: number; title: string; desc: string; type: "success" | "error" | "info" | "warning", closing?: boolean };
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const nextToastId = useRef(0);
+
+  const removeToast = (id: number) => {
+    setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, closing: true } : t)));
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 300);
+  };
+
+  const addToast = (title: string, desc: string, type: "success" | "error" | "info" | "warning" = "info") => {
+    const id = nextToastId.current++;
+    setToasts((prev) => [...prev, { id, title, desc, type }]);
+    setTimeout(() => {
+      removeToast(id);
+    }, 4700);
+  };
 
   const [copiedKey, setCopiedKey] = useState("");
-  const [inlineToast, setInlineToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [activeTouchKey, setActiveTouchKey] = useState<string | null>(null);
 
@@ -595,8 +612,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("id", meetingId);
       if (error) throw error;
       setMeeting({ ...meeting, is_pinned: newVal });
+      addToast(newVal ? "Đã ghim cuộc họp" : "Đã bỏ ghim cuộc họp", newVal ? "Cuộc họp đã được ghim lên đầu danh sách." : "Đã bỏ ghim cuộc họp.", "success");
     } catch (err) {
       console.error(err);
+      addToast("Lỗi thao tác", "Không thể cập nhật trạng thái ghim.", "error");
     }
   };
 
@@ -609,8 +628,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("id", meetingId);
       if (error) throw error;
       setMeeting({ ...meeting, is_favorite: newVal });
+      addToast(newVal ? "Đã thích cuộc họp" : "Đã bỏ thích cuộc họp", newVal ? "Cuộc họp đã được thêm vào mục yêu thích." : "Đã bỏ mục yêu thích.", "success");
     } catch (err) {
       console.error(err);
+      addToast("Lỗi thao tác", "Không thể cập nhật trạng thái yêu thích.", "error");
     }
   };
 
@@ -837,16 +858,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       // Silent reload data without loading spinner (prevents screen flash)
       await refreshMeetingDataSilently();
       
-      // Show inline toast instead of blocking modal
-      setInlineToast({ message: "✅ Phân tích và tách vai lại thành công!", type: "success" });
-      setTimeout(() => setInlineToast(null), 4000);
+      // Show toast instead of blocking modal
+      addToast("Thành công", "Đã phân tích và tách vai lại cuộc họp.", "success");
       
       setMainTab("raw");
       setSubTabRaw("transcript");
     } catch (err: any) {
       console.error(err);
-      setInlineToast({ message: "❌ Lỗi khi xử lý lại: " + err.message, type: "error" });
-      setTimeout(() => setInlineToast(null), 5000);
+      addToast("Lỗi xử lý", err.message || "", "error");
     } finally {
       setIsReprocessingRaw(false);
     }
@@ -2530,22 +2549,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
               </div>
 
-              {/* Inline toast notification */}
-              {inlineToast && (
-                <div className={`flex items-center space-x-2 mx-5 mt-3 px-3.5 py-2 rounded-lg text-xs font-medium animate-in fade-in slide-in-from-top-1 duration-300 ${
-                  inlineToast.type === "success" 
-                    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" 
-                    : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
-                }`}>
-                  <span>{inlineToast.message}</span>
-                  <button 
-                    onClick={() => setInlineToast(null)} 
-                    className="ml-auto text-current opacity-50 hover:opacity-100 cursor-pointer"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
+
 
               {/* Raw text content */}
               <div className="p-5">
@@ -3594,6 +3598,124 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
         </div>
       )}
+      {/* TOASTS NOTIFICATIONS PANEL */}
+      <style>{`
+        @keyframes toast-circle-progress {
+          from { stroke-dashoffset: 0; }
+          to { stroke-dashoffset: 62.83; }
+        }
+        @keyframes toast-in {
+          0% {
+            opacity: 0;
+            transform: translateY(-20px) scale(0.85);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        @keyframes toast-out {
+          0% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+          100% {
+            opacity: 0;
+            transform: translateY(-20px) scale(0.85);
+          }
+        }
+        .animate-toast-in {
+          animation: toast-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+        .animate-toast-out {
+          animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+      `}</style>
+      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+        {toasts.map((t) => {
+          const config = {
+            success: {
+              border: "border-none",
+              bg: "bg-gradient-to-b from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700",
+              title: "text-white font-extrabold",
+              desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-emerald-100"
+            },
+            warning: {
+              border: "border-none",
+              bg: "bg-gradient-to-b from-amber-400 to-amber-600 dark:from-amber-500 dark:to-amber-700",
+              title: "text-white font-extrabold",
+              desc: "text-amber-50 dark:text-amber-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-amber-100"
+            },
+            error: {
+              border: "border-none",
+              bg: "bg-gradient-to-b from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-700",
+              title: "text-white font-extrabold",
+              desc: "text-rose-50 dark:text-rose-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-rose-100"
+            },
+            info: {
+              border: "border-none",
+              bg: "bg-gradient-to-b from-blue-400 to-blue-600 dark:from-blue-500 dark:to-blue-700",
+              title: "text-white font-extrabold",
+              desc: "text-blue-50 dark:text-blue-100 font-semibold",
+              circle: "text-white",
+              btn: "text-white hover:text-amber-100"
+            }
+          };
+
+          const style = config[(t.type as keyof typeof config) || "info"] || config.info;
+
+          return (
+            <div
+              key={t.id}
+              className={`pointer-events-auto ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
+            >
+              <div className="flex-1 min-w-0 pr-2 relative z-10">
+                <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
+                <p className={`text-[11px] font-medium leading-snug mt-0.5 ${style.desc}`}>{t.desc}</p>
+              </div>
+              
+              <div className="relative flex items-center justify-center w-7 h-7 shrink-0 z-10">
+                <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none" viewBox="0 0 24 24">
+                  <circle
+                    className="text-white/20"
+                    strokeWidth="2"
+                    stroke="currentColor"
+                    fill="transparent"
+                    r="10"
+                    cx="12"
+                    cy="12"
+                  />
+                  <circle
+                    className={`${style.circle}`}
+                    strokeWidth="2"
+                    strokeDasharray="62.83"
+                    strokeDashoffset="0"
+                    strokeLinecap="round"
+                    stroke="currentColor"
+                    fill="transparent"
+                    r="10"
+                    cx="12"
+                    cy="12"
+                    style={{ animation: "toast-circle-progress 4.7s linear forwards" }}
+                  />
+                </svg>
+                <button
+                  onClick={() => removeToast(t.id)}
+                  className={`${style.btn} cursor-pointer p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 relative z-10 flex items-center justify-center transition-colors`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </>
   );
 }
