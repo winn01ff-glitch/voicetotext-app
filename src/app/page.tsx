@@ -1649,11 +1649,11 @@ export default function Dashboard() {
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[690px] max-h-[95vh]"
+            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[722px] max-h-[95vh]"
           >
             
             {/* Header */}
-            <header className="flex justify-between items-center px-8 py-3 shrink-0 bg-white dark:bg-slate-900">
+            <header className="flex justify-between items-center px-8 py-4 shrink-0 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
                   <LayoutGrid className="w-5 h-5" />
@@ -1672,7 +1672,7 @@ export default function Dashboard() {
             </header>
 
             {/* Mode Tabs with Sliding Transition */}
-            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mx-4 sm:mx-8 mb-1 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
+            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mx-4 sm:mx-8 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
               {/* Sliding Background Indicator */}
               <div 
                 className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
