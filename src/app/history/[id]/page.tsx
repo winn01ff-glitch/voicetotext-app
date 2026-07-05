@@ -1146,7 +1146,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         <div className="space-y-6">
 
           {/* TOP BAR: Unified Switcher (Left) + Meeting Info (Right) */}
-          <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-px">
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4">
             
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
             <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none shrink-0 order-2 lg:order-1 gap-y-0">
