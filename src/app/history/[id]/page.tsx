@@ -1146,7 +1146,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         <div className="space-y-6">
 
           {/* TOP BAR: Meeting Info + Tab Switcher */}
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
             {/* Meeting Info Bar */}
             <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm">
               <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
@@ -1168,17 +1168,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {/* Main Tab Switcher */}
-            <div className="relative flex w-full p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner select-none overflow-hidden">
+            <div className="relative flex w-full p-0.5 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-lg shadow-inner select-none overflow-hidden">
               <div
-                className="absolute top-1 bottom-1 left-1 rounded-lg bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
+                className="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
                 style={{
-                  width: "calc(50% - 4px)",
+                  width: "calc(50% - 2px)",
                   transform: mainTab === "raw" ? "translateX(100%)" : "translateX(0%)",
                 }}
               />
               <button
                 onClick={() => setMainTab("processed")}
-                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                   mainTab === "processed"
                     ? "text-white dark:text-slate-900"
                     : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1189,7 +1189,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </button>
               <button
                 onClick={() => setMainTab("raw")}
-                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                   mainTab === "raw"
                     ? "text-white dark:text-slate-900"
                     : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1204,12 +1204,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* MAIN CONTENT AREA */}
           <div className="w-full space-y-6 text-left">
             {/* SUB-TABS SELECT CARD */}
-            <div className="relative flex w-full p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner mb-6 select-none overflow-hidden">
+            <div className="relative flex w-full p-0.5 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-lg shadow-inner mb-4 select-none overflow-hidden">
               {/* Sliding Background Indicator */}
               <div
-                className="absolute top-1 bottom-1 left-1 rounded-lg bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
+                className="absolute top-0.5 bottom-0.5 left-0.5 rounded-md bg-slate-900 dark:bg-slate-100 shadow-sm transition-all duration-300 ease-out"
                 style={{
-                  width: "calc(50% - 4px)",
+                  width: "calc(50% - 2px)",
                   transform:
                     (mainTab === "processed"
                       ? subTabProcessed === "transcript"
@@ -1222,7 +1222,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabProcessed("summary")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                       subTabProcessed === "summary"
                         ? "text-white dark:text-slate-900"
                         : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1232,7 +1232,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </button>
                   <button
                     onClick={() => setSubTabProcessed("transcript")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                       subTabProcessed === "transcript"
                         ? "text-white dark:text-slate-900"
                         : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1245,7 +1245,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabRaw("summary")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                       subTabRaw === "summary"
                         ? "text-white dark:text-slate-900"
                         : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
@@ -1255,7 +1255,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </button>
                   <button
                     onClick={() => setSubTabRaw("transcript")}
-                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-2 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative z-10 flex-1 flex items-center justify-center space-x-2 px-4 py-1 text-xs font-bold rounded-md transition-colors duration-300 cursor-pointer ${
                       subTabRaw === "transcript"
                         ? "text-white dark:text-slate-900"
                         : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
