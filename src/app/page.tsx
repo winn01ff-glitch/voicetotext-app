@@ -1525,9 +1525,6 @@ export default function Dashboard() {
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${typeStyles}`}>
                                   {typeLabel}
                                 </span>
-                                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                                  {m.source_language} ➔ {m.target_language}
-                                </span>
                               </div>
                               <div className="flex space-x-1.5 no-print" onClick={(e) => e.stopPropagation()}>
                                 <button
