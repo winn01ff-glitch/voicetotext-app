@@ -200,7 +200,7 @@ export default function Dashboard() {
       const day = String(now.getDate()).padStart(2, '0');
       const hours = String(now.getHours()).padStart(2, '0');
       const minutes = String(now.getMinutes()).padStart(2, '0');
-      setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day} - ${hours}:${minutes}`);
+      setMeetingTitle(`Cuộc họp ngày ${year}/${month}/${day}`);
       setChunkSize(100);
     } else {
       stopMicTest();

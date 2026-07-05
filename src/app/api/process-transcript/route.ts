@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, speaker_tag, original_text, start_ms, end_ms, confidence, target_language } = body;
+    const { meeting_id, speaker_tag, original_text, start_ms, end_ms, confidence, target_language, diarize_enabled } = body;
 
     if (!meeting_id || !original_text) {
       return NextResponse.json({ error: "Missing required fields (meeting_id, original_text)" }, { status: 400 });
@@ -72,13 +72,13 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. Fetch the last 3 transcripts to use as context for boundary alignment and merging
+    // 4. Fetch the last 30 transcripts to use as context for boundary alignment and merging
     const { data: recentTxs } = await supabase
       .from("transcripts")
       .select("id, original_text, corrected_text, translated_text, start_ms, end_ms, speaker_id, confidence, speakers(speaker_tag, display_name)")
       .eq("meeting_id", meeting_id)
       .order("start_ms", { ascending: false })
-      .limit(3);
+      .limit(30);
       
     const history = (recentTxs || []).reverse();
     const historyContext = history.map((tx: any, idx: number) => ({
@@ -93,48 +93,80 @@ export async function POST(request: Request) {
     const targetLang = target_language || meeting.target_language;
     const sourceLang = meeting.source_language;
     const context = meeting.meeting_context;
+    const diarizeMode = diarize_enabled !== false;
 
     const timeGap = history.length > 0 ? (start_ms - history[history.length - 1].end_ms) : 0;
+
+    // Language-specific instructions
+    const sourceLangLabel: Record<string, string> = {
+      ja: "Japanese (日本語)",
+      en: "English",
+      vi: "Vietnamese (Tiếng Việt)",
+      auto: "Auto-detect (may be Japanese, English, Vietnamese, or mixed)",
+    };
+
+    const sourceLangInstruction: Record<string, string> = {
+      ja: `The input speech is in JAPANESE. Expect Japanese text with possible kanji errors from ASR.
+Speaker cues: Pronouns (私/僕/俺), register (です/ます vs だ/ね), particles (よ/ね/か), aizuchi (なるほど, うん, はい)`,
+      en: `The input speech is in ENGLISH. Expect English text with possible homophones from ASR.
+Speaker cues: Pronouns (I/you), question vs statement, formal vs casual, backchannels (yeah, okay, I see)`,
+      vi: `The input speech is in VIETNAMESE. Expect Vietnamese text with possible diacritics errors from ASR.
+Speaker cues: Pronouns (tôi/anh/chị/em), register (formal ạ vs casual ừ/nhé), backchannels (vâng, dạ, ừ)`,
+      auto: `The input speech language is AUTO-DETECTED (Japanese, English, Vietnamese, or mixed). Apply all language-specific cues. Language switches signal speaker changes.`,
+    };
+
+    // Cold start note
+    const coldStartNote = historyContext.length === 0
+      ? `\n⚠️ COLD START: No conversation history yet. ${diarizeMode ? "Trust Deepgram speaker hints more heavily." : "Rely on linguistic structure. First speaker is likely speaker_1."}`
+      : "";
+
+    // Diarize mode instruction
+    const diarizeInstruction = diarizeMode
+      ? `The "speaker_tag" is a HINT from Deepgram audio analysis. VERIFY it against conversation history and correct if it contradicts the dialog logic.`
+      : `Audio diarization is DISABLED. The speaker_tag "${speaker_tag}" is a default — ignore it. Detect speaker changes using dialog transitions, pronoun shifts, and register changes.`;
+
     const systemPrompt = `
-You are a fast, lightweight conversation analyzer specializing in Japanese dialogue segmentation and translation.
+You are an expert dialogue editor, speaker classifier, and translator for live meeting transcription.
+
+Source Language: ${sourceLangLabel[sourceLang] || sourceLangLabel["auto"]}
+Target Language: ${targetLang}
+${sourceLangInstruction[sourceLang] || sourceLangInstruction["auto"]}
 
 Task:
-1. Split the raw Japanese segment into natural turns by speaker change. Never merge different speakers.
-2. Map each turn to the correct "speaker_tag" from the REGISTERED SPEAKERS.
-3. Keep the original text identical to the raw text, but you MAY correct obvious spelling/typos/wrong kanji in "corrected_text".
-   CRITICAL: Do NOT add, remove, or paraphrase any words. Do NOT add vocabulary that was never spoken. Preserve all filler words (e.g. えー, あの, まあ, うーん).
-4. Translate each turn into "${targetLang}".
+1. Split the raw segment into natural turns by speaker change. Never merge different speakers.
+2. ${diarizeInstruction}
+3. Map each turn to the correct "speaker_tag" from the REGISTERED SPEAKERS.
+4. Keep the original text identical to the raw text, but you MAY correct obvious spelling/typos/wrong kanji in "corrected_text".
+   CRITICAL: Do NOT add, remove, or paraphrase any words. Do NOT add vocabulary that was never spoken. Preserve all filler words.
+5. Translate each turn into "${targetLang}".
+   If the original text is already in "${targetLang}", set translated_text = original_text.
 
-==================================================
-CONTEXT & DATA
-==================================================
 REGISTERED SPEAKERS:
 ${JSON.stringify(allSpeakers || [])}
 
-CONVERSATION CONTEXT (Last few segments):
-${JSON.stringify(historyContext)}
+CONVERSATION HISTORY (Last ${historyContext.length} lines):
+${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — first segment)"}
+${coldStartNote}
 
-GLOSSARY (If matched, use these translations):
+MEETING CONTEXT: ${context || "General discussion"}
+
+GLOSSARY:
 ${JSON.stringify(glossaryList || [])}
 
 INPUT RAW SEGMENT TO PROCESS:
-- Raw Speaker Tag: "${speaker_tag}" (Temporary Name: "${resolvedSpeaker?.display_name || "Unknown"}")
+- Raw Speaker Tag: "${speaker_tag}" (Name: "${resolvedSpeaker?.display_name || "Unknown"}")
 - Raw Text: "${original_text}"
 
-==================================================
-OUTPUT FORMAT
-==================================================
 Return VALID JSON ONLY. No markdown, no explanation.
 
-Schema:
 {
   "corrected_previous_text": "updated previous original text (only if trailing words of previous speaker were moved back, otherwise empty string)",
   "corrected_previous_translation": "translation of corrected_previous_text (only if corrected_previous_text is updated, otherwise empty string)",
   "blocks": [
     {
-      "speaker_tag": "correct speaker tag (e.g. speaker_0 or speaker_1, MUST exactly match registered tags)",
+      "speaker_tag": "correct speaker tag (MUST exactly match registered tags)",
       "raw_text": "original raw transcript",
-      "corrected_text": "corrected Japanese text (ONLY fix obvious typos/Kanji, DO NOT rewrite or paraphrase)",
+      "corrected_text": "corrected text (ONLY fix obvious typos, DO NOT rewrite)",
       "translated_text": "translated text into ${targetLang}"
     }
   ]

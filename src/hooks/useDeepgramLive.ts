@@ -16,6 +16,7 @@ interface UseDeepgramLiveProps {
   noiseSuppression: boolean;
   autoGainControl: boolean;
   endpointing?: number;
+  diarize?: boolean;
   onTranscript: (data: {
     text: string;
     isFinal: boolean;
@@ -39,6 +40,7 @@ export function useDeepgramLive({
   noiseSuppression,
   autoGainControl,
   endpointing = 3000,
+  diarize = true,
   onTranscript,
   onActionItemDetected,
   onError,
@@ -185,7 +187,7 @@ export function useDeepgramLive({
       filler_words: "true",
       interim_results: "true",
       endpointing: String(endpointing),  // configurable pause before finalizing segment
-      diarize: "true",
+      diarize: String(diarize),
     });
 
     // Language setting — 'multi' reduces accuracy significantly vs specific language
@@ -225,7 +227,7 @@ export function useDeepgramLive({
         reject(err);
       };
     });
-  }, [sourceLanguage, endpointing, glossary]);
+  }, [sourceLanguage, endpointing, glossary, diarize]);
 
   // 4. Start recording and streaming
   const startRecording = useCallback(async () => {

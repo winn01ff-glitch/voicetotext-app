@@ -116,6 +116,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   });
 
   const [copiedKey, setCopiedKey] = useState("");
+  const [inlineToast, setInlineToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [activeTouchKey, setActiveTouchKey] = useState<string | null>(null);
 
@@ -142,6 +143,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [translatedDecisions, setTranslatedDecisions] = useState<string[]>([]);
   const [translatedReprocessedExecSummary, setTranslatedReprocessedExecSummary] = useState<string>("");
   const [translatedReprocessedDecisions, setTranslatedReprocessedDecisions] = useState<string[]>([]);
+  const [translatedActionItems, setTranslatedActionItems] = useState<string[]>([]);
+  const [translatedReprocessedActionItems, setTranslatedReprocessedActionItems] = useState<string[]>([]);
   const [translatingSection, setTranslatingSection] = useState<string | null>(null);
 
   const handleTranslateSection = async (section: string, lang: string) => {
@@ -149,8 +152,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     if (lang === "original") {
       if (section === "live_summary") setTranslatedExecSummary("");
       if (section === "live_decisions") setTranslatedDecisions([]);
+      if (section === "live_actions") setTranslatedActionItems([]);
       if (section === "raw_summary") setTranslatedReprocessedExecSummary("");
       if (section === "raw_decisions") setTranslatedReprocessedDecisions([]);
+      if (section === "raw_actions") setTranslatedReprocessedActionItems([]);
       return;
     }
 
@@ -165,6 +170,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         textToTranslate = aiSummary?.reprocessed_executive_summary || "";
       } else if (section === "raw_decisions") {
         textToTranslate = (aiSummary?.reprocessed_decisions || []).join("\n");
+      } else if (section === "live_actions") {
+        textToTranslate = actionItems.map((item: any) => item.description).join("\n");
+      } else if (section === "raw_actions") {
+        textToTranslate = reprocessedActionItems.map((item: any) => item.description).join("\n");
       }
 
       if (!textToTranslate.trim()) {
@@ -198,6 +207,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         setTranslatedReprocessedExecSummary(translated);
       } else if (section === "raw_decisions") {
         setTranslatedReprocessedDecisions(translated.split("\n").filter((line: string) => line.trim().length > 0));
+      } else if (section === "live_actions") {
+        setTranslatedActionItems(translated.split("\n").filter((line: string) => line.trim().length > 0));
+      } else if (section === "raw_actions") {
+        setTranslatedReprocessedActionItems(translated.split("\n").filter((line: string) => line.trim().length > 0));
       }
     } catch (err) {
       console.error(err);
@@ -471,6 +484,76 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
+  // Silent refresh: reload data without showing loading spinner (prevents screen flash)
+  const refreshMeetingDataSilently = async () => {
+    try {
+      const { data: m } = await supabase.from("meetings").select("*").eq("id", meetingId).single();
+      if (m) setMeeting(m);
+
+      const { data: sps } = await supabase.from("speakers").select("*").eq("meeting_id", meetingId);
+      setSpeakers(sps || []);
+
+      const { data: txs } = await supabase
+        .from("transcripts")
+        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, speakers ( display_name, color_hex, speaker_tag )`)
+        .eq("meeting_id", meetingId)
+        .order("start_ms", { ascending: true });
+
+      if (txs) {
+        const HOT_COLORS = ["#ea580c", "#dc2626", "#d97706", "#db2777"];
+        const COLD_COLORS = ["#2563eb", "#4f46e5", "#0d9488", "#0891b2"];
+        const uniqueSpeakerTags = Array.from(new Set(txs.map((t: any) => t.speakers?.speaker_tag || "speaker_1")));
+        const speakerToColorMap: { [tag: string]: string } = {};
+        uniqueSpeakerTags.forEach((tag, idx) => {
+          if (idx % 2 === 0) {
+            speakerToColorMap[tag] = HOT_COLORS[Math.floor(idx / 2) % HOT_COLORS.length];
+          } else {
+            speakerToColorMap[tag] = COLD_COLORS[Math.floor(idx / 2) % COLD_COLORS.length];
+          }
+        });
+
+        const allTranscripts = txs.map((t: any) => {
+          const tag = t.speakers?.speaker_tag || "speaker_1";
+          return {
+            id: t.id,
+            originalText: t.original_text,
+            correctedText: t.corrected_text,
+            translatedText: t.translated_text,
+            speakerName: t.speakers?.display_name || "Unknown",
+            speakerTag: tag,
+            speakerColor: speakerToColorMap[tag] || t.speakers?.color_hex || "#64748b",
+            startMs: t.start_ms,
+            endMs: t.end_ms,
+            confidence: t.confidence,
+            isEdited: t.is_edited,
+            editedText: t.edited_text,
+            isReprocessed: t.is_reprocessed || false
+          };
+        });
+
+        setTranscripts(allTranscripts.filter((t: any) => !t.isReprocessed));
+        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.isReprocessed));
+      }
+
+      const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).maybeSingle();
+      setAiSummary(summ);
+      if (summ) {
+        setEditedExecSummary(summ.executive_summary || "");
+        setEditedDecisions(summ.decisions || []);
+        setEditedReprocessedExecSummary(summ.reprocessed_executive_summary || "");
+        setEditedReprocessedDecisions(summ.reprocessed_decisions || []);
+      }
+
+      const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
+      if (acts) {
+        setActionItems(acts.filter((item: any) => !item.is_reprocessed));
+        setReprocessedActionItems(acts.filter((item: any) => item.is_reprocessed));
+      }
+    } catch (err) {
+      console.error("Silent refresh error:", err);
+    }
+  };
+
   const handleTogglePin = async () => {
     try {
       const newVal = !meeting.is_pinned;
@@ -666,14 +749,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         throw new Error(errData.error || "Phân tích thất bại");
       }
 
-      // Reload all data
-      await fetchMeetingData();
-      await showCustomAlert("Phân tích và tách vai lại thành công!", "success");
+      // Silent reload data without loading spinner (prevents screen flash)
+      await refreshMeetingDataSilently();
+      
+      // Show inline toast instead of blocking modal
+      setInlineToast({ message: "✅ Phân tích và tách vai lại thành công!", type: "success" });
+      setTimeout(() => setInlineToast(null), 4000);
+      
       setMainTab("raw");
       setSubTabRaw("transcript");
     } catch (err: any) {
       console.error(err);
-      await showCustomAlert("Lỗi khi xử lý lại: " + err.message, "error");
+      setInlineToast({ message: "❌ Lỗi khi xử lý lại: " + err.message, type: "error" });
+      setTimeout(() => setInlineToast(null), 5000);
     } finally {
       setIsReprocessingRaw(false);
     }
@@ -977,156 +1065,136 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans">
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
-        <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
+        <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center justify-between gap-3">
+          {/* Left: Back + Title */}
+          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
             <button
               onClick={() => router.push("/")}
-              className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+              className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
               title="Quay lại danh sách"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="font-bold text-lg leading-none" title={meeting?.title}>{meeting?.title}</h1>
+            <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
           </div>
 
-          <div className="flex items-center space-x-3">
-            {/* Pin and Fav */}
+          {/* Right: Action Buttons */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
             <button
               onClick={handleTogglePin}
-              className={`p-2 rounded-md border cursor-pointer ${
+              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer ${
                 meeting.is_pinned
                   ? "bg-blue-50 border-blue-200 text-blue-500"
                   : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 dark:bg-slate-900 dark:border-slate-800"
               }`}
+              title="Ghim"
             >
-              <Pin className="w-4 h-4 fill-current" />
+              <Pin className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
             </button>
             <button
               onClick={handleToggleFavorite}
-              className={`p-2 rounded-md border cursor-pointer ${
+              className={`p-1.5 sm:p-2 rounded-md border cursor-pointer ${
                 meeting.is_favorite
                   ? "bg-amber-50 border-amber-200 text-amber-500"
                   : "bg-white border-slate-200 text-slate-400 hover:text-slate-600 dark:bg-slate-900 dark:border-slate-800"
               }`}
+              title="Yêu thích"
             >
-              <Star className="w-4 h-4 fill-current" />
+              <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
             </button>
             <button
               onClick={handleDeleteMeeting}
-              className="p-2 border border-slate-200 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100 rounded-md dark:bg-slate-900 dark:border-slate-800 cursor-pointer"
+              className="p-1.5 sm:p-2 border border-slate-200 text-slate-400 hover:text-red-500 hover:bg-red-50 hover:border-red-100 rounded-md dark:bg-slate-900 dark:border-slate-800 cursor-pointer"
+              title="Xóa"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
 
-            {/* Export options */}
-            <div className="relative flex items-center space-x-2 border-l border-slate-200 dark:border-slate-800 pl-4">
-              <button
-                onClick={handleExportDocx}
-                className="flex items-center space-x-1 px-3 h-9 bg-mesh hover:bg-mesh-hover text-white rounded-md text-xs font-bold shadow-md shadow-indigo-500/15 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Xuất Word (DOCX)</span>
-              </button>
-              <button
-                onClick={handleExportPdf}
-                className="flex items-center space-x-1 px-3 h-9 border border-slate-200 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900 rounded-md text-xs font-semibold transition-all text-slate-700 dark:text-slate-300 cursor-pointer"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Xuất PDF</span>
-              </button>
-            </div>
+            <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-800" />
+
+            {/* Export buttons: icon-only on mobile, icon+text on sm+ */}
+            <button
+              onClick={handleExportDocx}
+              className="flex items-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+              title="Xuất Word"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Xuất Word</span>
+            </button>
+            <button
+              onClick={handleExportPdf}
+              className="flex items-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold transition-colors cursor-pointer"
+              title="Xuất PDF"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Xuất PDF</span>
+            </button>
           </div>
         </div>
       </header>
 
       {/* CORE CONTAINER */}
-      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-8">
-        <div className="flex flex-col lg:flex-row gap-8 items-start">
-          
-          {/* LEFT COLUMN: SIDEBAR */}
-          <div className="w-full lg:w-[265px] shrink-0 space-y-6">
-            {/* SCOPE NAVIGATION MENU */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm text-left">
-              <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider px-2 mb-2 select-none">Luồng hội thoại</p>
-              <div className="relative space-y-1.5">
-                {/* Sliding Highlight Indicator */}
-                <div 
-                  className="absolute left-0 w-full bg-slate-900 dark:bg-slate-100 rounded-xl transition-all duration-300 ease-out"
-                  style={{
-                    height: "40px",
-                    top: mainTab === "processed" ? "0px" : "46px",
-                  }}
-                />
-                
-                <button
-                  onClick={() => setMainTab("processed")}
-                  className={`relative z-10 w-full h-[40px] flex items-center space-x-3 px-3.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
-                    mainTab === "processed"
-                      ? "text-white dark:text-slate-900"
-                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  <MessageSquare className="w-4 h-4 shrink-0" />
-                  <span>Hội thoại đã xử lý</span>
-                </button>
-                <button
-                  onClick={() => setMainTab("raw")}
-                  className={`relative z-10 w-full h-[40px] flex items-center space-x-3 px-3.5 rounded-xl text-sm font-bold transition-all cursor-pointer ${
-                    mainTab === "raw"
-                      ? "text-white dark:text-slate-900"
-                      : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
-                  }`}
-                >
-                  <FileText className="w-4 h-4 shrink-0" />
-                  <span>Hội thoại gốc</span>
-                </button>
-              </div>
+      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
+        <div className="space-y-6">
+
+          {/* TOP BAR: Main Tab Switcher + Meeting Info (inline) */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Main Tab Switcher */}
+            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 select-none">
+              <div
+                className="absolute bottom-0 left-0 h-[2px] bg-blue-600 dark:bg-blue-400 rounded-full transition-all duration-300 ease-out"
+                style={{
+                  width: "50%",
+                  transform: mainTab === "raw" ? "translateX(100%)" : "translateX(0%)",
+                }}
+              />
+              <button
+                onClick={() => setMainTab("processed")}
+                className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                  mainTab === "processed"
+                    ? "text-blue-600 dark:text-blue-400"
+                    : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                <span>Hội thoại đã xử lý</span>
+              </button>
+              <button
+                onClick={() => setMainTab("raw")}
+                className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                  mainTab === "raw"
+                    ? "text-blue-600 dark:text-blue-400"
+                    : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 shrink-0" />
+                <span>Hội thoại gốc</span>
+              </button>
             </div>
 
-            {/* METADATA INFO CARD */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-sm space-y-5 text-left text-xs">
-              <p className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800 pb-2">Thông tin cuộc họp</p>
-              
-              <div className="flex items-start space-x-3">
-                <Calendar className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase">Ngày họp</p>
-                  <p className="font-bold text-slate-700 dark:text-slate-350 mt-0.5">
-                    {new Date(meeting.created_at).toLocaleDateString("vi-VN")}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <Clock className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase">Thời lượng</p>
-                  <p className="font-bold text-slate-700 dark:text-slate-350 mt-0.5">{formatDuration(meeting.duration_ms)}</p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <BookOpen className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase">Ngữ cảnh</p>
-                  <p className="font-bold text-slate-700 dark:text-slate-350 mt-0.5 capitalize">{meeting.meeting_context}</p>
-                </div>
-              </div>
-
-              <div className="flex items-start space-x-3">
-                <RefreshCw className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase">Dịch thuật</p>
-                  <p className="font-bold text-slate-700 dark:text-slate-350 mt-0.5">
-                    {meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}
-                  </p>
-                </div>
-              </div>
+            {/* Meeting Info Chips */}
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 ml-auto">
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
+                <Calendar className="w-3 h-3 text-slate-400" />
+                <span className="font-semibold">{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
+              </span>
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
+                <Clock className="w-3 h-3 text-slate-400" />
+                <span className="font-semibold">{formatDuration(meeting.duration_ms)}</span>
+              </span>
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
+                <BookOpen className="w-3 h-3 text-slate-400" />
+                <span className="font-semibold capitalize">{meeting.meeting_context}</span>
+              </span>
+              <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-md">
+                <RefreshCw className="w-3 h-3 text-slate-400" />
+                <span className="font-semibold">{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
+              </span>
             </div>
           </div>
 
-          {/* RIGHT COLUMN: MAIN CONTENT AREA */}
-          <div className="flex-1 min-w-0 w-full space-y-6 text-left">
+          {/* MAIN CONTENT AREA */}
+          <div className="w-full space-y-6 text-left">
             {/* SUB-TABS SELECT CARD */}
             <div className="relative inline-flex p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner w-full mb-6 select-none overflow-hidden">
               {/* Sliding Background Indicator */}
@@ -1197,13 +1265,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
             {/* SUB-TAB CONTENT */}
             {subTabProcessed === "summary" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                 {/* Left/Middle Column: Summary & Decisions */}
                 <div className="lg:col-span-2 space-y-6">
                   {/* Executive Summary */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">1. Tóm tắt tổng quan</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 border-b border-blue-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center">
+                          <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3>
+                      </div>
                       {!isEditingSummary && (
                         <div className="flex items-center space-x-1">
                           <button
@@ -1237,6 +1310,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       )}
                     </div>
 
+                    <div className="px-5 py-4">
                     {isEditingSummary ? (
                       <textarea
                         rows={6}
@@ -1256,12 +1330,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         )}
                       </p>
                     )}
+                    </div>
                   </div>
 
                   {/* Key Decisions */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">2. Quyết định cốt lõi</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-50/80 to-transparent dark:from-amber-950/20 border-b border-amber-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center">
+                          <CheckSquare className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                        </div>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Quyết định cốt lõi</h3>
+                      </div>
                       {isEditingSummary ? (
                         <button
                           onClick={handleAddDecisionField}
@@ -1289,6 +1369,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       )}
                     </div>
 
+                    <div className="px-5 py-4">
                     {isEditingSummary ? (
                       <div className="space-y-3">
                         {editedDecisions.map((dec, idx) => (
@@ -1352,14 +1433,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </button>
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Right Column: Action Items Checklist */}
                 <div className="space-y-6">
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">3. Phân công công việc</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-emerald-50/80 to-transparent dark:from-emerald-950/20 border-b border-emerald-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5">
+                        <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center">
+                          <CheckSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Phân công công việc</h3>
+                      </div>
+                      <div className="flex items-center space-x-1">
                       {actionItems.length > 0 && (
                         <button
                           onClick={() =>
@@ -1385,11 +1473,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           )}
                         </button>
                       )}
+                      {actionItems.length > 0 && renderTranslateDropdown("live_actions")}
+                      </div>
                     </div>
 
+                    <div className="px-5 py-4">
                     <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
                       {actionItems.length === 0 ? (
-                        <p className="text-sm text-slate-400 italic py-4">Không có công việc nào được phân công.</p>
+                        <p className="text-xs text-slate-400 italic py-4">Không có công việc nào được phân công.</p>
                       ) : (
                         actionItems.map((item) => {
                           let deadlineStr = "N/A";
@@ -1425,7 +1516,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                       item.is_completed ? "line-through text-slate-400 dark:text-slate-500" : ""
                                     }`}
                                   >
-                                    {item.description}
+                                    {translatingSection === "live_actions" ? (
+                                      <span className="flex items-center space-x-1.5 text-slate-400 text-xs italic">
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                        <span>Đang dịch...</span>
+                                      </span>
+                                    ) : (
+                                      translatedActionItems[actionItems.indexOf(item)] || item.description
+                                    )}
                                   </p>
                                   <button
                                     onClick={() => handleCopyText(item.description, `act_${item.id}`)}
@@ -1457,6 +1555,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           );
                         })
                       )}
+                    </div>
                     </div>
                   </div>
                 </div>
@@ -1508,8 +1607,96 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </div>
                 </div>
 
-                {/* Transcript Table */}
-                <div className="overflow-x-auto pr-1">
+                {/* Transcript — Mobile Cards */}
+                <div className="sm:hidden space-y-2">
+                  {filteredTranscripts.map((t) => {
+                    const isEditing = editingTranscriptId === t.id;
+                    const needsReview = typeof t.confidence === "number" && t.confidence < 0.8;
+                    const fmtTime = (ms: number) => {
+                      const s = Math.floor(ms / 1000);
+                      const mm = Math.floor(s / 60);
+                      const ss = s % 60;
+                      return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+                    };
+                    return (
+                      <div key={t.id} className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900/50 overflow-hidden">
+                        {/* Header: time + speaker + tools */}
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-100 dark:border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-slate-400 font-mono font-medium">{fmtTime(t.startMs)}</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>
+                              {t.speakerName}
+                            </span>
+                            {needsReview && <span className="text-amber-500 text-xs">⚠️</span>}
+                            {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
+                          </div>
+                          <div className="flex items-center gap-0.5">
+                            {t.translatedText && (
+                              <button onClick={() => playTts(t.id, t.translatedText)} className={`p-1.5 rounded transition-colors cursor-pointer ${activeSpeech?.id === t.id ? "text-red-500 bg-red-50 animate-pulse" : "text-slate-400 hover:text-blue-600 hover:bg-blue-50"}`} title="Nghe">
+                                {activeSpeech?.id === t.id ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                              </button>
+                            )}
+                            <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </button>
+                            {!isEditing && (
+                              <button onClick={() => startEditingTranscript(t)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors cursor-pointer" title="Sửa">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {/* Body */}
+                        <div className="px-3 py-2.5 space-y-2">
+                          {isEditing ? (
+                            <div className="flex items-start space-x-2">
+                              <textarea value={editingTextVal} onChange={(e) => setEditingTextVal(e.target.value)} disabled={isSavingLine} className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50" rows={3} />
+                              <button onClick={() => handleSaveTranscriptLine(t.id)} disabled={isSavingLine} className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50">
+                                {isSavingLine ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-start justify-between gap-2">
+                              <p className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold leading-relaxed flex-1 ${needsReview ? "bg-amber-50/50 text-amber-800 px-1.5 py-[1px] rounded border border-dashed border-amber-250 inline" : ""}`}>
+                                {highlightText(t.correctedText || t.originalText, searchQuery)}
+                              </p>
+                              <button onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
+                                {copiedKey === `tx_orig_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          )}
+                          {t.translatedText && (
+                            <div className="flex items-start justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/50">
+                              <p className="text-[13px] text-slate-500 dark:text-slate-400 italic leading-relaxed flex-1">{highlightText(t.translatedText, searchQuery)}</p>
+                              <button onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
+                                {copiedKey === `tx_trans_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {/* Line Summary */}
+                        {lineSummaries[t.id] && (
+                          <div className="px-3 py-2 bg-emerald-50/50 dark:bg-emerald-950/10 border-t border-emerald-100 dark:border-emerald-900/30 text-xs space-y-2">
+                            {lineSummaries[t.id].loading ? (
+                              <span className="flex items-center space-x-1.5 text-emerald-600"><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span>Đang tóm tắt...</span></span>
+                            ) : (
+                              <>
+                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt gốc:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].originalSummary}</p></div>
+                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt dịch:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].translatedSummary}</p></div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {filteredTranscripts.length === 0 && (
+                    <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.</p>
+                  )}
+                </div>
+
+                {/* Transcript — Desktop Table */}
+                <div className="hidden sm:block overflow-x-auto pr-1">
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
@@ -1678,8 +1865,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           </tr>
                           {lineSummaries[t.id] && (
                             <tr className="bg-slate-50/50 dark:bg-slate-900/10 border-b border-slate-200/50 dark:border-slate-800/50">
-                              <td colSpan={2} />
-                              <td className="py-3 px-4 text-xs leading-relaxed text-slate-600 dark:text-slate-400 align-top">
+                              <td className="hidden sm:table-cell" />
+                              <td />
+                              <td className="py-3 px-2 sm:px-4 text-xs leading-relaxed text-slate-600 dark:text-slate-400 align-top">
                                 {lineSummaries[t.id].loading ? (
                                   <span className="flex items-center space-x-1.5 py-1">
                                     <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" />
@@ -1731,7 +1919,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   </div>
                                 )}
                               </td>
-                              <td />
+                              <td className="hidden sm:table-cell" />
                             </tr>
                           )}
                         </Fragment>
@@ -1753,79 +1941,112 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         ) : (
           <div className="space-y-6 text-left">
             {/* RAW LISTENING STREAM CONTROL PANEL */}
-            <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-              <div className="flex flex-col md:flex-row gap-4 justify-between items-center pb-4 border-b border-slate-100 dark:border-slate-800">
-                <div className="space-y-1">
-                  <h3 className="font-bold text-lg text-slate-800 dark:text-slate-200">Hội thoại gốc (Chưa xử lý)</h3>
-                  <p className="text-xs text-slate-550 dark:text-slate-400">
-                    Dữ liệu thô từ luồng nghe trực tiếp. Bạn có thể sử dụng Trợ lý AI đọc lại toàn bộ, phân tích ngữ cảnh và chia lại vai nói.
-                  </p>
+            <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+              {/* Header row */}
+              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-slate-50/80 to-transparent dark:from-slate-800/30">
+                <div className="flex items-center space-x-3 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center shrink-0">
+                    <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">Hội thoại gốc</h3>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                      Dữ liệu thô — AI sẽ phân tích ngữ cảnh và tách vai người nói
+                    </p>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    onClick={() => {
-                      const rawText = meeting?.raw_transcript || transcripts.map(t => t.originalText).join(" ");
-                      handleCopyText(rawText, "raw_transcript");
-                    }}
-                    disabled={!meeting?.raw_transcript && transcripts.length === 0}
-                    className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                    title="Sao chép hội thoại gốc"
-                  >
-                    {copiedKey === "raw_transcript" ? (
-                      <Check className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <Copy className="w-4 h-4" />
-                    )}
-                  </button>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap ml-auto">
 
-                  <div className="flex items-center space-x-2 text-xs">
-                    <span className="text-slate-500 font-medium whitespace-nowrap">Số người nói (ước lượng):</span>
-                    <select
-                      value={numSpeakers}
-                      onChange={(e) => setNumSpeakers(e.target.value)}
-                      className="h-8 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
-                    >
-                      <option value="auto">Tự động nhận dạng</option>
-                      <option value="1">1 người</option>
-                      <option value="2">2 người (Mặc định đối đáp)</option>
-                      <option value="3">3 người</option>
-                      <option value="4">4 người</option>
-                      <option value="5">5 người (Nhóm thảo luận)</option>
-                    </select>
-                  </div>
+                  <select
+                    value={numSpeakers}
+                    onChange={(e) => setNumSpeakers(e.target.value)}
+                    className="h-7 px-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="auto">Tự động</option>
+                    <option value="1">1 người</option>
+                    <option value="2">2 người</option>
+                    <option value="3">3 người</option>
+                    <option value="4">4 người</option>
+                    <option value="5">5 người</option>
+                  </select>
+
                   <button
                     onClick={handleReprocessRawTranscript}
                     disabled={isReprocessingRaw || (!meeting?.raw_transcript && transcripts.length === 0)}
-                    className="flex items-center space-x-1.5 px-4 h-8 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    className="flex items-center space-x-1.5 px-3 h-7 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isReprocessingRaw ? "animate-spin" : ""}`} />
-                    <span>{isReprocessingRaw ? "Đang xử lý lại..." : "AI Phân vai lại toàn bộ"}</span>
+                    <RefreshCw className={`w-3 h-3 ${isReprocessingRaw ? "animate-spin" : ""}`} />
+                    <span>{isReprocessingRaw ? "Đang xử lý..." : "AI Phân vai"}</span>
                   </button>
                 </div>
               </div>
 
-              {/* Continuous Text Panel */}
-              <div className="space-y-4">
+              {/* Inline toast notification */}
+              {inlineToast && (
+                <div className={`flex items-center space-x-2 mx-5 mt-3 px-3.5 py-2 rounded-lg text-xs font-medium animate-in fade-in slide-in-from-top-1 duration-300 ${
+                  inlineToast.type === "success" 
+                    ? "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800" 
+                    : "bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800"
+                }`}>
+                  <span>{inlineToast.message}</span>
+                  <button 
+                    onClick={() => setInlineToast(null)} 
+                    className="ml-auto text-current opacity-50 hover:opacity-100 cursor-pointer"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+
+              {/* Raw text content */}
+              <div className="p-5">
                 {isReprocessingRaw ? (
-                  <div className="py-12 text-center space-y-4">
-                    <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mx-auto" />
-                    <div className="space-y-1">
+                  <div className="py-10 text-center space-y-3">
+                    <RefreshCw className="w-7 h-7 text-blue-500 animate-spin mx-auto" />
+                    <div className="space-y-0.5">
                       <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                        Trợ lý AI đang xử lý tách vai và phân tích lại hội thoại...
+                        AI đang phân tích và tách vai hội thoại...
                       </p>
                       <p className="text-xs text-slate-400">
-                        Quá trình này có thể mất từ 10 - 20 giây tùy thuộc độ dài văn bản cuộc họp.
+                        Khoảng 10 – 20 giây tùy độ dài văn bản.
                       </p>
                     </div>
                   </div>
-                ) : meeting?.raw_transcript || transcripts.length > 0 ? (
-                  <div className="p-6 bg-slate-50/50 dark:bg-slate-950/50 border border-slate-200/60 dark:border-slate-800/60 rounded-xl whitespace-pre-wrap font-sans text-sm leading-relaxed text-slate-700 dark:text-slate-300 max-h-[250px] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 dark:scrollbar-thumb-slate-800 scrollbar-track-transparent text-left shadow-inner">
-                    {meeting?.raw_transcript || transcripts.map(t => t.originalText).join(" ")}
-                  </div>
-                ) : (
-                  <div className="py-12 text-center text-slate-400 italic text-sm">
-                    Không tìm thấy văn bản gốc chưa xử lý. Cuộc họp này có thể đã được tạo trước khi cập nhật tính năng mới.
+                ) : meeting?.raw_transcript || transcripts.length > 0 ? (() => {
+                  const rawText = meeting?.raw_transcript || transcripts.map((t: any) => t.originalText).join(" ");
+                  const charCount = rawText.length;
+                  const wordCount = rawText.split(/\s+/).filter(Boolean).length;
+                  return (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                          <span>{charCount.toLocaleString()} ký tự</span>
+                          <span className="w-0.5 h-0.5 rounded-full bg-slate-300" />
+                          <span>{wordCount.toLocaleString()} từ/cụm</span>
+                        </div>
+                        <button
+                          onClick={() => handleCopyText(rawText, "raw_transcript")}
+                          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 uppercase tracking-wider font-semibold transition-colors cursor-pointer"
+                          title="Sao chép hội thoại gốc"
+                        >
+                          {copiedKey === "raw_transcript" ? (
+                            <Check className="w-3.5 h-3.5 text-green-500" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                      <div className="p-4 bg-slate-100/60 dark:bg-slate-950/50 rounded-lg max-h-[300px] overflow-y-auto custom-scrollbar shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_2px_6px_rgba(0,0,0,0.25)]">
+                        <p className="text-[13px] leading-[1.85] text-slate-600 dark:text-slate-350 font-normal selection:bg-blue-100 dark:selection:bg-blue-900/40">
+                          {rawText}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })() : (
+                  <div className="py-10 text-center text-slate-400 italic text-xs">
+                    Không tìm thấy văn bản gốc. Cuộc họp này có thể được tạo trước khi cập nhật tính năng.
                   </div>
                 )}
               </div>
@@ -1833,19 +2054,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
             {/* SUB-TAB CONTENT */}
             {reprocessedTranscripts.length === 0 ? (
-              <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-12 rounded-xl shadow-sm text-center">
-                <p className="text-sm text-slate-450 italic">
-                  Chưa có dữ liệu phân tích lại. Vui lòng chọn số người phát biểu và bấm nút <strong>"AI Phân vai lại toàn bộ"</strong> ở trên để bắt đầu xử lý toàn bộ cuộc hội thoại.
+              <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-8 rounded-xl shadow-sm text-center space-y-2">
+                <Sparkles className="w-6 h-6 text-slate-300 dark:text-slate-600 mx-auto" />
+                <p className="text-xs text-slate-400 italic max-w-md mx-auto">
+                  Chưa có dữ liệu phân tích lại. Chọn số người phát biểu và bấm <strong>"AI Phân vai"</strong> ở trên để bắt đầu.
                 </p>
               </div>
             ) : subTabRaw === "summary" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                 {/* Left/Middle Column: Summary & Decisions */}
                 <div className="lg:col-span-2 space-y-6">
                   {/* Executive Summary */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">1. Tóm tắt tổng quan</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 border-b border-blue-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center"><BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3></div>
                       {!isEditingReprocessedSummary && (
                         <div className="flex items-center space-x-1">
                           <button
@@ -1871,6 +2093,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       )}
                     </div>
 
+                    <div className="px-5 py-4">
                     {isEditingReprocessedSummary ? (
                       <textarea
                         rows={6}
@@ -1890,12 +2113,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         )}
                       </p>
                     )}
+                    </div>
                   </div>
 
                   {/* Key Decisions */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">2. Quyết định cốt lõi</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-50/80 to-transparent dark:from-amber-950/20 border-b border-amber-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Quyết định cốt lõi</h3></div>
                       {isEditingReprocessedSummary ? (
                         <button
                           onClick={handleAddReprocessedDecisionField}
@@ -1923,6 +2147,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       )}
                     </div>
 
+                    <div className="px-5 py-4">
                     {isEditingReprocessedSummary ? (
                       <div className="space-y-3">
                         {editedReprocessedDecisions.map((dec, idx) => (
@@ -1986,14 +2211,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </button>
                       </div>
                     )}
+                    </div>
                   </div>
                 </div>
 
                 {/* Right Column: Action Items Checklist */}
                 <div className="space-y-6">
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm space-y-4">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-100 dark:border-slate-800">
-                      <h3 className="font-bold text-lg">3. Phân công công việc</h3>
+                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-emerald-50/80 to-transparent dark:from-emerald-950/20 border-b border-emerald-100/60 dark:border-slate-800">
+                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Phân công công việc</h3></div>
+                      <div className="flex items-center space-x-1">
                       {reprocessedActionItems.length > 0 && (
                         <button
                           onClick={() =>
@@ -2019,8 +2246,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           )}
                         </button>
                       )}
+                      {reprocessedActionItems.length > 0 && renderTranslateDropdown("raw_actions")}
+                      </div>
                     </div>
 
+                    <div className="px-5 py-4">
                     <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
                       {reprocessedActionItems.length === 0 ? (
                         <p className="text-sm text-slate-400 italic py-4">Không có công việc nào được phân công.</p>
@@ -2059,7 +2289,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                       item.is_completed ? "line-through text-slate-400 dark:text-slate-500" : ""
                                     }`}
                                   >
-                                    {item.description}
+                                    {translatingSection === "raw_actions" ? (
+                                      <span className="flex items-center space-x-1.5 text-slate-400 text-xs italic">
+                                        <RefreshCw className="w-3 h-3 animate-spin" />
+                                        <span>Đang dịch...</span>
+                                      </span>
+                                    ) : (
+                                      translatedReprocessedActionItems[reprocessedActionItems.indexOf(item)] || item.description
+                                    )}
                                   </p>
                                   <button
                                     onClick={() => handleCopyText(item.description, `act_${item.id}`)}
@@ -2091,6 +2328,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           );
                         })
                       )}
+                    </div>
                     </div>
                   </div>
                 </div>
@@ -2142,8 +2380,87 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </div>
                 </div>
 
-                {/* Transcript Table */}
-                <div className="overflow-x-auto pr-1">
+                {/* Raw Transcript — Mobile Cards */}
+                <div className="sm:hidden space-y-2">
+                  {filteredReprocessedTranscripts.map((t) => {
+                    const isEditing = editingTranscriptId === t.id;
+                    const fmtTime = (ms: number) => {
+                      const s = Math.floor(ms / 1000);
+                      const mm = Math.floor(s / 60);
+                      const ss = s % 60;
+                      return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+                    };
+                    return (
+                      <div key={t.id} className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900/50 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-100 dark:border-slate-800">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-slate-400 font-mono font-medium">{fmtTime(t.startMs)}</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>{t.speakerName}</span>
+                            {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
+                          </div>
+                          <div className="flex items-center gap-0.5">
+                            {t.translatedText && (
+                              <button onClick={() => playTts(t.id, t.translatedText)} className={`p-1.5 rounded transition-colors cursor-pointer ${activeSpeech?.id === t.id ? "text-red-500 bg-red-50 animate-pulse" : "text-slate-400 hover:text-blue-600 hover:bg-blue-50"}`} title="Nghe">
+                                {activeSpeech?.id === t.id ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                              </button>
+                            )}
+                            <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </button>
+                            {!isEditing && (
+                              <button onClick={() => startEditingTranscript(t)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors cursor-pointer" title="Sửa">
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="px-3 py-2.5 space-y-2">
+                          {isEditing ? (
+                            <div className="flex items-start space-x-2">
+                              <textarea value={editingTextVal} onChange={(e) => setEditingTextVal(e.target.value)} disabled={isSavingLine} className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50" rows={3} />
+                              <button onClick={() => handleSaveTranscriptLine(t.id)} disabled={isSavingLine} className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50">
+                                {isSavingLine ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-[13px] text-slate-900 dark:text-slate-100 font-semibold leading-relaxed flex-1">{highlightText(t.correctedText || t.originalText, searchQuery)}</p>
+                              <button onClick={() => handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
+                                {copiedKey === `tx_orig_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          )}
+                          {t.translatedText && (
+                            <div className="flex items-start justify-between gap-2 pt-1.5 border-t border-slate-100 dark:border-slate-800/50">
+                              <p className="text-[13px] text-slate-500 dark:text-slate-400 italic leading-relaxed flex-1">{highlightText(t.translatedText, searchQuery)}</p>
+                              <button onClick={() => handleCopyText(t.translatedText, `tx_trans_${t.id}`)} className="p-1 text-slate-400 hover:text-blue-600 rounded transition-colors cursor-pointer shrink-0" title="Copy">
+                                {copiedKey === `tx_trans_${t.id}` ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {lineSummaries[t.id] && (
+                          <div className="px-3 py-2 bg-emerald-50/50 dark:bg-emerald-950/10 border-t border-emerald-100 dark:border-emerald-900/30 text-xs space-y-2">
+                            {lineSummaries[t.id].loading ? (
+                              <span className="flex items-center space-x-1.5 text-emerald-600"><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span>Đang tóm tắt...</span></span>
+                            ) : (
+                              <>
+                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt gốc:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].originalSummary}</p></div>
+                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt dịch:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].translatedSummary}</p></div>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {filteredReprocessedTranscripts.length === 0 && (
+                    <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.</p>
+                  )}
+                </div>
+
+                {/* Raw Transcript — Desktop Table */}
+                <div className="hidden sm:block overflow-x-auto pr-1">
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
@@ -2361,7 +2678,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   </div>
                                 )}
                               </td>
-                              <td />
+                              <td className="hidden sm:table-cell" />
                             </tr>
                           )}
                         </Fragment>

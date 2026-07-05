@@ -216,6 +216,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [chunkSize, setChunkSize] = useState(250);
   const [endpointing, setEndpointing] = useState(3000);
   const [translationDelay, setTranslationDelay] = useState(5000);
+  const [diarizationEnabled, setDiarizationEnabled] = useState(true);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   // Dynamic speaker colors mapping
@@ -264,6 +265,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     setChunkSize(parseInt(localStorage.getItem("meeting_chunk_size") || "100"));
     setEndpointing(parseInt(localStorage.getItem("meeting_endpointing") || "3000"));
     setTranslationDelay(parseInt(localStorage.getItem("meeting_translation_delay") || "5000"));
+    setDiarizationEnabled(localStorage.getItem("meeting_diarization_enabled") !== "false");
 
     fetchMeetingDetails();
   }, []);
@@ -695,7 +697,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     );
 
     const completedTranscripts = transcriptsRef.current.filter((t) => t.status !== "draft" && t.status !== "processing" && t.status !== "Dịch lỗi - Thử lại");
-    const history = completedTranscripts.slice(-15).map((tx) => ({
+    const history = completedTranscripts.slice(-30).map((tx) => ({
       speaker_tag: tx.speakerTag || "unknown",
       speaker_name: tx.speakerName || "Unknown",
       text: tx.text,
@@ -709,10 +711,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           meeting_id: meetingId,
-          fullTranscript: liveTranscriptTextRef.current,
           history,
           last_transcript,
           target_language: selectedTargetLang,
+          diarize_enabled: diarizationEnabled,
           drafts: draftsToProcess.map((d) => ({
             id: d.id,
             speakerTag: d.speakerTag,
@@ -827,6 +829,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     noiseSuppression,
     autoGainControl,
     endpointing,
+    diarize: diarizationEnabled,
     onTranscript: handleTranscript,
     onError: handleMicError,
     onStatusChange: handleStatusChange,
@@ -1664,6 +1667,33 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         const val = e.target.checked;
                         setAutoGainControl(val);
                         localStorage.setItem("meeting_auto_gain_control", String(val));
+                      }}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Diarization toggle */}
+                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <label className="text-[10px] uppercase font-bold text-slate-400">Nhận dạng người nói</label>
+                  
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <div className="flex-1 pr-2">
+                      <span className="text-slate-600 dark:text-slate-350 font-medium">Phân biệt giọng nói (Diarize)</span>
+                      <p className="text-[10px] text-slate-400 leading-normal mt-0.5">
+                        {diarizationEnabled 
+                          ? "BẬT: Dùng sóng âm để gợi ý + AI thẩm định người nói."
+                          : "TẮT: AI phân vai 100% dựa trên ngữ cảnh hội thoại."
+                        }
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={diarizationEnabled}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        setDiarizationEnabled(val);
+                        localStorage.setItem("meeting_diarization_enabled", String(val));
                       }}
                       className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
                     />

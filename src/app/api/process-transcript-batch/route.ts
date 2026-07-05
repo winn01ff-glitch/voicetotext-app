@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, drafts, fullTranscript, history, last_transcript, target_language } = body;
+    const { meeting_id, drafts, history, last_transcript, target_language, diarize_enabled } = body;
 
     if (!meeting_id || !drafts || !Array.isArray(drafts) || drafts.length === 0) {
       return NextResponse.json({ error: "Missing required fields (meeting_id, drafts)" }, { status: 400 });
@@ -41,13 +41,8 @@ export async function POST(request: Request) {
       .select("speaker_tag, display_name, language_code")
       .eq("meeting_id", meeting_id);
 
-    // 3. Define historyContext using body-passed history
+    // 3. Define historyContext using body-passed history (up to 30 completed lines)
     const historyContext = history || [];
-
-
-
-
-    const isMultiSpeakerMode = allSpeakers && allSpeakers.length > 2;
 
     // 4. Prepare drafts context
     const draftsContext = drafts.map((d: any, idx: number) => ({
@@ -60,183 +55,144 @@ export async function POST(request: Request) {
     const targetLang = target_language || meeting.target_language;
     const sourceLang = meeting.source_language;
     const context = meeting.meeting_context;
+    const diarizeMode = diarize_enabled !== false; // Default: true
 
-    // Fetch only the last 1000 characters of the raw continuous transcript for context
-    const trimmedFullTranscript = fullTranscript && fullTranscript.length > 1000 
-      ? "..." + fullTranscript.slice(-1000) 
-      : fullTranscript;
+    // Language-specific labels and instructions
+    const sourceLangLabel: Record<string, string> = {
+      ja: "Japanese (日本語)",
+      en: "English",
+      vi: "Vietnamese (Tiếng Việt)",
+      auto: "Auto-detect (may be Japanese, English, Vietnamese, or mixed)",
+    };
+
+    const sourceLangInstruction: Record<string, string> = {
+      ja: `The input speech is in JAPANESE. Expect Japanese text with possible kanji errors from ASR.
+Speaker identification cues:
+- Pronouns: 私 (watashi, formal), 僕 (boku, male casual), 俺 (ore, male rough)
+- Register: です/ます (polite) vs だ/ね (casual)
+- Sentence-final particles: よ, ね, か, わ, ぞ
+- Honorifics: 〜さん, 〜先生, 〜様
+- Aizuchi (listener responses): なるほど, うん, はい, そうですね, ええ, あー`,
+
+      en: `The input speech is in ENGLISH. Expect English text with possible homophones or mishearings from ASR.
+Speaker identification cues:
+- Pronouns: I/me vs you, we vs they
+- Question vs statement patterns
+- Formal ("Could you please...") vs casual ("Hey, so...")
+- Backchannels (listener responses): yeah, okay, I see, right, uh-huh, sure, got it`,
+
+      vi: `The input speech is in VIETNAMESE. Expect Vietnamese text with possible diacritics errors from ASR.
+Speaker identification cues:
+- Pronouns: tôi/mình (I, neutral), anh/chị/em (gendered/age-based), ông/bà (elderly)
+- Register: formal (thưa, kính, ạ) vs casual (ừ, ờ, nhé, nha)
+- Sentence-final particles: ạ, nhé, nha, nhỉ, hả, à
+- Backchannels (listener responses): vâng, dạ, ừ, thế à, đúng rồi, à ra vậy`,
+
+      auto: `The input speech language is AUTO-DETECTED and may be Japanese, English, Vietnamese, or a mix.
+Apply ALL language-specific cues:
+- Japanese: Pronouns (私/僕/俺), register (です・ます vs だ・ね), aizuchi (なるほど, うん, はい)
+- English: Pronouns (I/you), question patterns, backchannels (yeah, okay, I see)
+- Vietnamese: Pronouns (tôi/anh/chị/em), particles (ạ/nhé/nha), backchannels (vâng, dạ, ừ)
+- IMPORTANT: Track which speaker uses which language — a language switch is a strong speaker-change signal.`,
+    };
+
+    // Cold start handling
+    const coldStartNote = historyContext.length === 0
+      ? `
+⚠️ COLD START: There is NO conversation history yet. This is the very first segment of the meeting.
+- ${diarizeMode
+          ? "Trust Deepgram's speaker_tag hints more heavily since there is no prior context to cross-reference. Assign the first speaker as the one registered first in the REGISTERED SPEAKERS list (usually speaker_1)."
+          : "Since there is no history AND no audio hints, rely entirely on linguistic structure within THIS segment. The first person speaking is most likely speaker_1 (the meeting organizer). Only split into multiple speakers if there are very clear dialogue transitions (Question→Answer, pronoun shifts, register changes) within the segment."
+        }
+- As more segments are processed, future calls will include conversation history for better accuracy.`
+      : "";
+
+    // Diarize mode instruction
+    const diarizeInstruction = diarizeMode
+      ? `SPEAKER VERIFICATION (Audio-hint assisted mode):
+   - The "speaker_tag" in each raw segment is a HINT from Deepgram's audio waveform analysis.
+   - VERIFY each hint against the CONVERSATION HISTORY:
+     • Does the content logically follow from what this speaker said before?
+     • Does the tone/register match this speaker's established pattern?
+   - If the hint is correct → keep it. If it contradicts the conversation logic → correct it.
+   - If a segment contains dialogue from MULTIPLE speakers, split it into separate blocks.`
+      : `CONTEXTUAL SPEAKER DIARIZATION (100% Semantic-based):
+   - Audio diarization is DISABLED. All input is tagged "speaker_1" by default — ignore this tag.
+   - You MUST detect speaker changes using ONLY:
+     • Dialogue transitions: Question → Answer, Statement → Response
+     • Pronoun shifts (see language-specific cues above)
+     • Register/tone changes
+     • Language switches (if applicable)
+   - Cross-reference with CONVERSATION HISTORY to match speech patterns to known speakers.
+   - If a new speaker appears who is not registered, assign a new sequential tag (e.g., "speaker_3").`;
 
     const systemPrompt = `
-You are an expert dialogue editor and translator. Your job is to process raw speech transcript segments from a live conversation.
+You are an expert dialogue editor, speaker classifier, and translator for live meeting transcription.
 
-PRIORITY WORKFLOW — CONTEXT-FIRST CLASSIFICATION:
-1. FIRST: Read the FULL CONTINUOUS TRANSCRIPT below to understand the complete conversation flow, who is asking questions, who is answering, and the overall context.
-2. SECOND: Read the RAW DIALOGUE SEQUENCE.
-3. CLASSIFY SPEAKERS based on your understanding of the conversation context (who would logically say what).
-4. Assign correct speaker tags from the REGISTERED SPEAKERS list based on dialog logic and history.
+==================================================
+LANGUAGE CONFIGURATION
+==================================================
+Source Language: ${sourceLangLabel[sourceLang] || sourceLangLabel["auto"]}
+Target Language: ${targetLang}
+${sourceLangInstruction[sourceLang] || sourceLangInstruction["auto"]}
 
-REGISTERED SPEAKERS (Map to these tags: e.g. speaker_1, speaker_2):
+==================================================
+INPUT DATA
+==================================================
+
+REGISTERED SPEAKERS:
 ${JSON.stringify(allSpeakers || [])}
 
-CONVERSATION HISTORY (Use for reference and xưng hô/politeness consistency):
-${JSON.stringify(historyContext)}
+MEETING CONTEXT:
+${context || "General discussion"}
 
-CONTEXT OF THE MEETING:
-${context || "General business/technical discussion"}
+CONVERSATION HISTORY (Last ${historyContext.length} completed lines):
+${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — this is the first segment)"}
+${coldStartNote}
 
-GLOSSARY (Must apply if matching words are found):
+GLOSSARY (Apply if matching words are found):
 ${JSON.stringify(glossaryList || [])}
 
-FULL CONTINUOUS TRANSCRIPT (READ THIS FIRST for complete context understanding):
-${trimmedFullTranscript || "(not available)"}
-
-RAW DIALOGUE SEQUENCE TO PROCESS (Input text stream):
+RAW DIALOGUE SEQUENCE TO PROCESS:
 ${JSON.stringify(draftsContext)}
 
-RULES:
-1. CONTEXT-FIRST SPEAKER CLASSIFICATION:
-   - Your understanding of the conversation context takes priority.
-   - The 'speaker_tag' in the RAW DIALOGUE SEQUENCE is a biometric voice-analysis hint from Deepgram. If it seems reasonable and fits the context, keep it. If it seems suspicious or illogical (e.g. a question and its answer are assigned to the same tag, or speaker tags flicker randomly), use your semantic context understanding to correct the speaker assignment.
-   - If a question and answer are both grouped in the same raw segment, SPLIT them and assign correct speakers.
-   - Use language clues: who speaks Japanese, English, or Vietnamese.
+==================================================
+INSTRUCTIONS
+==================================================
 
-2. STRICT SPEAKER GROUPING & NO DUPLICATES:
-   - Group consecutive turns of the SAME speaker. Do NOT return consecutive turns with the same speaker_tag.
+1. ${diarizeInstruction}
+
+2. LISTENING RESPONSES / BACKCHANNELS:
+   - These belong to the LISTENER, not the current speaker. Split them out and assign to the other person.
+   - Japanese: なるほど, うん, はい, そうですね, ええ, あー
+   - English: yeah, okay, I see, right, uh-huh, sure, got it
+   - Vietnamese: vâng, dạ, ừ, thế à, đúng rồi, à ra vậy
+
+3. STRICT WORD PRESERVATION:
+   - "original_text": ONLY fix obvious ASR errors (wrong kanji, garbled text, diacritics, spelling).
+   - Do NOT add, remove, rephrase, or restructure any words.
+   - Keep ALL filler words (えー, あの, umm, à, ờ, uh).
+   - NEVER change one valid word into a different word.
+
+4. CONSECUTIVE SPEAKER GROUPING:
+   - Merge consecutive turns of the SAME speaker. Never return two adjacent blocks with the same speaker_tag.
    - Clean extreme stuttering or word loops (5+ repetitions).
-
-3. LISTENING RESPONSES (AIZUCHI / BACKCHANNELS):
-   - Listening responses (e.g. Japanese: "なるほど", "うん", "はい", "そうですね"; English: "yeah", "okay", "I see"; Vietnamese: "vâng", "dạ", "thế à") belong to the LISTENER, not the speaker.
-   - If a backchannel appears at the end or beginning of someone's turn, split and assign it to the other speaker.
-
-4. ABSOLUTE WORD PRESERVATION & MINIMAL CORRECTION:
-   - For 'original_text': ONLY fix obvious speech recognition errors (wrong kanji, garbled characters, spelling typos).
-   - Do NOT merge, remove, rephrase, or restructure sentences.
-   - Keep EVERY word from raw input. Keep casual/polite register as spoken.
-   - Only fix: spelling errors, glossary substitutions, split word gluing, extreme stutter removal.
-   - NEVER change one valid word into a completely different word (e.g. NEVER change "そうか" to "そうそう", or "ね" to "はい").
 
 5. TRANSLATION:
    - Translate each turn into "${targetLang}" naturally and faithfully.
-   - If the original text is already in "${targetLang}", the 'translated_text' MUST equal 'original_text' exactly.
+   - If original text is already in "${targetLang}", set translated_text = original_text exactly.
 
-OUTPUT FORMAT:
-Return valid JSON ONLY. No markdown, no explanations.
+==================================================
+OUTPUT FORMAT
+==================================================
+Return VALID JSON ONLY. No markdown, no explanations, no code fences.
+
 {
   "cleaned_turns": [
     {
-      "speaker_tag": "correct speaker tag (e.g. speaker_1, speaker_2)",
+      "speaker_tag": "speaker_X",
       "original_text": "corrected source text",
       "translated_text": "translation into ${targetLang}"
-    }
-  ]
-}
-
-==================================================
-FEW-SHOT EXAMPLES FOR ALL LANGUAGES (JAPANESE, ENGLISH, VIETNAMESE)
-==================================================
-
-[EXAMPLE 1: JAPANESE -> VIETNAMESE]
-- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "はじめましてですね。初めまして、嬉しい つながることができて嬉しいです。ありがとうございます 今はるかさんは どこに住んでるんですか。"}]
-- OUTPUT JSON:
-{
-  "cleaned_turns": [
-    {
-      "speaker_tag": "speaker_2",
-      "original_text": "はじめましてですね。初めまして、嬉しいです。つながることができて嬉しいです。ありがとうございます。",
-      "translated_text": "Lần đầu gặp mặt nhỉ. Rất vui được gặp bạn, mình rất vui vì chúng ta có thể kết nối được với nhau. Cảm ơn bạn."
-    },
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "今、はるかさんはどこに住んでるんですか。",
-      "translated_text": "Hiện tại Haruka-san đang sống ở đâu thế?"
-    }
-  ]
-}
-
-[EXAMPLE 2: JAPANESE BACKCHANNELS & STRICT WORD PRESERVATION]
-- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "フランスでフランスにいた時にyoutube撮りましたよね最後そうかはいはいはいゲームの話とか覚えてます"}]
-- OUTPUT JSON:
-{
-  "cleaned_turns": [
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "フランスで、フランスにいた時にYouTube撮りましたよね。",
-      "translated_text": "Ở Pháp ấy? Lúc bạn ở Pháp chúng ta đã quay video YouTube đúng không nhỉ?"
-    },
-    {
-      "speaker_tag": "speaker_2",
-      "original_text": "ね。最後、そうか。はいはいはい。",
-      "translated_text": "Đúng thế, lần cuối cùng ấy. À ra vậy. Vâng vâng vâng."
-    },
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "ゲームの話とか覚えてます？",
-      "translated_text": "Bạn có nhớ vụ chúng ta nói về game không?"
-    }
-  ]
-}
-
-[EXAMPLE 3: ENGLISH -> VIETNAMESE]
-- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "hello how are you today i am fine thanks and you what is your name"}]
-- OUTPUT JSON:
-{
-  "cleaned_turns": [
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "Hello, how are you today?",
-      "translated_text": "Xin chào, hôm nay bạn thế nào?"
-    },
-    {
-      "speaker_tag": "speaker_2",
-      "original_text": "I am fine, thanks. And you?",
-      "translated_text": "Tôi khỏe, cảm ơn bạn. Còn bạn thì sao?"
-    },
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "What is your name?",
-      "translated_text": "Bạn tên là gì thế?"
-    }
-  ]
-}
-
-[EXAMPLE 4: VIETNAMESE -> VIETNAMESE]
-- INPUT: [{"index": 1, "speaker_tag": "speaker_1", "text": "xin chao cac ban hom nay chung ta hoc tiéng nhat nhe vang dung the"}]
-- OUTPUT JSON:
-{
-  "cleaned_turns": [
-    {
-      "speaker_tag": "speaker_1",
-      "original_text": "Xin chào các bạn, hôm nay chúng ta học tiếng Nhật nhé.",
-      "translated_text": "Xin chào các bạn, hôm nay chúng ta học tiếng Nhật nhé."
-    },
-    {
-      "speaker_tag": "speaker_2",
-      "original_text": "Vâng, đúng thế.",
-      "translated_text": "Vâng, đúng thế."
-    }
-  ]
-}
-
-==================================================
-OUTPUT
-==================================================
-
-Return ONLY valid JSON.
-
-Do not output Markdown.
-
-Do not explain reasoning.
-
-Do not wrap JSON in code fences.
-
-Schema
-
-{
-  "cleaned_turns":[
-    {
-      "speaker_tag":"speaker_1",
-      "original_text":"...",
-      "translated_text":"..."
     }
   ]
 }
@@ -246,19 +202,14 @@ IMPORTANT RULES
 ==================================================
 
 Never hallucinate.
-
 Never invent missing dialogue.
-
 Never merge different speakers into one turn.
-
 Never translate names.
-
 Never remove fillers unless they are obvious ASR duplication.
-
 Prefer preserving uncertain words over guessing.
-
 The output must preserve the chronological order of the conversation.
 `;
+
 
     // 4. Setup Gemini Client & Call API
     const genAI = new GoogleGenerativeAI(geminiApiKey);
