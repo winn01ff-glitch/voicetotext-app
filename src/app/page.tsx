@@ -595,8 +595,10 @@ export default function Dashboard() {
         setRecoveryMeeting(null);
         localStorage.removeItem("active_meeting_id");
       }
+      await showCustomAlert("Xóa cuộc họp thành công!", "success");
     } catch (err) {
       console.error("Delete error:", err);
+      await showCustomAlert("Không thể xóa cuộc họp. Vui lòng thử lại.", "error");
     }
   };
 
@@ -1488,10 +1490,10 @@ export default function Dashboard() {
                           : "TRỰC TIẾP";
 
                         const typeStyles = createdFrom === "youtube"
-                          ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30"
+                          ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30"
                           : createdFrom === "upload"
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-450 dark:border-emerald-900/30"
-                          : "bg-sky-50 text-sky-700 border-sky-200/60 dark:bg-sky-950/40 dark:text-sky-450 dark:border-sky-900/30";
+                          ? "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900/30"
+                          : "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900/30";
 
                         return (
                           <>
