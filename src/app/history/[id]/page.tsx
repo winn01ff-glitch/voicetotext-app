@@ -7,6 +7,8 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { exportToDocx } from "@/lib/docx-helper";
 import { exportToPdf } from "@/lib/pdf-helper";
+import PipelineProgress from "@/components/PipelineProgress";
+import AudioPlayer from "@/components/AudioPlayer";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
@@ -98,6 +100,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // Editing state for transcripts lines
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [editingTextVal, setEditingTextVal] = useState("");
+
+  // Audio player state (chỉ tồn tại trong phiên upload)
+  const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
+  const [activeAudioTranscriptId, setActiveAudioTranscriptId] = useState<string | null>(null);
+
+  // Speaker rename state
+  const [renamingSpeaker, setRenamingSpeaker] = useState<{ tag: string; name: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [isRenaming, setIsRenaming] = useState(false);
+
+  // Ref cho auto-scroll transcript
+  const transcriptContainerRef = useRef<HTMLDivElement>(null);
   const [isSavingLine, setIsSavingLine] = useState(false);
 
   // Custom Modal state
@@ -374,6 +388,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       setIsDarkMode(true);
     }
     fetchMeetingData();
+
+    // Load blob URL từ sessionStorage (chỉ có trong phiên upload)
+    const blobUrl = sessionStorage.getItem(`audio_blob_${meetingId}`);
+    if (blobUrl) {
+      setAudioBlobUrl(blobUrl);
+    }
   }, []);
 
   const fetchMeetingData = async () => {
@@ -611,6 +631,58 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       );
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // Speaker Rename: gọi API bulk rename + cập nhật local state
+  const handleRenameSpeaker = async () => {
+    if (!renamingSpeaker || !renameValue.trim()) return;
+    setIsRenaming(true);
+    try {
+      const res = await fetch("/api/meetings/rename-speaker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          meeting_id: meetingId,
+          speaker_tag: renamingSpeaker.tag,
+          new_name: renameValue.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to rename");
+
+      // Cập nhật local state — tất cả transcripts cùng speaker_tag
+      const newName = renameValue.trim();
+      setTranscripts((prev) =>
+        prev.map((t) =>
+          t.speakerTag === renamingSpeaker.tag
+            ? { ...t, speakerName: newName }
+            : t
+        )
+      );
+      setReprocessedTranscripts((prev) =>
+        prev.map((t) =>
+          t.speakerTag === renamingSpeaker.tag
+            ? { ...t, speakerName: newName }
+            : t
+        )
+      );
+      // Cập nhật speakers list
+      setSpeakers((prev) =>
+        prev.map((s) =>
+          s.speaker_tag === renamingSpeaker.tag
+            ? { ...s, display_name: newName }
+            : s
+        )
+      );
+
+      setRenamingSpeaker(null);
+      await showCustomAlert(`Đã đổi tên thành "${newName}" cho ${data.updated_count || 0} dòng.`, "success", "Thành công");
+    } catch (err) {
+      console.error("Rename speaker error:", err);
+      await showCustomAlert(`Không thể đổi tên: ${String(err)}`, "error");
+    } finally {
+      setIsRenaming(false);
     }
   };
 
@@ -1169,7 +1241,77 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     );
   }
 
+  // Pipeline processing statuses
+  const processingStatuses = [
+    "queued", "uploading", "transcribing", "correcting",
+    "diarizing", "checking", "translating", "summarizing",
+    "extracting", "saving",
+  ];
+  const isInPipeline = meeting && processingStatuses.includes(meeting.status);
+  const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status) && meeting.source_type !== "live";
+
+  // Show processing UI for pipeline meetings
+  if (isInPipeline || isPipelineTerminal) {
+    return (
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
+        {/* Header */}
+        <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+              <button
+                onClick={() => router.push("/")}
+                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
+                title="Quay lại danh sách"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
+              {meeting?.source_type && meeting.source_type !== 'live' && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-bold uppercase">
+                  {meeting.source_type}
+                </span>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Processing content */}
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-xl">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 shadow-sm">
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 mx-auto bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mb-4">
+                  <Sparkles className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Đang xử lý âm thanh</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  AI đang phân tích và xử lý file của bạn. Bạn có thể rời trang và quay lại sau.
+                </p>
+              </div>
+              <PipelineProgress
+                meetingId={meetingId}
+                initialStatus={meeting.status}
+                initialProgress={meeting.progress}
+                onCompleted={() => {
+                  // Reload page to show full results
+                  window.location.reload();
+                }}
+                onCancel={() => {
+                  // Status will update via Realtime
+                }}
+                onResume={() => {
+                  // Status will update via Realtime
+                }}
+              />
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
+    <>
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans">
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
@@ -1254,10 +1396,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         <div className="space-y-6">
 
           {/* TOP BAR: Unified Switcher (Left) + Meeting Info (Right) */}
-          <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4">
+          <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4">
             
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
-            <div className="relative grid grid-cols-2 lg:flex w-full lg:w-[880px] select-none shrink-0 order-2 lg:order-1 gap-y-0">
+            <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
               {(() => {
                 const activeIndex = mainTab === "processed"
                   ? (subTabProcessed === "summary" ? 0 : 1)
@@ -1271,7 +1413,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <>
                     {/* Desktop-only sliding underline indicator */}
                     <div
-                      className={`hidden lg:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
+                      className={`hidden xl:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "25%",
                         transform: `translateX(${activeIndex * 100}%)`,
@@ -1280,7 +1422,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     {/* Mobile-only 2D sliding underline indicator */}
                     <div
-                      className={`lg:hidden absolute z-10 h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
+                      className={`xl:hidden absolute z-10 h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
                       style={{
                         width: "50%",
                         top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 1px)" : "calc(100% - 1px)",
@@ -1290,7 +1432,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 lg:order-1 border-r-2 border-r-blue-500 dark:border-r-blue-450 lg:border-r-0 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r-2 border-r-blue-500 dark:border-r-blue-450 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1303,7 +1445,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-500 dark:border-r-blue-450 whitespace-nowrap order-3 lg:order-2 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-500 dark:border-r-blue-450 whitespace-nowrap order-3 xl:order-2 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1315,7 +1457,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 lg:order-3 border-b border-slate-200 dark:border-slate-800 lg:border-b-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 2
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1327,7 +1469,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 lg:pt-3 lg:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 lg:order-4 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 xl:order-4 ${
                         activeIndex === 3
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1342,20 +1484,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {/* Meeting Info Bar */}
-            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] lg:mb-[5.5px] ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 lg:order-2">
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
+            <div className="grid grid-cols-4 xl:flex w-full xl:w-auto bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] xl:mb-[5.5px] xl:ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 xl:order-2 shrink-0 whitespace-nowrap">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
                 <Calendar className="w-3.5 h-3.5" />
                 <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
               </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
                 <Clock className="w-3.5 h-3.5" />
                 <span>{formatDuration(meeting.duration_ms)}</span>
               </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
                 <BookOpen className="w-3.5 h-3.5" />
                 <span className="capitalize">{meeting.meeting_context}</span>
               </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
               </div>
@@ -1726,12 +1868,39 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
                     };
                     return (
-                      <div key={t.id} className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900/50 overflow-hidden">
+                      <div
+                        key={t.id}
+                        id={`transcript-row-${t.id}`}
+                        className={`border rounded-lg overflow-hidden transition-colors duration-200 ${
+                          activeAudioTranscriptId === t.id
+                            ? "border-blue-300 dark:border-blue-700 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
+                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50"
+                        }`}
+                      >
                         {/* Header: time + speaker + tools */}
                         <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-100 dark:border-slate-800">
                           <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-slate-400 font-mono font-medium">{fmtTime(t.startMs)}</span>
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>
+                            <span
+                              className={`text-[11px] font-mono font-medium ${
+                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                              } text-slate-400`}
+                              onClick={() => {
+                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
+                                  (window as any).__audioPlayerSeekTo(t.startMs);
+                                }
+                              }}
+                            >
+                              {fmtTime(t.startMs)}
+                            </span>
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-blue-300 dark:hover:ring-blue-700 transition-all"
+                              style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRenamingSpeaker({ tag: t.speakerTag, name: t.speakerName });
+                                setRenameValue(t.speakerName);
+                              }}
+                            >
                               {t.speakerName}
                             </span>
                             {needsReview && <span className="text-amber-500 text-xs">⚠️</span>}
@@ -1772,7 +1941,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_orig_${t.id}`
                                     ? "opacity-100 delay-0"
-                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -1823,7 +1992,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_trans_${t.id}`
                                     ? "opacity-100 delay-0"
-                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -1956,15 +2125,38 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                         return (
                           <Fragment key={t.id}>
-                            <tr className="hover:bg-slate-50/55 dark:hover:bg-slate-900/50 group">
-                            <td className="py-4 px-4 align-top text-slate-400 font-medium whitespace-nowrap">
+                            <tr
+                              id={`transcript-row-${t.id}`}
+                              className={`group transition-colors duration-200 ${
+                                activeAudioTranscriptId === t.id
+                                  ? "bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
+                                  : "hover:bg-slate-50/55 dark:hover:bg-slate-900/50"
+                              }`}
+                            >
+                            <td
+                              className={`py-4 px-4 align-top font-medium whitespace-nowrap ${
+                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                              } text-slate-400`}
+                              onClick={() => {
+                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
+                                  (window as any).__audioPlayerSeekTo(t.startMs);
+                                }
+                              }}
+                              title={audioBlobUrl ? "Click để phát từ vị trí này" : undefined}
+                            >
                               {formatTime(t.startMs)}
                             </td>
                             <td className="py-4 px-4 align-top whitespace-nowrap">
                               <div className="flex items-center space-x-1.5">
                                 <span
-                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold"
+                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-blue-300 dark:hover:ring-blue-700 transition-all"
                                   style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenamingSpeaker({ tag: t.speakerTag, name: t.speakerName });
+                                    setRenameValue(t.speakerName);
+                                  }}
+                                  title="Click để đổi tên người nói"
                                 >
                                   <span>{t.speakerName}</span>
                                 </span>
@@ -1973,7 +2165,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 )}
                               </div>
                             </td>
-                            <td className="py-4 px-4 align-top group/cell">
+                            <td 
+                              onClick={() => {
+                                if (!isEditing) {
+                                  setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                }
+                              }}
+                              className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
+                            >
                               {isEditing ? (
                                 <div className="flex items-start space-x-2">
                                   <textarea
@@ -1996,13 +2195,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   </button>
                                 </div>
                               ) : (
-                                <div 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                  }}
-                                  className="leading-relaxed cursor-pointer"
-                                >
+                                <div className="leading-relaxed">
                                   <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
                                   </span>
@@ -2015,7 +2208,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                       activeTouchKey === `tx_orig_${t.id}`
                                         ? "opacity-100 delay-0"
-                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -2052,15 +2245,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </div>
                               )}
                             </td>
-                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell">
+                            <td 
+                              onClick={() => {
+                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                              }}
+                              className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell cursor-pointer"
+                            >
                               {t.translatedText && (
-                                <div 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                  }}
-                                  className="leading-relaxed cursor-pointer"
-                                >
+                                <div className="leading-relaxed">
                                   <span>
                                     {highlightText(t.translatedText, searchQuery)}
                                   </span>
@@ -2068,7 +2260,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                       activeTouchKey === `tx_trans_${t.id}`
                                         ? "opacity-100 delay-0"
-                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -2699,7 +2891,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_orig_${t.id}`
                                     ? "opacity-100 delay-0"
-                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -2750,7 +2942,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_trans_${t.id}`
                                     ? "opacity-100 delay-0"
-                                    : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                 }`}
                               >
                                 <button
@@ -2895,7 +3087,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </span>
                               </div>
                             </td>
-                            <td className="py-4 px-4 align-top group/cell">
+                            <td 
+                              onClick={() => {
+                                if (!isEditing) {
+                                  setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                }
+                              }}
+                              className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
+                            >
                               {isEditing ? (
                                 <div className="flex items-start space-x-2">
                                   <textarea
@@ -2918,13 +3117,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   </button>
                                 </div>
                               ) : (
-                                <div 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                  }}
-                                  className="leading-relaxed cursor-pointer"
-                                >
+                                <div className="leading-relaxed">
                                   <span className="text-slate-900 dark:text-slate-100 font-semibold">
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
                                   </span>
@@ -2937,7 +3130,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                       activeTouchKey === `tx_orig_${t.id}`
                                         ? "opacity-100 delay-0"
-                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -2974,15 +3167,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </div>
                               )}
                             </td>
-                            <td className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell">
+                            <td 
+                              onClick={() => {
+                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                              }}
+                              className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell cursor-pointer"
+                            >
                               {t.translatedText && (
-                                <div 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                  }}
-                                  className="leading-relaxed cursor-pointer"
-                                >
+                                <div className="leading-relaxed">
                                   <span>
                                     {highlightText(t.translatedText, searchQuery)}
                                   </span>
@@ -2990,7 +3182,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                       activeTouchKey === `tx_trans_${t.id}`
                                         ? "opacity-100 delay-0"
-                                        : "opacity-0 delay-0 group-hover/cell:opacity-100 group-hover/cell:delay-[150ms]"
+                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
                                     }`}
                                   >
                                     <button
@@ -3204,5 +3396,81 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         </div>
       )}
     </div>
+
+      {/* === AUDIO PLAYER (chỉ hiển khi có blob URL từ phiên upload) === */}
+      {audioBlobUrl && (
+        <AudioPlayer
+          blobUrl={audioBlobUrl}
+          transcripts={transcripts.map(t => ({ id: t.id, start_ms: t.startMs, end_ms: t.endMs }))}
+          activeTranscriptId={activeAudioTranscriptId}
+          onTimeUpdate={(currentTimeMs: number) => {
+            // Tìm transcript đang phát
+            const active = transcripts.find(
+              (t) => currentTimeMs >= t.startMs && currentTimeMs <= t.endMs
+            );
+            const newId = active?.id || null;
+            if (newId !== activeAudioTranscriptId) {
+              setActiveAudioTranscriptId(newId);
+              // Auto-scroll đến transcript đang phát
+              if (newId) {
+                const el = document.getElementById(`transcript-row-${newId}`);
+                if (el) {
+                  el.scrollIntoView({ behavior: "smooth", block: "center" });
+                }
+              }
+            }
+          }}
+          onSeekToTranscript={(startMs: number) => {
+            // Handled by __audioPlayerSeekTo global
+          }}
+        />
+      )}
+
+      {/* === SPEAKER RENAME MODAL === */}
+      {renamingSpeaker && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setRenamingSpeaker(null)}
+        >
+          <div
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl w-full max-w-sm p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-4">Đổi tên người nói</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
+              Đổi tên <strong>{renamingSpeaker.name}</strong> ({renamingSpeaker.tag}) thành:
+            </p>
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none mb-4"
+              placeholder="Nhập tên mới..."
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && renameValue.trim()) {
+                  handleRenameSpeaker();
+                }
+              }}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setRenamingSpeaker(null)}
+                className="flex-1 px-4 py-2 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleRenameSpeaker}
+                disabled={!renameValue.trim() || isRenaming}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {isRenaming ? "Đang lưu..." : "Xác nhận"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

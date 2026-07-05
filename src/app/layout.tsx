@@ -13,9 +13,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NOTE AIPRO - Trợ lý Họp Đa Ngôn Ngữ",
+  title: "NOTE AIPRO",
   description: "Dịch thuật thời gian thực, chuyển giọng nói thành văn bản, phân biệt người nói và tóm tắt cuộc họp thông minh bằng Trợ lý AI.",
-  manifest: "/manifest.json",
+  manifest: "/manifest.json?v=2",
+  icons: {
+    icon: "/logo.png?v=2",
+    shortcut: "/logo.png?v=2",
+    apple: "/logo.png?v=2",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",

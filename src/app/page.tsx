@@ -9,8 +9,9 @@ import {
   Plus, Search, Settings, Calendar, Pin, Star, Trash2, Mic, Volume2, 
   RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight,
   Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown,
-  ChevronUp
+  ChevronUp, Upload, Link, FileAudio, Clipboard
 } from "lucide-react";
+import { validateAudioFile } from "@/lib/ai/audio-validator";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -48,6 +49,13 @@ export default function Dashboard() {
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
   const isLoadedRef = useRef(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+
+  // Create mode states (live / upload / youtube)
+  const [createMode, setCreateMode] = useState<'live' | 'upload' | 'youtube'>('live');
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Custom Modal state
   const [modalConfig, setModalConfig] = useState<{
@@ -708,6 +716,9 @@ export default function Dashboard() {
     setAutoGainControl(true);
     setChunkSize(100);
     stopMicTest();
+    setCreateMode('live');
+    setUploadFile(null);
+    setYoutubeUrl('');
   };
 
   // Create meeting on database and route to Live Room
@@ -748,6 +759,107 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Create meeting error:", err);
       await showCustomAlert(`Không thể tạo cuộc họp: ${String(err)}`, "error");
+    }
+  };
+
+  // Upload audio file handler
+  const handleUploadMeeting = async () => {
+    if (!uploadFile) {
+      await showCustomAlert("Vui lòng chọn file âm thanh.", "error");
+      return;
+    }
+    if (!meetingTitle.trim()) {
+      await showCustomAlert("Vui lòng điền tiêu đề cuộc họp.", "error");
+      return;
+    }
+
+    const validation = validateAudioFile(uploadFile);
+    if (!validation.valid) {
+      await showCustomAlert(validation.error || "File không hợp lệ.", "error");
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("config", JSON.stringify({
+        title: meetingTitle,
+        source_language: sourceLanguage,
+        target_language: targetLanguage,
+        meeting_context: meetingContext,
+        speakers: expectedSpeakers,
+        glossary,
+      }));
+
+      const res = await fetch("/api/meetings/upload-audio", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.meeting_id) {
+        throw new Error(data.error || "Gặp lỗi khi upload file.");
+      }
+
+      // Store blob URL for playback on history page
+      const blobUrl = URL.createObjectURL(uploadFile);
+      sessionStorage.setItem(`audio_blob_${data.meeting_id}`, blobUrl);
+
+      router.push(`/history/${data.meeting_id}`);
+    } catch (err) {
+      console.error("Upload meeting error:", err);
+      await showCustomAlert(`Không thể xử lý file: ${String(err)}`, "error");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // YouTube URL handler
+  const handleYoutubeMeeting = async () => {
+    if (!youtubeUrl.trim()) {
+      await showCustomAlert("Vui lòng nhập URL YouTube.", "error");
+      return;
+    }
+    if (!meetingTitle.trim()) {
+      await showCustomAlert("Vui lòng điền tiêu đề cuộc họp.", "error");
+      return;
+    }
+
+    // Basic YouTube URL validation
+    const ytRegex = /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|embed\/|shorts\/)|youtu\.be\/).+/;
+    if (!ytRegex.test(youtubeUrl.trim())) {
+      await showCustomAlert("URL YouTube không hợp lệ.", "error");
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const res = await fetch("/api/meetings/process-youtube", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          youtube_url: youtubeUrl.trim(),
+          title: meetingTitle,
+          source_language: sourceLanguage,
+          target_language: targetLanguage,
+          meeting_context: meetingContext,
+          speakers: expectedSpeakers,
+          glossary,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.meeting_id) {
+        throw new Error(data.error || "Gặp lỗi khi xử lý YouTube.");
+      }
+
+      router.push(`/history/${data.meeting_id}`);
+    } catch (err) {
+      console.error("YouTube meeting error:", err);
+      await showCustomAlert(`Không thể xử lý YouTube: ${String(err)}`, "error");
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -1076,7 +1188,7 @@ export default function Dashboard() {
                   <div
                     key={m.meeting_id}
                     onClick={() => router.push(`/history/${m.meeting_id}`)}
-                    className="bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-sm transition-all cursor-pointer space-y-3"
+                    className="bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800/50 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-sm transition-[background-color,border-color,box-shadow] duration-200 cursor-pointer space-y-3"
                   >
                     <div className="flex justify-between items-start">
                       <h4 className="font-semibold text-lg text-slate-950 dark:text-slate-100 group-hover:text-blue-500">
@@ -1295,7 +1407,7 @@ export default function Dashboard() {
             {/* LIST */}
             {loading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[1, 2, 3].map((i) => (
+                {Array.from({ length: 15 }).map((_, i) => (
                   <div
                     key={i}
                     className="flex flex-col bg-white/50 dark:bg-slate-900/30 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm border border-slate-200/50 dark:border-slate-800/50 p-6 space-y-4 animate-pulse"
@@ -1325,7 +1437,7 @@ export default function Dashboard() {
                   {filteredMeetings.slice(0, visibleMeetingsCount).map((m) => (
                     <div
                       key={m.id}
-                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
+                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-[transform,box-shadow,border-color] duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
                     >
                       <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
                         <div className="flex items-center space-x-2">
@@ -1425,11 +1537,11 @@ export default function Dashboard() {
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[680px] max-h-[95vh]"
+            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[730px] max-h-[95vh]"
           >
             
             {/* Header */}
-            <header className="flex justify-between items-center px-8 py-5.5 shrink-0 bg-white dark:bg-slate-900">
+            <header className="flex justify-between items-center px-8 py-4 shrink-0 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
                   <LayoutGrid className="w-5 h-5" />
@@ -1447,11 +1559,62 @@ export default function Dashboard() {
               </button>
             </header>
 
+            {/* Mode Tabs with Sliding Transition */}
+            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mx-4 sm:mx-8 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
+              {/* Sliding Background Indicator */}
+              <div 
+                className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
+                style={{
+                  width: 'calc(33.333% - 6px)',
+                  left: createMode === 'live' 
+                    ? '4px' 
+                    : createMode === 'upload' 
+                      ? 'calc(33.333% + 2px)' 
+                      : 'calc(66.666% + 0px)'
+                }}
+              />
+              
+              <button
+                onClick={() => setCreateMode('live')}
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                  createMode === 'live'
+                    ? 'text-blue-600 dark:text-blue-450'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Ghi âm trực tiếp</span>
+              </button>
+              <button
+                onClick={() => setCreateMode('upload')}
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                  createMode === 'upload'
+                    ? 'text-blue-600 dark:text-blue-450'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Tải lên File</span>
+              </button>
+              <button
+                onClick={() => setCreateMode('youtube')}
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                  createMode === 'youtube'
+                    ? 'text-blue-600 dark:text-blue-450'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <Link className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Link Youtube</span>
+              </button>
+            </div>
+
             {/* Main Content Area - Bento Grid */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-3 bg-white dark:bg-slate-900">
+            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-1 bg-white dark:bg-slate-900">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 auto-rows-auto">
                 
-                {/* Block 1: Audio (Span 4 cols, Row span 2) */}
+                {/* Block 1: Audio / Upload / YouTube (Span 4 cols, Row span 2) */}
+                {createMode === 'live' && (
                 <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] dark:bg-blue-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50 dark:border-blue-900/30">
                   <div className="flex items-center gap-2">
                     <div className="text-blue-600 bg-blue-100 dark:bg-blue-950/50 p-1.5 rounded-lg flex items-center justify-center">
@@ -1580,6 +1743,151 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </section>
+                )}
+
+                {createMode === 'upload' && (
+                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] dark:bg-blue-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50 dark:border-blue-900/30">
+                  <div className="flex items-center gap-2">
+                    <div className="text-blue-600 bg-blue-100 dark:bg-blue-950/50 p-1.5 rounded-lg flex items-center justify-center">
+                      <Upload className="w-4 h-4" />
+                    </div>
+                    <h2 className="text-[13px] font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wide">Upload File Âm thanh / Video</h2>
+                  </div>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="audio/*,video/mp4,video/webm,video/quicktime,.mp3,.wav,.m4a,.mp4,.mov,.webm,.ogg,.flac"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setUploadFile(file);
+                    }}
+                  />
+
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const file = e.dataTransfer.files?.[0] || null;
+                      if (file) setUploadFile(file);
+                    }}
+                    className="flex-1 flex flex-col items-center justify-center gap-3 bg-white/60 dark:bg-slate-950/40 p-6 rounded-xl border-2 border-dashed border-blue-200 dark:border-blue-800/50 hover:border-blue-400 dark:hover:border-blue-600 transition-colors cursor-pointer group min-h-[180px]"
+                  >
+                    {uploadFile ? (
+                      <>
+                        <div className="w-12 h-12 bg-blue-100 dark:bg-blue-950/50 rounded-xl flex items-center justify-center">
+                          <FileAudio className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200 truncate max-w-[200px]">{uploadFile.name}</p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">{(uploadFile.size / (1024 * 1024)).toFixed(1)} MB</p>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setUploadFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                          className="text-[11px] font-bold text-red-500 hover:text-red-700 dark:hover:text-red-400 transition-colors cursor-pointer"
+                        >
+                          Xóa file
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-12 h-12 bg-blue-100 dark:bg-blue-950/50 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Upload className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-[13px] font-bold text-slate-700 dark:text-slate-300">Kéo thả file vào đây</p>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">hoặc click để chọn file</p>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="bg-white/80 dark:bg-slate-950/60 p-3 rounded-xl border border-white dark:border-slate-800/60 mt-auto">
+                    <p className="text-[11px] font-medium text-blue-600/70 dark:text-blue-400/70 text-center leading-normal">
+                      Hỗ trợ: MP3, WAV, M4A, MP4, MOV, WebM, OGG, FLAC <br /> Tối đa 500MB
+                    </p>
+                  </div>
+                </section>
+                )}
+
+                {createMode === 'youtube' && (
+                <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] dark:bg-blue-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50 dark:border-blue-900/30">
+                  <div className="flex items-center gap-2">
+                    <div className="text-blue-600 bg-blue-100 dark:bg-blue-950/50 p-1.5 rounded-lg flex items-center justify-center">
+                      <Link className="w-4 h-4" />
+                    </div>
+                    <h2 className="text-[13px] font-bold text-blue-900 dark:text-blue-300 uppercase tracking-wide">YouTube URL</h2>
+                  </div>
+
+                  <div className="flex flex-col gap-3 flex-1">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-[11px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wide">Đường dẫn video</label>
+                      <div className="relative flex items-center">
+                        <input
+                          type="url"
+                          value={youtubeUrl}
+                          onChange={(e) => setYoutubeUrl(e.target.value)}
+                          placeholder="https://www.youtube.com/watch?v=..."
+                          className="w-full bg-white/80 dark:bg-slate-950/80 border border-white/50 dark:border-slate-800/80 focus:bg-white dark:focus:bg-slate-900 focus:border-[#005bbf] focus:ring-0 focus:shadow-[0_4px_12px_rgba(0,91,191,0.1)] outline-none transition-all rounded-xl pl-3.5 pr-10 py-2.5 text-[13px] font-semibold text-slate-800 dark:text-slate-200 placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                        />
+                        <div className="absolute right-1.5 flex items-center justify-center">
+                          {youtubeUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => setYoutubeUrl('')}
+                              className="w-7 h-7 flex items-center justify-center rounded-full text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                              title="Xóa đường dẫn"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const text = await navigator.clipboard.readText();
+                                  if (text) setYoutubeUrl(text);
+                                } catch (err) {
+                                  console.error("Không thể đọc từ clipboard:", err);
+                                }
+                              }}
+                              className="w-7 h-7 flex items-center justify-center rounded-full text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-all cursor-pointer"
+                              title="Dán từ Clipboard"
+                            >
+                              <Clipboard className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* YouTube Thumbnail Preview */}
+                    {youtubeUrl && (() => {
+                      const match = youtubeUrl.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+                      const videoId = match?.[1];
+                      if (!videoId) return null;
+                      return (
+                        <div className="bg-white/60 dark:bg-slate-950/40 p-3 rounded-xl border border-white dark:border-slate-800/40 flex flex-col items-center gap-2">
+                          <img
+                            src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
+                            alt="YouTube thumbnail"
+                            className="w-full rounded-lg object-cover aspect-video"
+                          />
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <div className="bg-white/80 dark:bg-slate-950/60 p-3 rounded-xl border border-white dark:border-slate-800/60 mt-auto">
+                    <p className="text-[11px] font-medium text-blue-600/70 dark:text-blue-400/70 text-center">
+                      Hỗ trợ video YouTube công khai hoặc không công khai
+                    </p>
+                  </div>
+                </section>
+                )}
 
                 {/* Block 2: Meeting Info (Span 8 cols, Row span 1) */}
                 <section className="lg:col-span-8 bg-[#F0FDF4] dark:bg-emerald-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-emerald-100/50 dark:border-emerald-900/30">
@@ -1825,12 +2133,32 @@ export default function Dashboard() {
                 >
                   HỦY BỎ
                 </button>
+                {createMode === 'live' && (
                 <button
                   onClick={handleStartMeeting}
                   className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
                 >
                   VÀO PHÒNG HỌP <ArrowRight className="w-4 h-4" />
                 </button>
+                )}
+                {createMode === 'upload' && (
+                <button
+                  onClick={handleUploadMeeting}
+                  disabled={!uploadFile || isUploading}
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                >
+                  {isUploading ? 'ĐANG XỬ LÝ...' : 'BẮT ĐẦU XỬ LÝ'} <ArrowRight className="w-4 h-4" />
+                </button>
+                )}
+                {createMode === 'youtube' && (
+                <button
+                  onClick={handleYoutubeMeeting}
+                  disabled={!youtubeUrl.trim() || isUploading}
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                >
+                  {isUploading ? 'ĐANG XỬ LÝ...' : 'BẮT ĐẦU XỬ LÝ'} <ArrowRight className="w-4 h-4" />
+                </button>
+                )}
               </div>
             </footer>
           </div>
