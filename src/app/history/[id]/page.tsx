@@ -1149,7 +1149,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-px">
             
             {/* Unified 4-Tab Switcher (Underline style, grouped) */}
-            <div className="relative flex w-full lg:w-[720px] select-none pb-px shrink-0 order-2 lg:order-1">
+            <div className="relative flex w-full lg:w-[880px] select-none pb-px shrink-0 order-2 lg:order-1">
               {(() => {
                 const activeIndex = mainTab === "processed"
                   ? (subTabProcessed === "summary" ? 0 : 1)
@@ -1172,7 +1172,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1185,7 +1185,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 whitespace-nowrap ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1197,7 +1197,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                         activeIndex === 2
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
@@ -1209,7 +1209,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                         activeIndex === 3
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
