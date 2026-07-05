@@ -188,6 +188,35 @@ export default function Dashboard() {
     };
   }, []);
 
+  // Polling for processing meetings
+  useEffect(() => {
+    const hasProcessing = meetings.some(
+      (m) => !["recording", "completed", "paused", "failed"].includes(m.status)
+    );
+    if (!hasProcessing) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("meetings")
+          .select(`
+            id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
+            ai_summaries ( executive_summary ),
+            meeting_metadata ( created_from )
+          `)
+          .order("created_at", { ascending: false });
+
+        if (!error && data) {
+          setMeetings(data);
+        }
+      } catch (err) {
+        console.error("Polling fetch error:", err);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [meetings, supabase]);
+
   // Save speakers & glossary to cache when updated
   useEffect(() => {
     if (!isLoadedRef.current) return;
@@ -298,8 +327,9 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("meetings")
         .select(`
-          id, title, status, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
-          ai_summaries ( executive_summary )
+          id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
+          ai_summaries ( executive_summary ),
+          meeting_metadata ( created_from )
         `)
         .order("created_at", { ascending: false });
 
@@ -909,7 +939,14 @@ export default function Dashboard() {
   const filteredMeetings = meetings.filter((m) => {
     if (activeTab === "pinned" && !m.is_pinned) return false;
     if (activeTab === "favorite" && !m.is_favorite) return false;
-    if (statusFilter !== "all" && m.status !== statusFilter) return false;
+    if (statusFilter !== "all") {
+      if (statusFilter === "processing") {
+        const isPipelineProcessing = !["recording", "completed", "paused", "failed"].includes(m.status);
+        if (!isPipelineProcessing) return false;
+      } else {
+        if (m.status !== statusFilter) return false;
+      }
+    }
     return true;
   });
 
@@ -1439,80 +1476,130 @@ export default function Dashboard() {
                       key={m.id}
                       className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-[transform,box-shadow,border-color] duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
                     >
-                      <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${
-                              m.status === "recording"
-                                ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30 pulse"
-                                : m.status === "completed"
-                                ? "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-450 dark:border-blue-900/30"
-                                : m.status === "paused"
-                                ? "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30"
-                                : m.status === "failed"
-                                ? "bg-rose-50 text-rose-750 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/30"
-                                : "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-450 dark:border-amber-900/30"
-                            }`}
-                          >
-                            {m.status === "recording"
-                              ? "ĐANG HỌP"
-                              : m.status === "completed"
-                              ? "ĐÃ XONG"
-                              : m.status === "paused"
-                              ? "TẠM DỪNG"
-                              : m.status === "failed"
-                              ? "LỖI XỬ LÝ"
-                              : "ĐANG XỬ LÝ"}
-                          </span>
-                          <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                            {m.source_language} ➔ {m.target_language}
-                          </span>
-                        </div>
-                        <div className="flex space-x-1.5 no-print" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => togglePin(m.id, m.is_pinned)}
-                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                              m.is_pinned ? "text-blue-500" : "text-slate-400 hover:text-slate-600"
-                            }`}
-                          >
-                            <Pin className="w-4 h-4 fill-current" />
-                          </button>
-                          <button
-                            onClick={() => toggleFavorite(m.id, m.is_favorite)}
-                            className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
-                              m.is_favorite ? "text-amber-500" : "text-slate-400 hover:text-slate-600"
-                            }`}
-                          >
-                            <Star className="w-4 h-4 fill-current" />
-                          </button>
-                          <button
-                            onClick={() => deleteMeeting(m.id)}
-                            className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
+                      {(() => {
+                        const createdFrom = Array.isArray(m.meeting_metadata)
+                          ? m.meeting_metadata[0]?.created_from
+                          : m.meeting_metadata?.created_from;
 
-                      <div
-                        className="p-5 pt-4 flex-1 cursor-pointer space-y-3"
-                        onClick={() => router.push(m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`)}
-                      >
-                        <div className="space-y-1">
-                          <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
-                            {highlightText(m.title, searchQuery)}
-                          </h4>
-                          <div className="text-[13px] font-medium text-slate-400 flex items-center space-x-2">
-                            <span>{formatDate(m.created_at)}</span>
-                            <span>•</span>
-                            <span>{formatDuration(m.duration_ms)}</span>
-                          </div>
-                        </div>
+                        const typeLabel = createdFrom === "youtube"
+                          ? "YOUTUBE"
+                          : createdFrom === "upload"
+                          ? "FILE AUDIO"
+                          : "TRỰC TIẾP";
 
-                        <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
-                          {m.ai_summaries?.executive_summary ? highlightText(m.ai_summaries.executive_summary, searchQuery) : "(Cuộc họp chưa được tóm tắt)"}
-                        </p>
-                      </div>
+                        const typeStyles = createdFrom === "youtube"
+                          ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30"
+                          : createdFrom === "upload"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-450 dark:border-emerald-900/30"
+                          : "bg-sky-50 text-sky-700 border-sky-200/60 dark:bg-sky-950/40 dark:text-sky-450 dark:border-sky-900/30";
+
+                        return (
+                          <>
+                            <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${
+                                    m.status === "recording"
+                                      ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30 pulse"
+                                      : m.status === "completed"
+                                      ? "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-450 dark:border-blue-900/30"
+                                      : m.status === "paused"
+                                      ? "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30"
+                                      : m.status === "failed"
+                                      ? "bg-rose-50 text-rose-750 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/30"
+                                      : "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-450 dark:border-amber-900/30"
+                                  }`}
+                                >
+                                  {m.status === "recording"
+                                    ? "ĐANG HỌP"
+                                    : m.status === "completed"
+                                    ? "ĐÃ XONG"
+                                    : m.status === "paused"
+                                    ? "TẠM DỪNG"
+                                    : m.status === "failed"
+                                    ? "LỖI XỬ LÝ"
+                                    : "ĐANG XỬ LÝ"}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${typeStyles}`}>
+                                  {typeLabel}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                                  {m.source_language} ➔ {m.target_language}
+                                </span>
+                              </div>
+                              <div className="flex space-x-1.5 no-print" onClick={(e) => e.stopPropagation()}>
+                                <button
+                                  onClick={() => togglePin(m.id, m.is_pinned)}
+                                  className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
+                                    m.is_pinned ? "text-blue-500" : "text-slate-400 hover:text-slate-600"
+                                  }`}
+                                >
+                                  <Pin className="w-4 h-4 fill-current" />
+                                </button>
+                                <button
+                                  onClick={() => toggleFavorite(m.id, m.is_favorite)}
+                                  className={`p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer ${
+                                    m.is_favorite ? "text-amber-500" : "text-slate-400 hover:text-slate-600"
+                                  }`}
+                                >
+                                  <Star className="w-4 h-4 fill-current" />
+                                </button>
+                                <button
+                                  onClick={() => deleteMeeting(m.id)}
+                                  className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div
+                              className="p-5 pt-4 flex-1 cursor-pointer space-y-3"
+                              onClick={() => router.push(m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`)}
+                            >
+                              <div className="space-y-1">
+                                <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
+                                  {highlightText(m.title, searchQuery)}
+                                </h4>
+                                <div className="text-[13px] font-medium text-slate-400 flex items-center space-x-2">
+                                  <span>{formatDate(m.created_at)}</span>
+                                  <span>•</span>
+                                  <span>{formatDuration(m.duration_ms)}</span>
+                                </div>
+                              </div>
+
+                              {m.status !== "completed" && m.status !== "recording" && m.status !== "paused" && (
+                                <div className="space-y-2 pt-1">
+                                  <div className="flex justify-between items-center text-xs">
+                                    <span className="font-medium text-slate-500 dark:text-slate-400 truncate max-w-[80%]">
+                                      {m.progress?.message || (m.status === "failed" ? "Gặp lỗi khi xử lý" : "Đang chuẩn bị...")}
+                                    </span>
+                                    <span className="font-bold text-blue-650 dark:text-blue-400">
+                                      {m.progress?.percent !== undefined ? `${m.progress.percent}%` : m.status === "failed" ? "0%" : "0%"}
+                                    </span>
+                                  </div>
+                                  <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                                    <div
+                                      className={`h-1.5 rounded-full transition-all duration-500 ${m.status === "failed" ? "bg-red-500" : "bg-blue-600 animate-pulse"}`}
+                                      style={{ width: `${m.progress?.percent !== undefined ? m.progress.percent : 0}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              )}
+
+                              {(m.status === "completed" || m.status === "recording" || m.status === "paused") && (
+                                <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
+                                  {m.status === "recording"
+                                    ? "Cuộc họp đang diễn ra. Thông tin hội thoại và tóm tắt sẽ hiển thị sau khi kết thúc."
+                                    : m.ai_summaries?.executive_summary
+                                    ? highlightText(m.ai_summaries.executive_summary, searchQuery)
+                                    : "(Cuộc họp chưa được tóm tắt)"}
+                                </p>
+                              )}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
