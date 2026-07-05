@@ -2093,7 +2093,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           to { width: 0%; }
         }
       `}</style>
-      <div className="fixed top-[6px] right-6 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-2 right-6 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
@@ -2135,7 +2135,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto border ${style.border} ${style.bg} p-2.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-right-full fade-in duration-300`}
+              className={`pointer-events-auto border ${style.border} ${style.bg} py-2 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-right-full fade-in duration-300`}
             >
               <div className="flex-1 min-w-0 pr-2">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
