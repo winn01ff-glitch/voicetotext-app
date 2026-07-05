@@ -1476,7 +1476,7 @@ export default function Dashboard() {
                   {filteredMeetings.slice(0, visibleMeetingsCount).map((m) => (
                     <div
                       key={m.id}
-                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-[transform,box-shadow,border-color] duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
+                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
                     >
                       {(() => {
                         const createdFrom = Array.isArray(m.meeting_metadata)
