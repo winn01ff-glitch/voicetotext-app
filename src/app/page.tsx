@@ -71,18 +71,18 @@ export default function Dashboard() {
     message: "",
     type: "info",
   });
-  type Toast = { id: number; message: string; type: "success" | "error" | "info" };
+  type Toast = { id: number; title: string; desc: string; type: "success" | "error" | "info" | "warning" };
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextToastId = useRef(0);
 
-  const showCustomAlert = (message: string, type: "success" | "error" | "info" = "info", title: string = "Thông báo") => {
+  const showCustomAlert = (message: string, type: "success" | "error" | "info" | "warning" = "info", title: string = "Thông báo") => {
     return new Promise<void>((resolve) => {
       const id = nextToastId.current++;
-      setToasts((prev) => [...prev, { id, message, type }]);
+      setToasts((prev) => [...prev, { id, title, desc: message, type }]);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
         resolve();
-      }, 3000);
+      }, 5000);
     });
   };
 
@@ -126,6 +126,18 @@ export default function Dashboard() {
 
   // Initialize Theme and Fetch Data
   useEffect(() => {
+    // Check pending toast from other pages
+    const pendingToast = sessionStorage.getItem("pending_toast");
+    if (pendingToast) {
+      try {
+        const { title, message, type } = JSON.parse(pendingToast);
+        showCustomAlert(message, type, title);
+        sessionStorage.removeItem("pending_toast");
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     // Check Dark Mode
     const savedTheme = localStorage.getItem("theme");
     if (savedTheme === "dark") {
@@ -2323,39 +2335,78 @@ export default function Dashboard() {
         </div>
       )}
       
-      {/* TOAST NOTIFICATIONS */}
-      <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 pointer-events-none">
-        {toasts.map((t) => (
-          <div
-            key={t.id}
-            className={`pointer-events-auto flex items-center space-x-3 px-4 py-3 rounded-lg shadow-lg border animate-in slide-in-from-right-8 fade-in duration-300 min-w-[250px] max-w-sm ${
-              t.type === "success"
-                ? "bg-white dark:bg-slate-900 border-emerald-200 dark:border-emerald-900/50"
-                : t.type === "error"
-                ? "bg-white dark:bg-slate-900 border-rose-200 dark:border-rose-900/50"
-                : "bg-white dark:bg-slate-900 border-blue-200 dark:border-blue-900/50"
-            }`}
-          >
-            {t.type === "success" && (
-              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400">
-                <Check className="w-4 h-4" />
-              </span>
-            )}
-            {t.type === "error" && (
-              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400">
-                <span className="font-bold text-sm">!</span>
-              </span>
-            )}
-            {t.type === "info" && (
-              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 dark:bg-blue-950/30 dark:text-blue-400">
-                <span className="font-bold text-sm">i</span>
-              </span>
-            )}
-            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {t.message}
-            </p>
-          </div>
-        ))}
+      {/* TOASTS NOTIFICATIONS PANEL */}
+      <style>{`
+        @keyframes toast-progress {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+      `}</style>
+      <div className="fixed top-6 right-6 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+        {toasts.map((t) => {
+          const config = {
+            success: {
+              border: "border-emerald-100 dark:border-emerald-900/50",
+              bg: "bg-emerald-50/95 dark:bg-emerald-950/90",
+              title: "text-emerald-900 dark:text-emerald-300",
+              desc: "text-emerald-700/90 dark:text-emerald-400/90",
+              bar: "bg-emerald-500",
+              btn: "text-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-200"
+            },
+            warning: {
+              border: "border-amber-100 dark:border-amber-900/50",
+              bg: "bg-amber-50/95 dark:bg-amber-950/90",
+              title: "text-amber-900 dark:text-amber-300",
+              desc: "text-amber-700/90 dark:text-amber-400/90",
+              bar: "bg-amber-500",
+              btn: "text-amber-400 hover:text-amber-600 dark:hover:text-amber-200"
+            },
+            error: {
+              border: "border-red-100 dark:border-red-900/50",
+              bg: "bg-red-50/95 dark:bg-red-950/90",
+              title: "text-red-900 dark:text-red-300",
+              desc: "text-red-700/90 dark:text-red-400/90",
+              bar: "bg-red-500",
+              btn: "text-red-400 hover:text-red-600 dark:hover:text-red-200"
+            },
+            info: {
+              border: "border-blue-100 dark:border-blue-900/50",
+              bg: "bg-blue-50/95 dark:bg-blue-950/90",
+              title: "text-blue-900 dark:text-blue-300",
+              desc: "text-blue-700/90 dark:text-blue-400/90",
+              bar: "bg-blue-500",
+              btn: "text-blue-400 hover:text-blue-600 dark:hover:text-blue-200"
+            }
+          };
+
+          const style = config[(t.type as keyof typeof config) || "info"] || config.info;
+
+          return (
+            <div
+              key={t.id}
+              className={`pointer-events-auto border ${style.border} ${style.bg} p-2.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden animate-in slide-in-from-right-full fade-in duration-300`}
+            >
+              <div className="flex-1 min-w-0 pr-2">
+                <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
+                <p className={`text-[11px] font-medium leading-snug mt-0.5 ${style.desc}`}>{t.desc}</p>
+              </div>
+              <button
+                onClick={() => setToasts((prev) => prev.filter((toast) => toast.id !== t.id))}
+                className={`${style.btn} cursor-pointer p-1 rounded-lg hover:bg-slate-200/20 shrink-0 self-center`}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              
+              {/* Progress bar */}
+              <div 
+                className={`absolute bottom-0 left-0 h-[2.5px] ${style.bar}`}
+                style={{
+                  animation: "toast-progress 5s linear forwards"
+                }}
+              />
+            </div>
+          );
+        })}
       </div>
 
        {showScrollTop && (

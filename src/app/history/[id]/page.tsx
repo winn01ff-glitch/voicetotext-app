@@ -608,6 +608,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     try {
       const { error } = await supabase.from("meetings").delete().eq("id", meetingId);
       if (error) throw error;
+      sessionStorage.setItem("pending_toast", JSON.stringify({ title: "Thông báo", message: "Xóa cuộc họp thành công!", type: "success" }));
       router.push("/");
     } catch (err) {
       console.error(err);
