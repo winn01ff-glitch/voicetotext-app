@@ -1145,30 +1145,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
         <div className="space-y-6">
 
-          {/* TOP BAR: Meeting Info + Tab Switcher */}
-          <div className="flex flex-col gap-2">
-            {/* Meeting Info Bar */}
-            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm">
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
-                <Calendar className="w-3.5 h-3.5" />
-                <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
-              </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
-                <Clock className="w-3.5 h-3.5" />
-                <span>{formatDuration(meeting.duration_ms)}</span>
-              </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
-                <BookOpen className="w-3.5 h-3.5" />
-                <span className="capitalize">{meeting.meeting_context}</span>
-              </div>
-              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
-              </div>
-            </div>
-
+          {/* TOP BAR: Unified Switcher (Left) + Meeting Info (Right) */}
+          <div className="flex flex-col lg:flex-row lg:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-px">
+            
             {/* Unified 4-Tab Switcher (Underline style, grouped) */}
-            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 select-none pb-px">
+            <div className="relative flex w-full lg:w-[720px] select-none pb-px shrink-0 order-2 lg:order-1">
               {(() => {
                 const activeIndex = mainTab === "processed"
                   ? (subTabProcessed === "summary" ? 0 : 1)
@@ -1191,7 +1172,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1204,7 +1185,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-slate-200 dark:border-slate-800/80 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1216,7 +1197,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 2
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
@@ -1228,7 +1209,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1 text-sm font-bold transition-colors duration-200 cursor-pointer ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                         activeIndex === 3
                           ? "text-emerald-600 dark:text-emerald-400 bg-gradient-to-t from-emerald-50/30 to-transparent dark:from-emerald-950/5"
                           : "text-slate-400 hover:text-emerald-600 dark:text-slate-500 dark:hover:text-emerald-300"
@@ -1241,6 +1222,27 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 );
               })()}
             </div>
+
+            {/* Meeting Info Bar */}
+            <div className="flex flex-wrap items-center bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] lg:mb-1 ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 lg:order-2">
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
+                <Calendar className="w-3.5 h-3.5" />
+                <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
+                <Clock className="w-3.5 h-3.5" />
+                <span>{formatDuration(meeting.duration_ms)}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span className="capitalize">{meeting.meeting_context}</span>
+              </div>
+              <div className="flex items-center space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
+              </div>
+            </div>
+
           </div>
 
           {/* MAIN CONTENT AREA */}
