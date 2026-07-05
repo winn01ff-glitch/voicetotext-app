@@ -1204,12 +1204,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* MAIN CONTENT AREA */}
           <div className="w-full space-y-6 text-left">
             {/* SUB-TABS SELECT CARD */}
-            <div className="relative inline-flex p-1 bg-slate-100/80 dark:bg-slate-950/80 border border-slate-200/60 dark:border-slate-800/60 rounded-xl shadow-inner w-full mb-6 select-none overflow-hidden">
-              {/* Sliding Background Indicator */}
+            <div className="relative flex w-full border-b border-slate-200 dark:border-slate-800 mb-6 select-none">
+              {/* Sliding Bottom Line Indicator */}
               <div
-                className="absolute top-1 bottom-1 left-1 rounded-lg bg-[#0f172a] dark:bg-slate-100 shadow-sm border border-slate-950/10 dark:border-slate-200/30 transition-all duration-300 ease-out"
+                className="absolute bottom-0 left-0 h-[2px] bg-indigo-600 dark:bg-indigo-400 rounded-full transition-all duration-300 ease-out"
                 style={{
-                  width: "calc(50% - 4px)",
+                  width: "50%",
                   transform:
                     (mainTab === "processed"
                       ? subTabProcessed === "transcript"
@@ -1222,20 +1222,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabProcessed("summary")}
-                    className={`relative z-10 flex-1 px-4 py-1.5 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                       subTabProcessed === "summary"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                        ? "text-indigo-600 dark:text-indigo-400"
+                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                     }`}
                   >
                     Tóm tắt &amp; Hành động (AI)
                   </button>
                   <button
                     onClick={() => setSubTabProcessed("transcript")}
-                    className={`relative z-10 flex-1 px-4 py-1.5 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                       subTabProcessed === "transcript"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                        ? "text-indigo-600 dark:text-indigo-400"
+                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                     }`}
                   >
                     Bản chi tiết ({filteredTranscripts.length})
@@ -1245,20 +1245,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <>
                   <button
                     onClick={() => setSubTabRaw("summary")}
-                    className={`relative z-10 flex-1 px-4 py-1.5 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                       subTabRaw === "summary"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                        ? "text-indigo-600 dark:text-indigo-400"
+                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                     }`}
                   >
                     Tóm tắt &amp; Hành động (AI)
                   </button>
                   <button
                     onClick={() => setSubTabRaw("transcript")}
-                    className={`relative z-10 flex-1 px-4 py-1.5 text-sm font-bold rounded-lg transition-colors duration-300 cursor-pointer ${
+                    className={`relative flex-1 flex items-center justify-center space-x-2 px-4 pt-2.5 pb-1.5 text-sm font-bold transition-colors duration-200 cursor-pointer ${
                       subTabRaw === "transcript"
-                        ? "text-white dark:text-slate-900"
-                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                        ? "text-indigo-600 dark:text-indigo-400"
+                        : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                     }`}
                   >
                     Bản chi tiết ({filteredReprocessedTranscripts.length})
