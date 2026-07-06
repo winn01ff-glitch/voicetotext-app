@@ -79,7 +79,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   //   ask        -> intercepted separately (Ask AI chat)
   const mainTab: "processed" | "raw" = activeTab === "ai" ? "raw" : "processed";
   const subTabProcessed: "summary" | "transcript" = activeTab === "summary" ? "summary" : "transcript";
-  const subTabRaw: "summary" | "transcript" = "transcript";
+  const subTabRaw = "transcript" as string;
   // AI jobs + Ask AI chat state
   const [aiJobs, setAiJobs] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
