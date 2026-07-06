@@ -612,7 +612,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("id", meetingId);
       if (error) throw error;
       setMeeting({ ...meeting, is_pinned: newVal });
-      addToast(newVal ? "Đã ghim cuộc họp" : "Đã bỏ ghim cuộc họp", newVal ? "Cuộc họp đã được ghim lên đầu danh sách." : "Đã bỏ ghim cuộc họp.", "success");
     } catch (err) {
       console.error(err);
       addToast("Lỗi thao tác", "Không thể cập nhật trạng thái ghim.", "error");
@@ -628,7 +627,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("id", meetingId);
       if (error) throw error;
       setMeeting({ ...meeting, is_favorite: newVal });
-      addToast(newVal ? "Đã thích cuộc họp" : "Đã bỏ thích cuộc họp", newVal ? "Cuộc họp đã được thêm vào mục yêu thích." : "Đã bỏ mục yêu thích.", "success");
     } catch (err) {
       console.error(err);
       addToast("Lỗi thao tác", "Không thể cập nhật trạng thái yêu thích.", "error");
@@ -991,18 +989,31 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // Text Highlighting search match helper
   const highlightText = (text: string, query: string) => {
-    if (!query.trim()) return text;
-    const regex = new RegExp(`(${query.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&")})`, "gi");
-    const parts = text.split(regex);
-    return parts.map((part, i) =>
-      regex.test(part) ? (
-        <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/60 dark:text-white px-0.5 rounded">
-          {part}
+    if (!text || !query.trim()) return text;
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
+    const normText = norm(text);
+    const normQuery = norm(query);
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    while (true) {
+      const index = normText.indexOf(normQuery, lastIndex);
+      if (index === -1) {
+        parts.push(text.substring(lastIndex));
+        break;
+      }
+      if (index > lastIndex) {
+        parts.push(text.substring(lastIndex, index));
+      }
+      const matchEnd = index + normQuery.length;
+      const matchedString = text.substring(index, matchEnd);
+      parts.push(
+        <mark key={index} className="bg-yellow-200 dark:bg-yellow-700/60 dark:text-white px-0.5 rounded">
+          {matchedString}
         </mark>
-      ) : (
-        part
-      )
-    );
+      );
+      lastIndex = matchEnd;
+    }
+    return parts;
   };
 
   // Playlist state and ref for playing all sentences sequentially
@@ -1153,17 +1164,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // Filter transcripts by search keyword
   const filteredTranscripts = transcripts.filter((t) => {
     if (!searchQuery.trim()) return true;
-    const txt = (t.correctedText || t.originalText).toLowerCase();
-    const trans = (t.translatedText || "").toLowerCase();
-    const query = searchQuery.toLowerCase();
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
+    const txt = norm(t.correctedText || t.originalText);
+    const trans = norm(t.translatedText || "");
+    const query = norm(searchQuery);
     return txt.includes(query) || trans.includes(query);
   });
 
   const filteredReprocessedTranscripts = reprocessedTranscripts.filter((t) => {
     if (!searchQuery.trim()) return true;
-    const txt = (t.correctedText || t.originalText).toLowerCase();
-    const trans = (t.translatedText || "").toLowerCase();
-    const query = searchQuery.toLowerCase();
+    const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
+    const txt = norm(t.correctedText || t.originalText);
+    const trans = norm(t.translatedText || "");
+    const query = norm(searchQuery);
     return txt.includes(query) || trans.includes(query);
   });
 
@@ -1540,7 +1553,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r-2 border-r-blue-500 dark:border-r-blue-450 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1553,7 +1566,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     
                     <button
                       onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r-2 border-r-blue-500 dark:border-r-blue-450 whitespace-nowrap order-3 xl:order-2 ${
+                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-r-slate-200 dark:border-r-slate-800 whitespace-nowrap order-3 xl:order-2 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
@@ -1918,9 +1931,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
               </div>
             ) : (
-              <div className="space-y-6 bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm">
+              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
                 {/* Internal Search & Voice selector */}
-                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
@@ -1928,7 +1941,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       placeholder="Lọc từ khóa trong cuộc hội thoại..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-8 h-9 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
                     />
                     {searchQuery && (
                       <button
@@ -1947,7 +1960,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <select
                         value={selectedVoice}
                         onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-3 pr-8 w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer"
+                        className="h-9 pl-3 pr-8 w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer shadow-sm font-semibold text-slate-700 dark:text-slate-200"
                       >
                         {allAvailableVoices.length > 0 ? (
                           allAvailableVoices.map((v) => (
@@ -1979,14 +1992,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <div
                         key={t.id}
                         id={`transcript-row-${t.id}`}
-                        className={`border rounded-lg overflow-hidden transition-colors duration-200 ${
+                        className={`border rounded-xl overflow-hidden transition-all duration-300 shadow-sm hover:shadow-md ${
                           activeAudioTranscriptId === t.id
-                            ? "border-blue-300 dark:border-blue-700 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
-                            : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50"
+                            ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
+                            : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900"
                         }`}
                       >
                         {/* Header: time + speaker + tools */}
-                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700/80">
                           <div className="flex items-center gap-2">
                             <span
                               className={`text-[11px] font-mono font-medium ${
@@ -2886,9 +2899,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
               </div>
             ) : (
-              <div className="space-y-6 bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-xl shadow-sm">
+              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
                 {/* Internal Search & Voice selector */}
-                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                     <input
@@ -2896,7 +2909,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       placeholder="Lọc từ khóa trong cuộc hội thoại..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-8 h-9 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
                     />
                     {searchQuery && (
                       <button
@@ -2915,7 +2928,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <select
                         value={selectedVoice}
                         onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-3 pr-8 w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer"
+                        className="h-9 pl-3 pr-8 w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer shadow-sm font-semibold text-slate-700 dark:text-slate-200"
                       >
                         {allAvailableVoices.length > 0 ? (
                           allAvailableVoices.map((v) => (
@@ -2943,8 +2956,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
                     };
                     return (
-                      <div key={t.id} className="border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900/50 overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-100 dark:border-slate-800">
+                      <div key={t.id} className="border border-slate-300 dark:border-slate-700/80 rounded-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700/80">
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] text-slate-400 font-mono font-medium">{fmtTime(t.startMs)}</span>
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>{t.speakerName}</span>

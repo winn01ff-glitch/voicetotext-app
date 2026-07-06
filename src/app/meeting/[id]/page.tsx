@@ -165,6 +165,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // UI state
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
   const [selectedTargetLang, setSelectedTargetLang] = useState("vi");
   const [selectedVoice, setSelectedVoice] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -654,7 +655,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       
       const isSameSpeaker = lastBlock && lastBlock.speakerTag === speakerTag;
       const isDraft = lastBlock && lastBlock.status === "draft";
-      const isRecent = timeGap < 30000;
+      const isRecent = timeGap < endpointing;
 
       if (isSameSpeaker && isDraft && isRecent) {
         const isJp = meeting?.source_language === "ja" || meeting?.source_language === "auto";
@@ -686,7 +687,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         setTranscripts((prev) => [...prev, newBlock]);
       }
     },
-    [speakers, meeting]
+    [speakers, meeting, endpointing]
   );
 
   const processDraftsBatch = async () => {
@@ -1356,56 +1357,61 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // If in FULL SCREEN Mode, render minimal clean caption view
   if (isFullScreen) {
-    const lastTxs = transcripts.filter(t => t.status !== "realtime").slice(-3); // Get last 3 stable lines
+    const lastTxs = transcripts.filter(t => t.status !== "realtime").slice(-10); // Get last 10 stable lines
     return (
-      <div className="min-h-screen flex flex-col bg-slate-900 text-white p-12 justify-center relative">
-        {/* Exit Full Screen Button */}
-        <button
-          onClick={() => setIsFullScreen(false)}
-          className="absolute top-8 right-8 flex items-center space-x-2 px-4 h-10 bg-white/10 hover:bg-white/20 text-white rounded-md text-sm transition-all cursor-pointer"
-        >
-          <Minimize2 className="w-4 h-4" />
-          <span>Thoát Toàn Màn Hình</span>
-        </button>
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#0B0F19] text-slate-800 dark:text-slate-100 p-12 justify-center relative transition-colors duration-300">
+        {/* Top Header Bar */}
+        <div className="absolute top-8 left-8 right-8 flex items-center justify-between z-20">
+          {/* Recording State Indicator */}
+          <div className="flex items-center space-x-2">
+            <span className={`w-3.5 h-3.5 bg-red-500 rounded-full ${status === "recording" ? "animate-ping" : ""}`}></span>
+            <span className="text-xs text-slate-400 dark:text-slate-555 tracking-wider font-semibold">LIVE CAPTION MODE</span>
+          </div>
 
-        {/* Pulsing Recording State Indicator */}
-        <div className="absolute top-8 left-8 flex items-center space-x-2">
-          <span className="w-3.5 h-3.5 bg-red-500 rounded-full animate-ping"></span>
-          <span className="text-xs text-slate-400 tracking-wider font-semibold">LIVE CAPTION MODE</span>
+          {/* Exit Full Screen Button */}
+          <button
+            onClick={() => setIsFullScreen(false)}
+            className="flex items-center space-x-1 px-2.5 h-7 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-full text-[10px] font-bold tracking-wider text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer whitespace-nowrap shadow-sm"
+          >
+            <Minimize2 className="w-3 h-3 text-slate-400 dark:text-slate-555 -translate-y-[1px]" />
+            <span>THOÁT</span>
+          </button>
         </div>
 
+        {/* Hiding scrollbar utility */}
+        <style dangerouslySetInnerHTML={{__html: `
+          .no-scrollbar::-webkit-scrollbar {
+            display: none;
+          }
+          .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          }
+        `}} />
+
         {/* Captions Stack */}
-        <div className="max-w-5xl mx-auto w-full space-y-12">
+        <div className="max-w-5xl mx-auto w-full space-y-6 my-auto max-h-[calc(100vh-160px)] overflow-y-auto py-4 no-scrollbar">
           {lastTxs.map((t) => (
-            <div key={t.id} className="space-y-3 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5" style={{ color: speakerColorsRef.current[t.speakerTag] || "#60a5fa" }}>
-                <span>●</span>
-                <span>{t.speakerName}</span>
-              </span>
-              <p className="text-3xl md:text-5xl font-bold leading-tight">
-                {t.correctedText || t.text}
+            <div key={t.id} className="animate-in fade-in slide-in-from-bottom-2 duration-200">
+              <p className="text-xl md:text-3xl font-bold leading-tight">
+                {t.text}
               </p>
-              {t.translatedText && (
-                <p className="text-2xl md:text-4xl italic text-slate-400 font-medium leading-tight">
-                  {t.translatedText}
-                </p>
-              )}
             </div>
           ))}
           {partialTranscript && (
-            <div className="space-y-3 opacity-60">
-              <span className="text-xs font-bold uppercase flex items-center gap-1.5" style={{ color: speakerColorsRef.current[partialTranscript.speakerTag] || "#64748b" }}>
-                <span>●</span>
-                <span>{speakers.find((s) => s.speaker_tag === partialTranscript.speakerTag)?.display_name || "Phát biểu..."}</span>
-              </span>
-              <p className="text-2xl md:text-4xl italic text-slate-300">
+            <div className="opacity-60">
+              <p className="text-lg md:text-2xl italic text-slate-500 dark:text-slate-355 leading-tight">
                 "{partialTranscript.text}..."
               </p>
             </div>
           )}
           {transcripts.length === 0 && !partialTranscript && (
-            <div className="text-center text-slate-500 text-2xl italic">
-              Đang chờ luồng âm thanh họp phát biểu...
+            <div className="flex flex-col items-center justify-center space-y-4 my-auto">
+              <div className="flex items-center justify-center space-x-2.5">
+                <span className="w-4 h-4 rounded-full bg-slate-400 dark:bg-slate-650 animate-bounce [animation-delay:-0.3s]"></span>
+                <span className="w-4 h-4 rounded-full bg-slate-400 dark:bg-slate-650 animate-bounce [animation-delay:-0.15s]"></span>
+                <span className="w-4 h-4 rounded-full bg-slate-400 dark:bg-slate-650 animate-bounce"></span>
+              </div>
             </div>
           )}
         </div>
@@ -1415,7 +1421,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   return (
     <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900/60 font-sans overflow-hidden">
-      <div className="flex-1 flex flex-col w-full max-w-[1366px] 2xl:max-w-[1600px] mx-auto bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 border-x border-slate-200/60 dark:border-slate-800/80 overflow-hidden">
+      <div className="flex-1 flex flex-col w-full bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 overflow-hidden">
         {/* HEADER */}
       <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between shrink-0 gap-2">
         <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
@@ -1433,26 +1439,34 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
         {/* Auto Save Status & Actions */}
         <div className="flex items-center space-x-1.5 sm:space-x-3 text-xs shrink-0">
-          {lastSavedTime ? (
-            <span className="text-slate-400 font-medium flex items-center space-x-1 min-w-0">
+          {lastSavedTime && (
+            <span className="text-slate-400 font-medium flex items-center space-x-1 min-w-0 mr-1">
               <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
               <span className="hidden md:inline">Đã lưu tự động lúc {lastSavedTime} ✓</span>
               <span className="inline md:hidden">{lastSavedTime} ✓</span>
             </span>
-          ) : (
-            <span className="text-slate-400 font-medium italic hidden md:inline">Đang đồng bộ cơ sở dữ liệu...</span>
           )}
-          {!lastSavedTime && (
-            <span className="text-slate-400 font-medium italic inline md:hidden">Đang đồng bộ...</span>
-          )}
+
+          {/* Toggle Control Sidebar (Maximize/Minimize layout) */}
+          <button
+            onClick={() => setIsMaximized(!isMaximized)}
+            className="group flex items-center justify-center w-8 h-8 rounded-full bg-transparent hover:bg-blue-50 dark:hover:bg-blue-950/30 text-slate-400 dark:text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all cursor-pointer"
+            title={isMaximized ? "Hiện bảng điều khiển" : "Ẩn bảng điều khiển"}
+          >
+            {isMaximized ? (
+              <Minimize2 className="w-4 h-4 transition-transform duration-200 group-hover:scale-120" />
+            ) : (
+              <Maximize2 className="w-4 h-4 transition-transform duration-200 group-hover:scale-120" />
+            )}
+          </button>
 
           <button
             onClick={() => setIsFullScreen(true)}
-            className="flex items-center space-x-1 px-2.5 sm:px-3 h-8.5 sm:h-9 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer whitespace-nowrap"
+            className="flex items-center space-x-1 px-2.5 h-7 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800 rounded-full text-[10px] font-bold tracking-wider text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer whitespace-nowrap shadow-sm"
+            title="Mở phụ đề màn hình lớn (iPad)"
           >
-            <Maximize2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Phụ đề Live (iPad)</span>
-            <span className="inline sm:hidden">Live</span>
+            <Maximize2 className="w-3 h-3 text-slate-400 dark:text-slate-500 -translate-y-[1px]" />
+            <span>LIVE</span>
           </button>
         </div>
       </header>
@@ -1460,7 +1474,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       {/* CORE MEETING SECTION: PC 2-Column Split */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
         {/* Left Column: Side Controls & Speaker Config */}
-        <aside className="w-full md:w-[360px] max-h-[35vh] md:max-h-full bg-white/60 dark:bg-slate-900/40 backdrop-blur-md border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-4 md:p-7 flex flex-col gap-4 md:gap-8 shrink-0 overflow-y-auto z-10 shadow-[2px_0_15px_-3px_rgba(0,0,0,0.05)] dark:shadow-none custom-scrollbar">
+        <aside className={`${isMaximized ? "hidden" : "w-full md:w-[360px] max-h-[35vh] md:max-h-full"} bg-white/60 dark:bg-slate-900/40 backdrop-blur-md border-b md:border-b-0 md:border-r border-slate-200/60 dark:border-slate-800 p-4 md:p-5 flex flex-col gap-4 md:gap-8 shrink-0 overflow-y-auto z-10 shadow-[2px_0_15px_-3px_rgba(0,0,0,0.05)] dark:shadow-none custom-scrollbar`}>
           {/* Ghi âm control */}
           <div className="space-y-4">
             <h4 className="font-bold text-xs uppercase tracking-widest text-slate-400">Trạng thái ghi âm</h4>
@@ -1772,7 +1786,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         </aside>
 
         {/* Right Column: Real-time Transcript Virtualized Feed */}
-        <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950 p-6 relative">
+        <main className="flex-1 flex flex-col overflow-hidden bg-slate-50/50 dark:bg-slate-950 pl-4 pr-0 py-4 md:pl-5 md:pr-0 md:py-5 relative">
           {transcripts.length === 0 && !partialTranscript && !liveTranscriptText ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center p-8 select-none">
               <Mic className="w-12 h-12 text-slate-300 dark:text-slate-700 animate-pulse mb-4" />
@@ -1784,7 +1798,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           ) : (
             <div
               ref={parentRef}
-              className="flex-1 overflow-y-auto custom-scrollbar pr-4 pb-4 space-y-4"
+              className="flex-1 overflow-y-auto custom-scrollbar pr-3 pb-4 space-y-4"
             >
             <div className="flex flex-col gap-2">
               {transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").map((t) => {
@@ -1948,10 +1962,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           )}
 
           {/* Separator Divider */}
-          <div className="w-full h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-3 shrink-0 shadow-sm"></div>
+          <div className="mr-3 h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-3 shrink-0 shadow-sm"></div>
 
           {/* Continuous Live Transcript Area — 4 lines: title + interim + 2 scrollable */}
-          <div className="shrink-0 bg-slate-50/40 dark:bg-slate-900/30 backdrop-blur-md border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2 flex flex-col shadow-sm transition-all duration-300">
+          <div className="shrink-0 bg-slate-50/40 dark:bg-slate-900/30 backdrop-blur-md border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2 mr-3 flex flex-col shadow-sm transition-all duration-300">
             {/* Line 1: Fixed title + icons */}
             <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
               <div className="flex items-center space-x-1.5">
@@ -1981,7 +1995,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             {/* Body: 3 scrollable lines with accumulated transcript */}
             <div 
               ref={liveScrollRef}
-              className="h-[54px] overflow-y-auto custom-scrollbar mt-1"
+              className="h-[54px] overflow-y-auto no-scrollbar mt-1"
             >
               {liveTranscriptText || liveInterimText ? (
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-[18px]">
@@ -1999,7 +2013,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           </div>
 
           {/* Speaker Classification Box — same height as live box */}
-          <div className="mt-1.5 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 px-4 py-2 flex flex-col shadow-sm">
+          <div className="mt-1.5 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 px-4 py-2 mr-3 flex flex-col shadow-sm">
             {/* Header */}
             <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
               {/* Left Side: Status, Title, and Auto 5s Badge */}
@@ -2060,7 +2074,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             {/* Body: 3-line scrollable draft list */}
             <div 
               ref={draftsContainerRef}
-              className="h-[54px] overflow-y-auto custom-scrollbar mt-1"
+              className="h-[54px] overflow-y-auto no-scrollbar mt-1"
             >
               {(() => {
                 const draftItems = transcripts.slice(-20);

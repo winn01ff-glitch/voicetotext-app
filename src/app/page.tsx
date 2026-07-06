@@ -198,6 +198,17 @@ export default function Dashboard() {
       setGlossary([]);
     }
 
+    // Load saved meetings from cache
+    const savedMeetings = localStorage.getItem("cached_meetings");
+    if (savedMeetings !== null) {
+      try {
+        setMeetings(JSON.parse(savedMeetings));
+        setLoading(false);
+      } catch (e) {
+        console.error("Failed to parse cached meetings", e);
+      }
+    }
+
     isLoadedRef.current = true;
     fetchMeetings();
     checkUnfinishedMeeting();
@@ -253,6 +264,12 @@ export default function Dashboard() {
     if (!isLoadedRef.current) return;
     localStorage.setItem("meeting_glossary", JSON.stringify(glossary));
   }, [glossary]);
+
+  // Save meetings to cache when updated (SWR & offline support)
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("cached_meetings", JSON.stringify(meetings));
+  }, [meetings]);
 
   // Enumerate devices when modal opens
   useEffect(() => {
@@ -348,7 +365,10 @@ export default function Dashboard() {
   };
 
   const fetchMeetings = async () => {
-    setLoading(true);
+    // Only show loading spinner if we don't have any meetings in memory
+    if (meetings.length === 0) {
+      setLoading(true);
+    }
     try {
       const { data, error } = await supabase
         .from("meetings")
@@ -453,12 +473,11 @@ export default function Dashboard() {
     return snippet;
   };
 
-  // Run global search across transcripts, titles, and summaries using pg_trgm ILIKE query with unaccent support
+  // Run global search across transcripts, titles, and summaries using database RPC function with unaccent support
   const runGlobalSearch = async () => {
     setIsSearchingGlobally(true);
     try {
-      // 1. Search in transcripts
-      const { data, error } = await supabase.rpc("search_transcripts", {
+      const { data, error } = await supabase.rpc("search_meetings_global", {
         search_term: searchQuery,
         start_date: startDate || null,
         end_date: endDate || null
@@ -466,43 +485,7 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      // 2. Search in meeting titles
-      let meetingsQuery = supabase
-        .from("meetings")
-        .select("id, title, created_at");
-      
-      if (startDate) {
-        meetingsQuery = meetingsQuery.gte("created_at", startDate);
-      }
-      if (endDate) {
-        meetingsQuery = meetingsQuery.lte("created_at", `${endDate}T23:59:59.999Z`);
-      }
-
-      const { data: titleMatches, error: titleError } = await meetingsQuery.ilike("title", `%${searchQuery}%`);
-      if (titleError) console.error("Title search error:", titleError);
-
-      // 3. Search in AI summaries
-      let summariesQuery = supabase
-        .from("ai_summaries")
-        .select(`
-          meeting_id,
-          executive_summary,
-          reprocessed_executive_summary,
-          meetings!inner ( title, created_at )
-        `)
-        .or(`executive_summary.ilike.%${searchQuery}%,reprocessed_executive_summary.ilike.%${searchQuery}%`);
-        
-      if (startDate) {
-        summariesQuery = summariesQuery.gte("meetings.created_at", startDate);
-      }
-      if (endDate) {
-        summariesQuery = summariesQuery.lte("meetings.created_at", `${endDate}T23:59:59.999Z`);
-      }
-
-      const { data: summaryMatches, error: summaryError } = await summariesQuery;
-      if (summaryError) console.error("Summary search error:", summaryError);
-
-      // Group transcripts by meeting for nicer UI
+      // Group matches by meeting for nicer UI
       const grouped: { [key: string]: any } = {};
       data?.forEach((item: any) => {
         if (!grouped[item.meeting_id]) {
@@ -513,67 +496,31 @@ export default function Dashboard() {
             matches: [],
           };
         }
-        grouped[item.meeting_id].matches.push({
-          text: item.corrected_text || item.original_text,
-          translation: item.translated_text,
-          start_ms: item.start_ms,
-        });
-      });
-
-      // Merge title matches if not already in grouped results
-      titleMatches?.forEach((m: any) => {
-        if (!grouped[m.id]) {
-          grouped[m.id] = {
-            meeting_id: m.id,
-            title: m.title,
-            created_at: m.created_at,
-            matches: [
-              {
-                text: "Khớp tiêu đề cuộc họp",
-                translation: "",
-                start_ms: 0,
-                isTitleMatch: true,
-              }
-            ],
-          };
-        }
-      });
-
-      // Merge summary matches
-      summaryMatches?.forEach((sm: any) => {
-        const parentMeeting = sm.meetings;
-        if (!parentMeeting) return;
         
-        if (!grouped[sm.meeting_id]) {
-          grouped[sm.meeting_id] = {
-            meeting_id: sm.meeting_id,
-            title: parentMeeting.title,
-            created_at: parentMeeting.created_at,
-            matches: [],
-          };
-        }
-        
-        const cleanQuery = searchQuery.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-        const matchInSummary = (text: string) => {
-          if (!text) return false;
-          const cleanText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-          return cleanText.includes(cleanQuery);
-        };
-        
-        if (matchInSummary(sm.executive_summary)) {
-          grouped[sm.meeting_id].matches.push({
-            text: getSummarySnippet(sm.executive_summary, searchQuery),
-            translation: "",
-            start_ms: 0,
-            isSummaryMatch: true,
+        if (item.match_type === 'transcript') {
+          grouped[item.meeting_id].matches.push({
+            text: item.match_text,
+            translation: item.match_translation,
+            start_ms: item.match_start_ms,
           });
-        } else if (matchInSummary(sm.reprocessed_executive_summary)) {
-          grouped[sm.meeting_id].matches.push({
-            text: getSummarySnippet(sm.reprocessed_executive_summary, searchQuery),
-            translation: "",
-            start_ms: 0,
-            isSummaryMatch: true,
-          });
+        } else if (item.match_type === 'title') {
+          if (!grouped[item.meeting_id].matches.some((m: any) => m.isTitleMatch)) {
+            grouped[item.meeting_id].matches.push({
+              text: "Khớp tiêu đề cuộc họp",
+              translation: "",
+              start_ms: 0,
+              isTitleMatch: true,
+            });
+          }
+        } else if (item.match_type === 'summary') {
+          if (!grouped[item.meeting_id].matches.some((m: any) => m.isSummaryMatch)) {
+            grouped[item.meeting_id].matches.push({
+              text: getSummarySnippet(item.match_text, searchQuery),
+              translation: "",
+              start_ms: 0,
+              isSummaryMatch: true,
+            });
+          }
         }
       });
 
@@ -1191,7 +1138,7 @@ export default function Dashboard() {
                 placeholder="Tìm kiếm nội dung, từ khóa..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-8 h-9 sm:h-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="w-full pl-9 pr-8 h-9 sm:h-10 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-sm"
               />
               {searchQuery && (
                 <button
@@ -1206,7 +1153,7 @@ export default function Dashboard() {
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm text-slate-500 w-full lg:w-auto">
               <div className="grid grid-cols-2 gap-2 w-full lg:w-auto">
-                <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all shadow-sm">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mr-1.5 shrink-0 uppercase tracking-wider">Từ:</span>
                   <input
                     type="date"
@@ -1215,7 +1162,7 @@ export default function Dashboard() {
                     className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-800 dark:text-slate-200 text-xs w-full cursor-pointer"
                   />
                 </div>
-                <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                <div className="flex items-center bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all shadow-sm">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mr-1.5 shrink-0 uppercase tracking-wider">Đến:</span>
                   <input
                     type="date"
@@ -1245,8 +1192,11 @@ export default function Dashboard() {
         {/* RESULTS SECTION */}
         {isSearchingGlobally ? (
           <section className="space-y-4">
-            <h3 className="font-semibold text-lg text-slate-800 dark:text-slate-200">
-              Kết quả Tìm kiếm toàn cục ({globalSearchResults.length} cuộc họp khớp)
+            <h3 className="font-semibold text-base sm:text-lg text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <span>Tìm kiếm toàn cục</span>
+              <span className="text-[11px] sm:text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full shadow-sm">
+                {globalSearchResults.length} cuộc họp
+              </span>
             </h3>
             {globalSearchResults.length === 0 ? (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-12 text-center text-slate-400 rounded-xl">
@@ -1313,34 +1263,45 @@ export default function Dashboard() {
         ) : (
           <section className="space-y-6">
             {/* TABS */}
-            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 gap-2">
-              <div className="flex">
+            <div className="flex justify-between items-end sm:items-center border-b border-slate-200 dark:border-slate-800 gap-2">
+              <div className="relative flex select-none w-auto">
+                {(() => {
+                  const activeIndex = activeTab === "recent" ? 0 : activeTab === "pinned" ? 1 : 2;
+                  return (
+                    <div
+                      className="absolute z-10 bottom-[-1px] h-[2px] bg-blue-600 dark:bg-blue-400 sm:bg-slate-900 sm:dark:bg-slate-100 transition-all duration-300 ease-out w-[80px] sm:w-[115px]"
+                      style={{
+                        transform: `translateX(${activeIndex * 100}%)`,
+                      }}
+                    />
+                  );
+                })()}
                 <button
                   onClick={() => setActiveTab("recent")}
-                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "recent"
-                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
                   Gần đây
                 </button>
                 <button
                   onClick={() => setActiveTab("pinned")}
-                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "pinned"
-                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
                   Đã ghim
                 </button>
                 <button
                   onClick={() => setActiveTab("favorite")}
-                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "favorite"
-                      ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
-                      : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
                   <span className="hidden sm:inline">Yêu thích (★)</span>
@@ -1348,10 +1309,10 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div ref={statusDropdownRef} className="relative mb-2.5 shrink-0 -top-[3px] sm:top-0">
+              <div ref={statusDropdownRef} className="relative mb-1 sm:mb-2.5 shrink-0 top-[2px] sm:top-[2px]">
                 <button
                   onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-                  className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
+                  className={`flex items-center gap-[7px] sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
                 >
                   {statusFilter !== "all" && (
                     <span
@@ -1360,12 +1321,12 @@ export default function Dashboard() {
                         setStatusFilter("all");
                         setShowStatusDropdown(false);
                       }}
-                      className={`mr-0.5 p-0.5 rounded-full transition-colors cursor-pointer ${getClearButtonHoverStyles()}`}
+                      className={`order-last sm:order-first p-0.5 rounded-full transition-colors cursor-pointer ${getClearButtonHoverStyles()}`}
                     >
                       <X className="w-3 h-3" />
                     </span>
                   )}
-                  <span>
+                  <span className="order-2">
                     <span className="hidden sm:inline">
                       {statusFilter === "all"
                         ? "Trạng thái"
@@ -1393,11 +1354,11 @@ export default function Dashboard() {
                         : "Đang xử lý"}
                     </span>
                   </span>
-                  <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`order-first sm:order-last w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
                 </button>
 
                 {showStatusDropdown && (
-                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-30 overflow-hidden py-0 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-30 overflow-hidden py-0 animate-dropdown-in">
                     <button
                       onClick={() => {
                         setStatusFilter("all");
@@ -1538,7 +1499,7 @@ export default function Dashboard() {
                   {filteredMeetings.slice(0, visibleMeetingsCount).map((m, index) => (
                     <div
                       key={m.id}
-                      style={{ animationDelay: `${index * 60}ms` }}
+                      style={{ animationDelay: `${Math.min(index, 3) * 50}ms` }}
                       className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30 animate-mobile-slide-up sm:animate-none"
                     >
                       {(() => {
@@ -2465,19 +2426,34 @@ export default function Dashboard() {
         .animate-toast-out {
           animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
-        @keyframes mobile-slide-up {
+        @keyframes dropdown-in {
           from {
             opacity: 0;
-            transform: translateY(24px);
+            transform: scale(0.95) translateY(-8px);
           }
           to {
             opacity: 1;
-            transform: translateY(0);
+            transform: scale(1) translateY(0);
+          }
+        }
+        .animate-dropdown-in {
+          animation: dropdown-in 0.18s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+          transform-origin: top right;
+        }
+        @keyframes mobile-slide-up {
+          from {
+            opacity: 0;
+            transform: translate3d(0, 16px, 0);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
           }
         }
         @media (max-width: 640px) {
           .animate-mobile-slide-up {
-            animation: mobile-slide-up 0.5s cubic-bezier(0.23, 1, 0.32, 1) both;
+            animation: mobile-slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+            will-change: transform, opacity;
           }
         }
       `}</style>
