@@ -242,7 +242,8 @@ export async function updateProgress(
   meetingId: string,
   status: PipelineStep | "completed" | "failed" | "cancelled",
   chunkCurrent?: number,
-  chunkTotal?: number
+  chunkTotal?: number,
+  customMessage?: string
 ): Promise<void> {
   const supabase = await createServerSupabaseClient();
 
@@ -250,9 +251,11 @@ export async function updateProgress(
     ? STATUS_PERCENT[status as PipelineStep]
     : status === "completed" ? 100 : 0;
 
-  const message = status in STATUS_LABEL
+  const defaultMessage = status in STATUS_LABEL
     ? STATUS_LABEL[status as PipelineStep]
     : status === "completed" ? "Hoàn thành!" : "Đã xảy ra lỗi.";
+
+  const message = customMessage || defaultMessage;
 
   const progress: PipelineProgress = {
     percent,
@@ -1280,7 +1283,15 @@ export async function runPipeline(
     }
 
     console.error(`[Pipeline] Fatal error for meeting ${meetingId}:`, err);
-    await updateProgress(meetingId, "failed");
+    
+    let friendlyMessage = err?.message || "Đã xảy ra lỗi khi xử lý.";
+    if (friendlyMessage.includes("Deepgram") || friendlyMessage.includes("transcribe")) {
+      friendlyMessage = "Không thể dịch giọng nói thành văn bản (Lỗi kết nối máy chủ Deepgram).";
+    } else if (friendlyMessage.includes("Gemini") || friendlyMessage.includes("summarize") || friendlyMessage.includes("model")) {
+      friendlyMessage = "Không thể tóm tắt văn bản (Lỗi máy chủ AI Gemini).";
+    }
+    
+    await updateProgress(meetingId, "failed", undefined, undefined, friendlyMessage);
 
     // Cập nhật ai_summaries status nếu có lỗi
     try {
@@ -1365,8 +1376,8 @@ export async function saveToTables(
       original_text: t.original_text,
       corrected_text: t.original_text, // Đã qua correction rồi
       translated_text: t.translated_text,
-      start_ms: t.start_ms,
-      end_ms: t.end_ms,
+      start_ms: Math.round(Number(t.start_ms || 0)),
+      end_ms: Math.round(Number(t.end_ms || 0)),
       confidence: t.confidence || 1.0,
       speaker_tag: t.speaker_tag,
       speaker_name: t.speaker_name,
@@ -1457,14 +1468,14 @@ export async function saveToTables(
 
   // Tính duration
   const maxEndMs = translatedTurns.length > 0
-    ? Math.max(...translatedTurns.map((t) => t.end_ms))
+    ? Math.max(...translatedTurns.map((t) => Number(t.end_ms || 0)))
     : 0;
 
   await supabase
     .from("meetings")
     .update({
       raw_transcript: rawTranscriptText,
-      duration_ms: maxEndMs,
+      duration_ms: Math.round(maxEndMs),
     })
     .eq("id", meetingId);
 }
@@ -1552,6 +1563,20 @@ async function saveDeepgramMetadata(
     const detectedLanguage = dgResult?.results?.channels?.[0]?.detected_language ||
       config.sourceLanguage;
 
+    // Fetch source_type from meetings to determine created_from
+    const { data: meeting } = await supabase
+      .from("meetings")
+      .select("source_type, status")
+      .eq("id", meetingId)
+      .single();
+
+    let createdFrom = "live";
+    if (meeting?.source_type === "youtube" || meeting?.source_type === "upload") {
+      createdFrom = meeting.source_type;
+    } else if (meeting?.status === "recording" || meeting?.status === "paused") {
+      createdFrom = "live";
+    }
+
     // Check nếu đã có row
     const { data: existing } = await supabase
       .from("meeting_metadata")
@@ -1568,7 +1593,7 @@ async function saveDeepgramMetadata(
       detected_language: detectedLanguage,
       speaker_count: speakerCount,
       chunk_count: 1,
-      created_from: "upload",
+      created_from: createdFrom,
     };
 
     if (existing) {

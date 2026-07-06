@@ -81,6 +81,41 @@ export default function PipelineProgress({
     };
   }, [meetingId, supabase, onCompleted]);
 
+  // Fallback Polling (in case Realtime connection is unstable or missed)
+  useEffect(() => {
+    if (["completed", "failed", "cancelled"].includes(status)) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from("meetings")
+          .select("status, progress")
+          .eq("id", meetingId)
+          .single();
+
+        if (error) throw error;
+
+        if (data) {
+          if (data.status !== status) {
+            setStatus(data.status);
+          }
+          if (data.progress) {
+            setProgress(data.progress);
+          }
+
+          if (data.status === "completed") {
+            clearInterval(interval);
+            setTimeout(() => onCompleted(), 1500);
+          }
+        }
+      } catch (err) {
+        console.error("[PipelineProgress] Polling fallback error:", err);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [meetingId, supabase, status, onCompleted]);
+
   // Xác định trạng thái của từng step
   const getStepState = (stepKey: string) => {
     const stepIndex = PIPELINE_STEPS.findIndex((s) => s.key === stepKey);
@@ -88,8 +123,24 @@ export default function PipelineProgress({
 
     if (status === "completed") return "done";
     if (status === "failed" || status === "cancelled") {
-      if (stepIndex < currentIndex || currentIndex === -1) return "done";
-      if (stepIndex === currentIndex) return status === "failed" ? "failed" : "cancelled";
+      // Ánh xạ ngược từ % tiến trình để tìm bước bị lỗi/hủy
+      const percentMap: Record<number, string> = {
+        2: "uploading",
+        10: "transcribing",
+        25: "correcting",
+        40: "diarizing",
+        55: "checking",
+        70: "translating",
+        85: "summarizing",
+        92: "extracting",
+        98: "saving",
+      };
+      
+      const failedStepKey = percentMap[progress?.percent || 0];
+      const failedStepIndex = failedStepKey ? PIPELINE_STEPS.findIndex((s) => s.key === failedStepKey) : 0;
+      
+      if (stepIndex < failedStepIndex) return "done";
+      if (stepIndex === failedStepIndex) return status === "failed" ? "failed" : "cancelled";
       return "pending";
     }
     if (stepIndex < currentIndex) return "done";
@@ -268,8 +319,8 @@ export default function PipelineProgress({
       </div>
 
       {/* Status message */}
-      {progress?.message && isProcessing && (
-        <div className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">
+      {progress?.message && status !== "completed" && (
+        <div className={`mt-4 text-center text-sm ${status === "failed" ? "text-red-500 font-semibold dark:text-red-400" : "text-slate-500 dark:text-slate-400"}`}>
           {progress.message}
         </div>
       )}

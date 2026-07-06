@@ -118,15 +118,23 @@ export async function POST(request: Request) {
 
         await updateProgress(meetingId, "uploading");
 
-        // Tải audio từ YouTube bằng ytdl-core
-        const ytdl = require("@distube/ytdl-core");
+        const { execFile, spawn } = require("child_process");
+        const path = require("path");
+        const util = require("util");
+        const execFilePromise = util.promisify(execFile);
+        const ytDlpPath = path.join(process.cwd(), "yt-dlp.exe");
 
-        // Lấy thông tin video
+        // Lấy thông tin video bằng yt-dlp
         let videoTitle = title || "YouTube Video";
+        let durationSeconds = 0;
         try {
-          const info = await ytdl.getInfo(youtube_url);
-          videoTitle = info.videoDetails.title;
-          const durationSeconds = parseInt(info.videoDetails.lengthSeconds || "0");
+          const { stdout: jsonStdout } = await execFilePromise(ytDlpPath, [
+            "--dump-json",
+            youtube_url
+          ]);
+          const info = JSON.parse(jsonStdout);
+          videoTitle = info.title || videoTitle;
+          durationSeconds = Math.round(info.duration || 0);
 
           // Cập nhật metadata
           await supabase
@@ -134,7 +142,7 @@ export async function POST(request: Request) {
             .update({
               duration_seconds: durationSeconds,
               youtube_title: videoTitle,
-              youtube_thumbnail_url: info.videoDetails.thumbnails?.[0]?.url,
+              youtube_thumbnail_url: info.thumbnail || info.thumbnails?.[0]?.url,
             })
             .eq("meeting_id", meetingId);
 
@@ -152,20 +160,33 @@ export async function POST(request: Request) {
           }
         } catch (infoError: any) {
           if (infoError.message.includes("quá dài")) throw infoError;
-          console.warn("Cannot get video info:", infoError.message);
+          console.warn("Cannot get video info via yt-dlp:", infoError.message);
         }
 
-        // Tải audio stream → buffer
-        const stream = ytdl(youtube_url, {
-          quality: "highestaudio",
-          filter: "audioonly",
-        });
+        // Tải audio stream qua stdout bằng yt-dlp
+        const child = spawn(ytDlpPath, [
+          "-f", "ba", // Tải định dạng audio tốt nhất
+          "-o", "-",  // Output trực tiếp ra stdout
+          youtube_url
+        ]);
 
         const chunks: Buffer[] = [];
-        for await (const chunk of stream) {
-          chunks.push(Buffer.from(chunk));
-        }
-        const audioBuffer = Buffer.concat(chunks);
+        child.stdout.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+
+        const audioBuffer = await new Promise<Buffer>((resolve, reject) => {
+          child.on("close", (code: number) => {
+            if (code === 0) {
+              resolve(Buffer.concat(chunks));
+            } else {
+              reject(new Error(`Tải audio thất bại, mã thoát: ${code}`));
+            }
+          });
+          child.on("error", (err: Error) => {
+            reject(err);
+          });
+        });
 
         // Cập nhật file size
         await supabase
@@ -177,12 +198,30 @@ export async function POST(request: Request) {
         await runPipeline(meetingId, audioBuffer, pipelineConfig);
       } catch (error: any) {
         console.error(`[YouTube Pipeline Error] Meeting ${meetingId}:`, error);
+        
+        let friendlyMessage = "Lỗi khi tải hoặc xử lý video YouTube.";
+        const errMsg = error?.message || "";
+        
+        if (
+          errMsg.includes("403") || 
+          errMsg.includes("decipher") || 
+          errMsg.includes("transform") || 
+          errMsg.includes("player-script") ||
+          errMsg.includes("status code")
+        ) {
+          friendlyMessage = "Không thể tải video từ YouTube (YouTube chặn kết nối tự động. Vui lòng tải file âm thanh lên trực tiếp).";
+        } else if (errMsg.includes("length") || errMsg.includes("quá dài") || errMsg.includes("Tải audio thất bại")) {
+          friendlyMessage = errMsg;
+        } else if (errMsg) {
+          friendlyMessage = `Lỗi xử lý: ${errMsg}`;
+        }
+
         const supabase2 = await createServerSupabaseClient();
         await supabase2
           .from("meetings")
           .update({
             status: "failed",
-            progress: { percent: 0, message: error.message || "Lỗi khi xử lý video YouTube." },
+            progress: { percent: 0, message: friendlyMessage },
           })
           .eq("id", meetingId);
       }

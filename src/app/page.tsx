@@ -945,44 +945,48 @@ export default function Dashboard() {
     return `${mins} phút`;
   };
 
-  // Infinite scroll observer
+  // Infinite scroll event listener
   useEffect(() => {
-    const sentinel = loadMoreSentinelRef.current;
-    if (!sentinel) return;
     if (filteredMeetings.length <= visibleMeetingsCount) return;
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setVisibleMeetingsCount((prev) => prev + 15);
-        }
-      },
-      { rootMargin: "200px" }
-    );
+    const handleScroll = () => {
+      const scrollHeight = document.documentElement.scrollHeight;
+      const scrollTop = window.scrollY || document.documentElement.scrollTop;
+      const clientHeight = window.innerHeight;
 
-    observer.observe(sentinel);
-    return () => {
-      if (sentinel) observer.unobserve(sentinel);
+      // If we are within 250px of the bottom of the page, load more
+      if (scrollTop + clientHeight >= scrollHeight - 250) {
+        setVisibleMeetingsCount((prev) => {
+          if (prev >= filteredMeetings.length) return prev;
+          return prev + 15;
+        });
+      }
     };
+
+    window.addEventListener("scroll", handleScroll);
+    // Trigger initially in case page has space or is already scrolled
+    handleScroll();
+
+    return () => window.removeEventListener("scroll", handleScroll);
   }, [filteredMeetings.length, visibleMeetingsCount]);
   const getFilterButtonStyles = () => {
     if (showStatusDropdown && statusFilter === "all") {
-      return "bg-slate-100 dark:bg-slate-800 border-slate-300 text-slate-900 dark:border-slate-700 dark:text-slate-100";
+      return "text-slate-650 dark:text-slate-300";
     }
     
     switch (statusFilter) {
       case "recording":
-        return "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30";
+        return "text-red-500 hover:text-red-650 dark:text-red-400 dark:hover:text-red-300";
       case "completed":
-        return "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-455 dark:border-blue-900/30";
+        return "text-blue-500 hover:text-blue-650 dark:text-blue-400 dark:hover:text-blue-300";
       case "paused":
-        return "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30";
+        return "text-purple-500 hover:text-purple-650 dark:text-purple-400 dark:hover:text-purple-300";
       case "failed":
-        return "bg-rose-50 text-rose-750 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/30";
+        return "text-rose-500 hover:text-rose-650 dark:text-rose-400 dark:hover:text-rose-300";
       case "processing":
-        return "bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-455 dark:border-amber-900/30";
+        return "text-amber-500 hover:text-amber-650 dark:text-amber-400 dark:hover:text-amber-300";
       default:
-        return "bg-white text-slate-605 border-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-800 dark:hover:bg-slate-800";
+        return "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350";
     }
   };
 
@@ -1071,8 +1075,14 @@ export default function Dashboard() {
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
         <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-2 sm:space-x-3 cursor-pointer" onClick={() => router.push("/")}>
-            <img src="/logo.png" alt="Logo" className="w-7 h-7 sm:w-8 h-8 object-contain" />
+          <div 
+            className="flex items-center space-x-2 sm:space-x-3 cursor-pointer" 
+            onClick={() => {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+              router.push("/");
+            }}
+          >
+            <img src="/logo.png?v=3" alt="Logo" className="w-7 h-7 sm:w-8 h-8 object-contain relative -top-[2px] sm:-top-[3px]" />
             <span className="font-bold text-lg sm:text-2xl tracking-tight text-blue-600 dark:text-blue-400">
               NOTE AIPRO
             </span>
@@ -1180,7 +1190,7 @@ export default function Dashboard() {
                     setEndDate("");
                     setIsSearchingGlobally(false);
                   }}
-                  className="text-blue-500 hover:text-blue-600 font-semibold text-xs whitespace-nowrap px-2 cursor-pointer w-full sm:w-auto text-center py-2 sm:py-0 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 rounded-xl sm:bg-transparent sm:dark:bg-transparent transition-colors"
+                  className="flex items-center justify-center h-9 sm:h-10 w-full sm:w-auto px-4 font-semibold text-xs sm:text-sm text-red-500 hover:text-white dark:text-red-400 dark:hover:text-white border border-red-200 dark:border-red-900/35 hover:border-red-500 dark:hover:border-red-500 bg-red-50/10 hover:bg-red-500 dark:bg-red-950/10 dark:hover:bg-red-600 rounded-xl transition-all duration-200 cursor-pointer whitespace-nowrap"
                 >
                   Xóa bộ lọc
                 </button>
@@ -1263,13 +1273,13 @@ export default function Dashboard() {
         ) : (
           <section className="space-y-6">
             {/* TABS */}
-            <div className="flex justify-between items-end sm:items-center border-b border-slate-200 dark:border-slate-800 gap-2">
+            <div className="flex justify-between items-end border-b border-slate-200 dark:border-slate-800 gap-2">
               <div className="relative flex select-none w-auto">
                 {(() => {
                   const activeIndex = activeTab === "recent" ? 0 : activeTab === "pinned" ? 1 : 2;
                   return (
                     <div
-                      className="absolute z-10 bottom-[-1px] h-[2px] bg-blue-600 dark:bg-blue-400 sm:bg-slate-900 sm:dark:bg-slate-100 transition-all duration-300 ease-out w-[80px] sm:w-[115px]"
+                      className="absolute z-10 bottom-[-1px] h-[2px] bg-blue-600 dark:bg-blue-400 transition-all duration-300 ease-out w-[80px] sm:w-[115px]"
                       style={{
                         transform: `translateX(${activeIndex * 100}%)`,
                       }}
@@ -1278,9 +1288,9 @@ export default function Dashboard() {
                 })()}
                 <button
                   onClick={() => setActiveTab("recent")}
-                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 pt-2 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "recent"
-                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      ? "text-blue-600 dark:text-blue-400"
                       : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
@@ -1288,9 +1298,9 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => setActiveTab("pinned")}
-                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 pt-2 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "pinned"
-                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      ? "text-blue-600 dark:text-blue-400"
                       : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
@@ -1298,21 +1308,20 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => setActiveTab("favorite")}
-                  className={`pb-1 sm:pb-2.5 pt-1 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-[13.5px] sm:text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                  className={`pb-1 pt-2 w-[80px] sm:w-[115px] flex items-center justify-center font-semibold text-sm transition-colors duration-200 cursor-pointer whitespace-nowrap ${
                     activeTab === "favorite"
-                      ? "text-blue-600 dark:text-blue-400 sm:text-slate-900 sm:dark:text-slate-100"
+                      ? "text-blue-600 dark:text-blue-400"
                       : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
-                  <span className="hidden sm:inline">Yêu thích (★)</span>
-                  <span className="inline sm:hidden">Yêu thích</span>
+                  Yêu thích
                 </button>
               </div>
 
-              <div ref={statusDropdownRef} className="relative mb-1 sm:mb-2.5 shrink-0 top-[2px] sm:top-[2px]">
+              <div ref={statusDropdownRef} className="relative shrink-0">
                 <button
                   onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-                  className={`flex items-center gap-[7px] sm:gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
+                  className={`flex items-center gap-[4px] sm:gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
                 >
                   {statusFilter !== "all" && (
                     <span
@@ -1462,13 +1471,13 @@ export default function Dashboard() {
                     {/* Header skeleton */}
                     <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
                       <div className="flex items-center space-x-2">
-                        <div className="h-5 w-14 bg-slate-200 dark:bg-slate-800 rounded" />
-                        <div className="h-5 w-12 bg-slate-200 dark:bg-slate-800 rounded" />
+                        <div className="h-[21px] w-14 bg-slate-200 dark:bg-slate-800 rounded" />
+                        <div className="h-[21px] w-12 bg-slate-200 dark:bg-slate-800 rounded" />
                       </div>
                       <div className="flex space-x-1.5">
-                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
-                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
-                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                        <div className="h-[28px] w-[28px] bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                        <div className="h-[28px] w-[28px] bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                        <div className="h-[28px] w-[28px] bg-slate-200 dark:bg-slate-800 rounded-lg" />
                       </div>
                     </div>
                     {/* Body skeleton */}
@@ -1583,7 +1592,10 @@ export default function Dashboard() {
 
                             <div
                               className="p-5 pt-4 flex-1 cursor-pointer space-y-3"
-                              onClick={() => router.push(m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`)}
+                              onClick={() => {
+                                const isPipeline = createdFrom === "youtube" || createdFrom === "upload";
+                                router.push(isPipeline || m.status === "completed" ? `/history/${m.id}` : `/meeting/${m.id}`);
+                              }}
                             >
                               <div className="space-y-1">
                                 <h4 className="font-bold text-lg leading-tight text-slate-900 group-hover:text-blue-600 dark:text-slate-100 dark:group-hover:text-blue-400 transition-colors">
@@ -1632,10 +1644,12 @@ export default function Dashboard() {
                   ))}
                 </div>
 
-                <div ref={loadMoreSentinelRef} className="h-14 flex items-center justify-center">
-                  {filteredMeetings.length > visibleMeetingsCount && (
+                <div className="h-14 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500 font-medium">
+                  {filteredMeetings.length > visibleMeetingsCount ? (
                     <span className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
-                  )}
+                  ) : filteredMeetings.length > 15 ? (
+                    <span>Đã hiển thị tất cả {filteredMeetings.length} cuộc họp</span>
+                  ) : null}
                 </div>
               </div>
             )}
