@@ -23,12 +23,12 @@ async function getMeetingConfig(meetingId: string): Promise<PipelineConfig> {
   const supabase = await createServerSupabaseClient();
   const { data: meeting } = await supabase
     .from("meetings")
-    .select("title, source_language, target_language, context")
+    .select("title, source_language, target_language, meeting_context")
     .eq("id", meetingId)
     .single();
 
   const { data: glossary } = await supabase
-    .from("glossaries")
+    .from("glossary")
     .select("*")
     .eq("meeting_id", meetingId);
 
@@ -40,7 +40,7 @@ async function getMeetingConfig(meetingId: string): Promise<PipelineConfig> {
 
   return {
     title: meeting?.title || "Meeting",
-    meetingContext: meeting?.context || "",
+    meetingContext: meeting?.meeting_context || "",
     sourceLanguage: meeting?.source_language || "auto",
     targetLanguage: meeting?.target_language || "vi",
     glossary: glossary || [],
