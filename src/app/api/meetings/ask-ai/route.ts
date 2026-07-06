@@ -4,7 +4,8 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateEmbeddings } from "@/lib/ai/rag";
 
 const AI_MODEL = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
-const EMBEDDING_MODEL = "text-embedding-004";
+const EMBEDDING_MODEL = "gemini-embedding-001";
+const EMBEDDING_DIM = 768; // Khớp với cột vector(768) và RPC match_transcript_chunks
 
 export async function POST(req: Request) {
   try {
@@ -55,13 +56,16 @@ export async function POST(req: Request) {
     const aiModel = genAI.getGenerativeModel({ model: AI_MODEL });
 
     // 3. Tạo vector cho câu hỏi
-    const embedResult = await embeddingModel.embedContent(question);
+    const embedResult = await embeddingModel.embedContent({
+      content: { role: "user", parts: [{ text: question }] },
+      outputDimensionality: EMBEDDING_DIM,
+    } as any);
     const queryEmbedding = embedResult.embedding.values;
 
     // 4. Tìm context bằng RPC match_transcript_chunks
     const { data: chunks, error: rpcError } = await supabase.rpc("match_transcript_chunks", {
       query_embedding: queryEmbedding,
-      match_meeting_id: meetingId,
+      p_meeting_id: meetingId,
       match_threshold: 0.5,
       match_count: 5,
     });
@@ -75,21 +79,23 @@ export async function POST(req: Request) {
       : "(Không tìm thấy thông tin cụ thể trong bản ghi, hãy trả lời dựa trên hiểu biết hoặc báo không tìm thấy)";
 
     // 5. Chuẩn bị Prompt
-    const prompt = `Bạn là trợ lý AI thông minh phân tích nội dung cuộc họp.
-Bạn hãy trả lời câu hỏi của người dùng dựa TRÊN NGỮ CẢNH CUỘC HỌP dưới đây.
+    const prompt = `Bạn là trợ lý AI thân thiện, trò chuyện tự nhiên như ChatGPT, giúp người dùng hiểu và khai thác nội dung cuộc họp.
 
 LỊCH SỬ TRÒ CHUYỆN:
 ${historyText}
 
-NGỮ CẢNH CUỘC HỌP:
+NGỮ CẢNH CUỘC HỌP (trích từ bản ghi):
 ${contextText}
 
 CÂU HỎI MỚI: ${question}
 
 HƯỚNG DẪN:
-- Trả lời rõ ràng, súc tích bằng ngôn ngữ của câu hỏi.
-- KHÔNG tự bịa ra thông tin không có trong ngữ cảnh. Nếu không biết, hãy nói không biết.
-- Sử dụng định dạng Markdown.`;
+- Trả lời tự nhiên, thân thiện, bằng chính ngôn ngữ của người dùng.
+- Nếu người dùng chỉ chào hỏi hoặc trò chuyện xã giao (vd "chào", "alo", "có gì hot"), hãy đáp lại niềm nở và gợi ý vài điều họ có thể hỏi về cuộc họp.
+- Nếu câu hỏi mơ hồ hoặc thiếu thông tin, hãy CHỦ ĐỘNG HỎI LẠI để làm rõ ý người dùng, thay vì từ chối trả lời.
+- Với câu hỏi về nội dung cuộc họp: ưu tiên dựa vào NGỮ CẢNH ở trên. KHÔNG bịa ra chi tiết cụ thể (số liệu, tên riêng, quyết định) không có trong ngữ cảnh; nếu ngữ cảnh chưa đủ, hãy nói thật và hỏi người dùng muốn tập trung vào phần nào.
+- Có thể dùng kiến thức chung để giải thích khái niệm hoặc trò chuyện, nhưng nêu rõ khi điều đó không nằm trong cuộc họp.
+- Trình bày bằng Markdown, giọng điệu gần gũi, không máy móc.`;
 
     // 6. Gọi Streaming
     const responseStream = await aiModel.generateContentStream(prompt);

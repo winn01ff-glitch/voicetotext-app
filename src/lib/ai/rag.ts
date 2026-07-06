@@ -1,7 +1,8 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const EMBEDDING_MODEL = "text-embedding-004";
+const EMBEDDING_MODEL = "gemini-embedding-001";
+const EMBEDDING_DIM = 768; // Khớp với cột vector(768) đã tạo cho text-embedding-004 trước đây
 const CHUNK_MAX_CHARS = 4000; // Khoảng 1000 tokens (1 token ~ 4 chars)
 
 function getGeminiClient(): GoogleGenerativeAI {
@@ -59,12 +60,17 @@ export async function generateEmbeddings(meetingId: string) {
   const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
   
   const embeddingsData = [];
-  for (const chunk of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
     try {
-      const result = await model.embedContent(chunk.text);
+      const result = await model.embedContent({
+        content: { role: "user", parts: [{ text: chunk.text }] },
+        outputDimensionality: EMBEDDING_DIM,
+      } as any);
       const embedding = result.embedding.values;
       embeddingsData.push({
         meeting_id: meetingId,
+        chunk_index: i,
         content: chunk.text,
         embedding: embedding,
       });
@@ -77,6 +83,10 @@ export async function generateEmbeddings(meetingId: string) {
 
   // 4. Xoá bản cũ và Lưu DB
   await supabase.from("transcript_embeddings").delete().eq("meeting_id", meetingId);
-  await supabase.from("transcript_embeddings").insert(embeddingsData);
+  const { error: insertErr } = await supabase.from("transcript_embeddings").insert(embeddingsData);
+  if (insertErr) {
+    console.error(`[RAG] Lỗi insert embeddings (dim=${embeddingsData[0]?.embedding?.length}):`, insertErr);
+    return;
+  }
   console.log(`[RAG] Đã tạo ${embeddingsData.length} chunks embedding cho meeting ${meetingId}`);
 }

@@ -15,6 +15,40 @@ import {
   Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List
 } from "lucide-react";
 
+// Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
+// Hỗ trợ tiêu đề (#..####), in đậm (**), code (`), danh sách (-/*, 1.) và đoạn văn.
+function mdToHtml(src: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (t: string) =>
+    t
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+?)`/g, '<code class="px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-xs">$1</code>');
+  const lines = esc(src).split("\n");
+  let html = "";
+  let listTag: "ul" | "ol" | null = null;
+  const closeList = () => { if (listTag) { html += `</${listTag}>`; listTag = null; } };
+  for (const raw of lines) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if (!line) { closeList(); continue; }
+    if ((m = line.match(/^#{1,4}\s+(.*)$/))) {
+      closeList();
+      html += `<div class="font-bold mt-2 mb-0.5">${inline(m[1])}</div>`;
+    } else if ((m = line.match(/^[-*]\s+(.*)$/))) {
+      if (listTag !== "ul") { closeList(); html += `<ul class="list-disc pl-5 space-y-0.5">`; listTag = "ul"; }
+      html += `<li>${inline(m[1])}</li>`;
+    } else if ((m = line.match(/^\d+\.\s+(.*)$/))) {
+      if (listTag !== "ol") { closeList(); html += `<ol class="list-decimal pl-5 space-y-0.5">`; listTag = "ol"; }
+      html += `<li>${inline(m[1])}</li>`;
+    } else {
+      closeList();
+      html += `<p>${inline(line)}</p>`;
+    }
+  }
+  closeList();
+  return html;
+}
+
 interface HistoryDetailProps {
   params: Promise<{ id: string }>;
 }
@@ -35,9 +69,23 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [loading, setLoading] = useState(true);
 
   // UI state
-  const [mainTab, setMainTab] = useState<"processed" | "raw">("processed");
-  const [subTabProcessed, setSubTabProcessed] = useState<"summary" | "transcript">("summary");
-  const [subTabRaw, setSubTabRaw] = useState<"summary" | "transcript">("summary");
+  // Single source of truth for the 4 tabs. Legacy mainTab/subTab flags are derived
+  // from it so the existing content blocks keep rendering unchanged.
+  const [activeTab, setActiveTab] = useState<"transcript" | "ai" | "summary" | "ask">("summary");
+  // Tab -> existing content block:
+  //   summary    -> processed/summary   (aiSummary + action items)
+  //   transcript -> processed/transcript (RAW lines, `transcripts`)
+  //   ai         -> raw/transcript       (FINAL lines, `reprocessedTranscripts`) + control panel
+  //   ask        -> intercepted separately (Ask AI chat)
+  const mainTab: "processed" | "raw" = activeTab === "ai" ? "raw" : "processed";
+  const subTabProcessed: "summary" | "transcript" = activeTab === "summary" ? "summary" : "transcript";
+  const subTabRaw: "summary" | "transcript" = "transcript";
+  // AI jobs + Ask AI chat state
+  const [aiJobs, setAiJobs] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatStreaming, setIsChatStreaming] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -524,6 +572,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         setReprocessedActionItems([]);
       }
 
+      // 6. Fetch AI jobs + chat history (new pipeline)
+      const { data: jobs } = await supabase
+        .from("ai_jobs")
+        .select("*")
+        .eq("meeting_id", meetingId)
+        .order("created_at", { ascending: true });
+      setAiJobs(jobs || []);
+
+      const { data: chats } = await supabase
+        .from("meeting_chats")
+        .select("*")
+        .eq("meeting_id", meetingId)
+        .order("created_at", { ascending: true });
+      setChatMessages(chats || []);
+      setConversationId(chats?.[0]?.conversation_id || crypto.randomUUID());
+
     } catch (err) {
       console.error(err);
       await showCustomAlert("Không thể tải thông tin cuộc họp.", "error");
@@ -598,6 +662,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         setActionItems(acts.filter((item: any) => !item.is_reprocessed));
         setReprocessedActionItems(acts.filter((item: any) => item.is_reprocessed));
       }
+
+      // Poll AI job progress
+      const { data: jobs } = await supabase.from("ai_jobs").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
+      setAiJobs(jobs || []);
     } catch (err) {
       console.error("Silent refresh error:", err);
     }
@@ -859,8 +927,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       // Show toast instead of blocking modal
       addToast("Thành công", "Đã phân tích và tách vai lại cuộc họp.", "success");
       
-      setMainTab("raw");
-      setSubTabRaw("transcript");
+      setActiveTab("transcript");
     } catch (err: any) {
       console.error(err);
       addToast("Lỗi xử lý", err.message || "", "error");
@@ -1520,9 +1587,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
             <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
               {(() => {
-                const activeIndex = mainTab === "processed"
-                  ? (subTabProcessed === "summary" ? 0 : 1)
-                  : (subTabRaw === "summary" ? 2 : 3);
+                const activeIndex = activeTab === "transcript" ? 0
+                  : activeTab === "ai" ? 1
+                  : activeTab === "summary" ? 2
+                  : 3;
                 
                 const indicatorBg = "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500";
                 
@@ -1550,52 +1618,51 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     />
                     
                     <button
-                      onClick={() => { setMainTab("processed"); setSubTabProcessed("summary"); }}
+                      onClick={() => setActiveTab("transcript")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 0
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
-                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                      <span className="hidden sm:inline">Tóm tắt &amp; Hành động</span>
-                      <span className="sm:hidden">Tóm tắt</span>
+                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                      <span>Transcript ({filteredTranscripts.length})</span>
                     </button>
                     
                     <button
-                      onClick={() => { setMainTab("processed"); setSubTabProcessed("transcript"); }}
+                      onClick={() => setActiveTab("ai")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-r-slate-200 dark:border-r-slate-800 whitespace-nowrap order-3 xl:order-2 ${
                         activeIndex === 1
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
-                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                      <span>Bản chi tiết ({filteredTranscripts.length})</span>
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <span>AI Xử lý ({filteredReprocessedTranscripts.length})</span>
                     </button>
                     
                     <button
-                      onClick={() => { setMainTab("raw"); setSubTabRaw("summary"); }}
+                      onClick={() => setActiveTab("summary")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 2
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
-                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span>Hội thoại gốc</span>
+                      <List className="w-3.5 h-3.5 shrink-0" />
+                      <span>Tóm tắt</span>
                     </button>
                     
                     <button
-                      onClick={() => { setMainTab("raw"); setSubTabRaw("transcript"); }}
+                      onClick={() => setActiveTab("ask")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 xl:order-4 ${
                         activeIndex === 3
                           ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
-                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span>Bản chi tiết gốc ({filteredReprocessedTranscripts.length})</span>
+                      <MessageSquare className="w-3.5 h-3.5 shrink-0" />
+                      <span>Hỏi AI</span>
                     </button>
                   </>
                 );
@@ -1627,8 +1694,170 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* MAIN CONTENT AREA */}
           <div className="w-full space-y-6 text-left">
 
+        {/* AI PIPELINE CONTROL PANEL (only on AI tab) */}
+        {activeTab === "ai" && (
+          <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-5 rounded-xl shadow-sm space-y-4 mb-6">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-200">Pipeline AI</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Sửa chính tả → Phân vai → Dịch → Tóm tắt</p>
+              </div>
+            </div>
+
+            {aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 ? (
+              <div className="space-y-3 border border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-slate-50 dark:bg-slate-950">
+                {aiJobs
+                  .filter((j) => j.status !== "idle" && j.status !== "cancelled")
+                  .map((job) => (
+                    <div key={job.id} className="flex flex-col space-y-1">
+                      <div className="flex items-center justify-between text-xs font-medium">
+                        <span className="text-slate-700 dark:text-slate-300 capitalize">{job.type}</span>
+                        <span className={job.status === "completed" ? "text-green-600" : job.status === "failed" ? "text-red-600" : "text-blue-600"}>{job.status}</span>
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                        <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style={{ width: `${job.progress || 0}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                {aiJobs.some((j) => j.status === "processing" || j.status === "queued") && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={async () => {
+                        const activeJob = aiJobs.find((j) => j.status === "processing" || j.status === "queued");
+                        if (!activeJob) return;
+                        await fetch("/api/meetings/reprocess/cancel-job", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ jobId: activeJob.id }),
+                        });
+                        await refreshMeetingDataSilently();
+                      }}
+                      className="text-xs text-red-600 hover:underline px-2 py-1 cursor-pointer"
+                    >
+                      Huỷ tiến trình
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  const res = await fetch("/api/meetings/reprocess/run-queue", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ meetingId, jobTypes: ["spellcheck", "speaker", "translation", "summary"] }),
+                  });
+                  if (res.ok) {
+                    addToast("Đã bắt đầu", "Pipeline AI đang chạy ngầm.", "success");
+                    setTimeout(refreshMeetingDataSilently, 1000);
+                  } else {
+                    addToast("Lỗi", "Không thể bắt đầu pipeline.", "error");
+                  }
+                }}
+                className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:from-indigo-700 hover:to-blue-700 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Phân tích toàn diện (Generate All)</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* MAIN TAB CONTENT CONTAINER */}
-        {mainTab === "processed" ? (
+        {activeTab === "ask" ? (
+          <div className="space-y-6 text-left">
+            <div className="flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-[600px] xl:h-[800px]">
+              <div className="bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 px-5 py-4 border-b border-blue-100/60 dark:border-slate-800">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center">
+                    <MessageSquare className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <h3 className="font-semibold text-slate-800 dark:text-slate-200">Trợ lý AI</h3>
+                </div>
+              </div>
+              <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50 dark:bg-slate-950">
+                {chatMessages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
+                    <Sparkles className="w-10 h-10 opacity-50" />
+                    <p className="text-sm">Hãy đặt câu hỏi về nội dung cuộc họp</p>
+                  </div>
+                )}
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'user' ? (
+                      <div className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-md">
+                        {msg.content}
+                      </div>
+                    ) : (
+                      <div
+                        className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 shadow-sm space-y-1.5 leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: mdToHtml(msg.content || "") }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!chatInput.trim() || isChatStreaming) return;
+                    const userMsg = chatInput.trim();
+                    setChatInput("");
+                    setChatMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+                    setIsChatStreaming(true);
+                    try {
+                      const res = await fetch("/api/meetings/ask-ai", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ meetingId, question: userMsg, conversationId }),
+                      });
+                      if (!res.ok || !res.body) throw new Error("Lỗi gọi API");
+                      const reader = res.body.getReader();
+                      const decoder = new TextDecoder();
+                      let aiResponse = "";
+                      setChatMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+                      while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        aiResponse += decoder.decode(value, { stream: true });
+                        setChatMessages((prev) => {
+                          const updated = [...prev];
+                          updated[updated.length - 1] = { ...updated[updated.length - 1], content: aiResponse };
+                          return updated;
+                        });
+                      }
+                    } catch (err) {
+                      console.error(err);
+                      addToast("Lỗi", "Không thể lấy câu trả lời từ AI.", "error");
+                    } finally {
+                      setIsChatStreaming(false);
+                    }
+                  }}
+                  className="flex gap-3"
+                >
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    disabled={isChatStreaming}
+                    placeholder="Hỏi AI về cuộc họp..."
+                    className="flex-1 border border-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isChatStreaming}
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 shadow-md transition-all flex items-center justify-center"
+                  >
+                    {isChatStreaming ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Gửi"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        ) : mainTab === "processed" ? (
           <div className="space-y-6 text-left">
 
             {/* SUB-TAB CONTENT */}
