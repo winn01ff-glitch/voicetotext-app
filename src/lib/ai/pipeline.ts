@@ -226,12 +226,12 @@ async function callGemini<T = any>(
 /**
  * Chia array thành batches nhỏ hơn
  */
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) {
-    chunks.push(arr.slice(i, i + size));
+export function chunkArray<T>(array: T[], size: number): T[][] {
+  const result = [];
+  for (let i = 0; i < array.length; i += size) {
+    result.push(array.slice(i, i + size));
   }
-  return chunks;
+  return result;
 }
 
 // ================================================================
@@ -1028,447 +1028,101 @@ export function determineCheckpoint(
 export async function runPipeline(
   meetingId: string,
   audioBuffer: Buffer,
-  config: PipelineConfig,
-  resumeFrom?: PipelineStep
+  config: PipelineConfig
 ): Promise<void> {
-  const stepOrder: PipelineStep[] = [
-    "transcribing",
-    "correcting",
-    "diarizing",
-    "checking",
-    "translating",
-    "summarizing",
-    "extracting",
-    "saving",
-  ];
-
-  // Xác định bước bắt đầu
-  let startIdx = 0;
-  if (resumeFrom) {
-    startIdx = stepOrder.indexOf(resumeFrom);
-    if (startIdx === -1) startIdx = 0;
-  }
-
   try {
-    // === Load pipeline_results đã lưu (cho resume) ===
+    await updateProgress(meetingId, "transcribing");
+
+    const dgResult = await withRetry(
+      meetingId,
+      "transcribing",
+      async () => {
+        const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
+        const result = await deepgram.listen.v1.media.transcribeFile(audioBuffer, {
+          model: "nova-3",
+          language: config.sourceLanguage === "auto" ? undefined : config.sourceLanguage,
+          smart_format: true,
+          diarize: true,
+          punctuate: true,
+          utterances: true,
+          keyterm: config.glossary.map((g) => g.source),
+        });
+        return result;
+      },
+      { inputSnapshot: { bufferSize: audioBuffer.length } }
+    );
+
     const supabase = await createServerSupabaseClient();
-    const { data: meetingData } = await supabase
-      .from("meetings")
-      .select("pipeline_results, raw_deepgram_result")
-      .eq("id", meetingId)
-      .single();
+    await supabase.from("meetings").update({ raw_deepgram_result: dgResult }).eq("id", meetingId);
 
-    const pipelineResults: Record<string, any> = (meetingData?.pipeline_results as Record<string, any>) || {};
-    let rawDeepgramResult = meetingData?.raw_deepgram_result;
+    const allUtterances = extractUtterancesFromDeepgram(dgResult);
+    await saveDeepgramMetadata(meetingId, dgResult, audioBuffer, config);
 
-    // Dữ liệu trung gian giữa các bước
-    let allUtterances: RawUtterance[] = [];
-    let deepgramChunks: DeepgramChunkResult[] = [];
-    let correctedChunks: CorrectedTurn[][] = [];
-    let mappedChunks: MappedTurn[][] = [];
-    let mergedTurns: MappedTurn[] = [];
-    let checkedTurns: CheckedTurn[] = [];
-    let translatedTurns: TranslatedTurn[] = [];
-    let summary: SummaryResult = { executive_summary: "", decisions: [] };
-    let actionItems: ActionItem[] = [];
+    // Save RAW transcripts
+    await saveRawToTranscripts(meetingId, allUtterances);
 
-    // Khôi phục dữ liệu từ pipeline_results (nếu resume)
-    if (pipelineResults.corrected_turns) {
-      correctedChunks = pipelineResults.corrected_turns;
-    }
-    if (pipelineResults.speaker_mapping) {
-      mappedChunks = pipelineResults.speaker_mapping;
-    }
-    if (pipelineResults.merged_turns) {
-      mergedTurns = pipelineResults.merged_turns;
-    }
-    if (pipelineResults.consistency_result) {
-      checkedTurns = pipelineResults.consistency_result;
-    }
-    if (pipelineResults.translated_turns) {
-      translatedTurns = pipelineResults.translated_turns;
-    }
-    if (pipelineResults.summary) {
-      summary = pipelineResults.summary;
-    }
-    if (pipelineResults.action_items) {
-      actionItems = pipelineResults.action_items;
-    }
-
-    // ========================================
-    // STEP 0: Transcribing (Deepgram)
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("transcribing")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "transcribing");
-
-      const dgResult = await withRetry(
-        meetingId,
-        "transcribing",
-        async () => {
-          const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY! });
-          const result = await deepgram.listen.v1.media.transcribeFile(audioBuffer, {
-            model: "nova-3",
-            language: config.sourceLanguage === "auto" ? undefined : config.sourceLanguage,
-            smart_format: true,
-            diarize: true,
-            punctuate: true,
-            utterances: true,
-            keyterm: config.glossary.map((g) => g.source),
-          });
-          return result;
-        },
-        { inputSnapshot: { bufferSize: audioBuffer.length } }
-      );
-
-      // Lưu raw Deepgram result
-      rawDeepgramResult = dgResult;
-      const supabaseUpdate = await createServerSupabaseClient();
-      await supabaseUpdate
-        .from("meetings")
-        .update({ raw_deepgram_result: dgResult })
-        .eq("id", meetingId);
-
-      // Trích xuất utterances
-      allUtterances = extractUtterancesFromDeepgram(dgResult);
-
-      // Lưu metadata
-      await saveDeepgramMetadata(meetingId, dgResult, audioBuffer, config);
-
-      // Đánh dấu chunk count = 1 (single buffer, caller đã chia)
-      deepgramChunks = [{ chunk_index: 0, offset_ms: 0, deepgram_response: dgResult }];
-      await savePipelineStep(meetingId, "chunk_count", 1);
-    } else if (rawDeepgramResult) {
-      // Resume: trích xuất utterances từ raw_deepgram_result đã lưu
-      allUtterances = extractUtterancesFromDeepgram(rawDeepgramResult);
-      deepgramChunks = [{ chunk_index: 0, offset_ms: 0, deepgram_response: rawDeepgramResult }];
-    }
-
-    // ========================================
-    // STEP 1: Correcting STT
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("correcting")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "correcting");
-
-      const corrected = await withRetry(
-        meetingId,
-        "correcting",
-        async () => step1_correctSTT(allUtterances, config),
-        { inputSnapshot: { utteranceCount: allUtterances.length } }
-      );
-
-      correctedChunks = [corrected]; // Single chunk
-      await savePipelineStep(meetingId, "corrected_turns", correctedChunks);
-    }
-
-    // ========================================
-    // STEP 2: Speaker Mapping (Diarizing)
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("diarizing")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "diarizing");
-
-      const newMappedChunks: MappedTurn[][] = [];
-
-      for (let i = 0; i < correctedChunks.length; i++) {
-        const prevContext = i > 0 ? newMappedChunks[i - 1] : undefined;
-
-        const mapped = await withRetry(
-          meetingId,
-          "diarizing",
-          async () => step2_speakerMapping(correctedChunks[i], config, prevContext),
-          { chunkIndex: i, inputSnapshot: { turnCount: correctedChunks[i].length } }
-        );
-
-        newMappedChunks.push(mapped);
-      }
-
-      mappedChunks = newMappedChunks;
-      await savePipelineStep(meetingId, "speaker_mapping", mappedChunks);
-
-      // Merge chunks
-      mergedTurns = mergeChunks(mappedChunks, deepgramChunks);
-      await savePipelineStep(meetingId, "merged_turns", mergedTurns);
-    }
-
-    // ========================================
-    // STEP 3: Consistency Check
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("checking")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "checking");
-
-      checkedTurns = await withRetry(
-        meetingId,
-        "checking",
-        async () => step3_consistencyCheck(mergedTurns, config),
-        { inputSnapshot: { turnCount: mergedTurns.length } }
-      );
-
-      await savePipelineStep(meetingId, "consistency_result", checkedTurns);
-    }
-
-    // ========================================
-    // STEP 4: Translate
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("translating")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "translating");
-
-      translatedTurns = await withRetry(
-        meetingId,
-        "translating",
-        async () => step4_translate(checkedTurns, config),
-        { inputSnapshot: { turnCount: checkedTurns.length } }
-      );
-
-      await savePipelineStep(meetingId, "translated_turns", translatedTurns);
-    }
-
-    // ========================================
-    // STEP 5: Summarize
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("summarizing")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "summarizing");
-
-      summary = await withRetry(
-        meetingId,
-        "summarizing",
-        async () => step5_summarize(translatedTurns, config),
-        { inputSnapshot: { turnCount: translatedTurns.length } }
-      );
-
-      await savePipelineStep(meetingId, "summary", summary);
-    }
-
-    // ========================================
-    // STEP 6: Extract Actions
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("extracting")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "extracting");
-
-      actionItems = await withRetry(
-        meetingId,
-        "extracting",
-        async () => step6_extractActions(translatedTurns, summary, config),
-        { inputSnapshot: { turnCount: translatedTurns.length } }
-      );
-
-      await savePipelineStep(meetingId, "action_items", actionItems);
-    }
-
-    // ========================================
-    // SAVE: Lưu kết quả vào các bảng cuối cùng
-    // ========================================
-    if (startIdx <= stepOrder.indexOf("saving")) {
-      await checkCancelled(meetingId);
-      await updateProgress(meetingId, "saving");
-
-      await saveToTables(meetingId, translatedTurns, summary, actionItems, config);
-    }
-
-    // ========================================
-    // COMPLETED
-    // ========================================
-    await updateProgress(meetingId, "completed");
+    // Set meeting status to ready
+    await supabase.from("meetings").update({ status: "ready" }).eq("id", meetingId);
 
   } catch (err: any) {
-    if (err?.message === "CANCELLED") {
-      console.log(`[Pipeline] Meeting ${meetingId} was cancelled by user.`);
-      // Status đã là 'cancelled' — không cần cập nhật
-      return;
-    }
-
+    if (err?.message === "CANCELLED") return;
     console.error(`[Pipeline] Fatal error for meeting ${meetingId}:`, err);
-    
     let friendlyMessage = err?.message || "Đã xảy ra lỗi khi xử lý.";
     if (friendlyMessage.includes("Deepgram") || friendlyMessage.includes("transcribe")) {
-      friendlyMessage = "Không thể dịch giọng nói thành văn bản (Lỗi kết nối máy chủ Deepgram).";
-    } else if (friendlyMessage.includes("Gemini") || friendlyMessage.includes("summarize") || friendlyMessage.includes("model")) {
-      friendlyMessage = "Không thể tóm tắt văn bản (Lỗi máy chủ AI Gemini).";
+      friendlyMessage = "Không thể bóc băng âm thanh (Lỗi kết nối máy chủ Deepgram).";
     }
-    
     await updateProgress(meetingId, "failed", undefined, undefined, friendlyMessage);
-
-    // Cập nhật ai_summaries status nếu có lỗi
-    try {
-      const supabase = await createServerSupabaseClient();
-      await supabase
-        .from("ai_summaries")
-        .update({ status: "Draft" })
-        .eq("meeting_id", meetingId);
-    } catch {}
-
-    throw err; // Re-throw để caller biết
+    throw err;
   }
 }
 
-// ================================================================
-// saveToTables — lưu kết quả cuối cùng vào transcripts, speakers, ai_summaries, action_items
-// ================================================================
-
-export async function saveToTables(
-  meetingId: string,
-  translatedTurns: TranslatedTurn[],
-  summary: SummaryResult,
-  actions: ActionItem[],
-  config: PipelineConfig
-): Promise<void> {
+async function saveRawToTranscripts(meetingId: string, utterances: RawUtterance[]) {
   const supabase = await createServerSupabaseClient();
+  
+  // Set existing to false (nếu re-upload)
+  await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meetingId);
+  await supabase.from("speakers").update({ is_active: false }).eq("meeting_id", meetingId);
+  
+  const insertRows = utterances.map((u) => ({
+    meeting_id: meetingId,
+    original_text: u.text,
+    corrected_text: u.text,
+    start_ms: Math.round(Number(u.start * 1000)),
+    end_ms: Math.round(Number(u.end * 1000)),
+    confidence: u.confidence || 1.0,
+    speaker_tag: `speaker_${u.speaker + 1}`,
+    speaker_name: `Speaker ${u.speaker + 1}`,
+    version_type: 'RAW',
+    version: 1,
+    is_active: true
+  }));
 
-  // === 1. Fetch / Create speakers ===
-  const { data: existingSpeakers } = await supabase
-    .from("speakers")
-    .select("id, speaker_tag")
-    .eq("meeting_id", meetingId);
-
-  const speakerTagToId: Record<string, string> = {};
-  if (existingSpeakers) {
-    existingSpeakers.forEach((s: any) => {
-      speakerTagToId[s.speaker_tag] = s.id;
-    });
+  const insertBatches = chunkArray(insertRows, 100);
+  for (const batch of insertBatches) {
+    await supabase.from("transcripts").insert(batch);
   }
-
-  // Tạo speakers mới nếu chưa có
-  const uniqueTags = Array.from(
-    new Set(translatedTurns.map((t) => t.speaker_tag).filter(Boolean))
-  );
-
-  // Tìm display_name từ config.speakers hoặc translatedTurns
+  
+  // Create basic speakers
+  const uniqueTags = Array.from(new Set(insertRows.map(r => r.speaker_tag)));
   for (const tag of uniqueTags) {
-    if (!speakerTagToId[tag]) {
-      const configSpeaker = config.speakers.find((s) => s.speaker_tag === tag);
-      const turnSpeaker = translatedTurns.find((t) => t.speaker_tag === tag);
-      const displayName =
-        configSpeaker?.display_name ||
-        turnSpeaker?.speaker_name ||
-        (tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker "));
-
-      const { data: newSpeaker } = await supabase
-        .from("speakers")
-        .insert({
-          meeting_id: meetingId,
-          speaker_tag: tag,
-          display_name: displayName,
-          language_code: configSpeaker?.language_code || config.sourceLanguage,
-          color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
-        })
-        .select()
-        .single();
-
-      if (newSpeaker) {
-        speakerTagToId[tag] = newSpeaker.id;
-      }
-    }
-  }
-
-  // === 2. Delete old transcripts (nếu retry/resume) ===
-  await supabase.from("transcripts").delete().eq("meeting_id", meetingId);
-
-  // === 3. Insert transcripts ===
-  if (translatedTurns.length > 0) {
-    const insertRows = translatedTurns.map((t) => ({
-      meeting_id: meetingId,
-      speaker_id: speakerTagToId[t.speaker_tag] || null,
-      original_text: t.original_text,
-      corrected_text: t.original_text, // Đã qua correction rồi
-      translated_text: t.translated_text,
-      start_ms: Math.round(Number(t.start_ms || 0)),
-      end_ms: Math.round(Number(t.end_ms || 0)),
-      confidence: t.confidence || 1.0,
-      speaker_tag: t.speaker_tag,
-      speaker_name: t.speaker_name,
-    }));
-
-    // Insert theo batch 100 rows (tránh payload quá lớn)
-    const insertBatches = chunkArray(insertRows, 100);
-    for (const batch of insertBatches) {
-      const { error: insertError } = await supabase.from("transcripts").insert(batch);
-      if (insertError) {
-        console.error("[Pipeline] Insert transcripts error:", insertError);
-        throw insertError;
-      }
-    }
-  }
-
-  // === 4. Upsert ai_summaries ===
-  // Kiểm tra đã có row chưa
-  const { data: existingSummary } = await supabase
-    .from("ai_summaries")
-    .select("id")
-    .eq("meeting_id", meetingId)
-    .single();
-
-  if (existingSummary) {
-    const { error: updateError } = await supabase
-      .from("ai_summaries")
-      .update({
-        status: "Completed",
-        executive_summary: summary.executive_summary,
-        decisions: summary.decisions || [],
-      })
-      .eq("meeting_id", meetingId);
-
-    if (updateError) {
-      console.error("[Pipeline] Update ai_summaries error:", updateError);
-      throw updateError;
-    }
-  } else {
-    const { error: insertError } = await supabase.from("ai_summaries").insert({
-      meeting_id: meetingId,
-      status: "Completed",
-      executive_summary: summary.executive_summary,
-      decisions: summary.decisions || [],
-    });
-
-    if (insertError) {
-      console.error("[Pipeline] Insert ai_summaries error:", insertError);
-      throw insertError;
-    }
-  }
-
-  // === 5. Delete old action_items rồi insert mới ===
-  await supabase.from("action_items").delete().eq("meeting_id", meetingId);
-
-  if (actions.length > 0) {
-    const actionItemsToInsert = actions.map((item) => {
-      let parsedDeadline: string | null = null;
-      if (item.deadline) {
-        const d = new Date(item.deadline);
-        if (!isNaN(d.getTime())) {
-          parsedDeadline = d.toISOString();
-        }
-        // Nếu không parse được ISO → giữ null (deadline mô tả sẽ nằm trong description)
-      }
-      return {
+     await supabase.from("speakers").insert({
         meeting_id: meetingId,
-        description: item.description,
-        owner: item.owner || null,
-        deadline: parsedDeadline,
-        is_completed: false,
-      };
-    });
-
-    const { error: insertActionError } = await supabase
-      .from("action_items")
-      .insert(actionItemsToInsert);
-
-    if (insertActionError) {
-      console.error("[Pipeline] Insert action_items error:", insertActionError);
-    }
+        speaker_tag: tag,
+        display_name: tag.replace("speaker_", "Speaker "),
+        color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+        version_type: 'RAW',
+        version: 1,
+        is_active: true
+     });
   }
-
-  // === 6. Cập nhật raw_transcript vào meetings (text-only backup) ===
-  const rawTranscriptText = translatedTurns
+  
+  // Cập nhật raw_transcript vào meetings (text-only backup)
+  const rawTranscriptText = insertRows
     .map((t) => `[${t.speaker_name}]: ${t.original_text}`)
     .join("\n");
 
-  // Tính duration
-  const maxEndMs = translatedTurns.length > 0
-    ? Math.max(...translatedTurns.map((t) => Number(t.end_ms || 0)))
+  const maxEndMs = insertRows.length > 0
+    ? Math.max(...insertRows.map((t) => Number(t.end_ms || 0)))
     : 0;
 
   await supabase
@@ -1479,6 +1133,10 @@ export async function saveToTables(
     })
     .eq("id", meetingId);
 }
+
+export async function saveToTables(
+  // Deprecated. We use specialized save functions in queueWorker now.
+): Promise<void> {}
 
 // ================================================================
 // Helper: trích xuất utterances từ Deepgram result

@@ -86,7 +86,7 @@ export async function POST(request: Request) {
     after(async () => {
       try {
         // Resume: không cần audio buffer vì raw_deepgram_result đã có
-        await runPipeline(meeting_id, null as any, pipelineConfig, checkpoint);
+        await runPipeline(meeting_id, null as any, pipelineConfig);
       } catch (error) {
         console.error(`[Resume Pipeline Error] Meeting ${meeting_id}:`, error);
       }

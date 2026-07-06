@@ -8,17 +8,9 @@ import {
   Save, AlertTriangle, RotateCcw
 } from "lucide-react";
 
-// Thứ tự các bước xử lý pipeline
 const PIPELINE_STEPS = [
   { key: "uploading", label: "Tải âm thanh", icon: Upload, chunked: false },
-  { key: "transcribing", label: "Bóc băng giọng nói", icon: Mic, chunked: true },
-  { key: "correcting", label: "Sửa chính tả", icon: FileSearch, chunked: true },
-  { key: "diarizing", label: "Phân vai người nói", icon: FileSearch, chunked: true },
-  { key: "checking", label: "Kiểm tra tính nhất quán", icon: Brain, chunked: false },
-  { key: "translating", label: "Dịch thuật", icon: Languages, chunked: false },
-  { key: "summarizing", label: "Tóm tắt cuộc họp", icon: Brain, chunked: false },
-  { key: "extracting", label: "Trích xuất công việc", icon: ListChecks, chunked: false },
-  { key: "saving", label: "Lưu kết quả", icon: Save, chunked: false },
+  { key: "transcribing", label: "Bóc băng giọng nói (AI)", icon: Mic, chunked: true },
 ] as const;
 
 interface PipelineProgressProps {
@@ -68,7 +60,7 @@ export default function PipelineProgress({
           setStatus(newStatus);
           if (newProgress) setProgress(newProgress);
 
-          if (newStatus === "completed") {
+          if (newStatus === "ready" || newStatus === "completed") {
             // Delay chút để animation hoàn tất
             setTimeout(() => onCompleted(), 1500);
           }
@@ -83,7 +75,7 @@ export default function PipelineProgress({
 
   // Fallback Polling (in case Realtime connection is unstable or missed)
   useEffect(() => {
-    if (["completed", "failed", "cancelled"].includes(status)) return;
+    if (["ready", "completed", "failed", "cancelled"].includes(status)) return;
 
     const interval = setInterval(async () => {
       try {
@@ -103,7 +95,7 @@ export default function PipelineProgress({
             setProgress(data.progress);
           }
 
-          if (data.status === "completed") {
+          if (data.status === "ready" || data.status === "completed") {
             clearInterval(interval);
             setTimeout(() => onCompleted(), 1500);
           }
@@ -121,19 +113,11 @@ export default function PipelineProgress({
     const stepIndex = PIPELINE_STEPS.findIndex((s) => s.key === stepKey);
     const currentIndex = PIPELINE_STEPS.findIndex((s) => s.key === status);
 
-    if (status === "completed") return "done";
+    if (status === "ready" || status === "completed") return "done";
     if (status === "failed" || status === "cancelled") {
-      // Ánh xạ ngược từ % tiến trình để tìm bước bị lỗi/hủy
       const percentMap: Record<number, string> = {
         2: "uploading",
         10: "transcribing",
-        25: "correcting",
-        40: "diarizing",
-        55: "checking",
-        70: "translating",
-        85: "summarizing",
-        92: "extracting",
-        98: "saving",
       };
       
       const failedStepKey = percentMap[progress?.percent || 0];
@@ -150,7 +134,7 @@ export default function PipelineProgress({
 
   // Tính phần trăm tổng thể
   const getOverallPercent = () => {
-    if (status === "completed") return 100;
+    if (status === "ready" || status === "completed") return 100;
     if (status === "queued") return 0;
 
     const currentIndex = PIPELINE_STEPS.findIndex((s) => s.key === status);
@@ -199,8 +183,8 @@ export default function PipelineProgress({
   };
 
   const overallPercent = getOverallPercent();
-  const isProcessing = !["completed", "failed", "cancelled", "queued"].includes(status);
-  const isTerminal = ["completed", "failed", "cancelled"].includes(status);
+  const isProcessing = !["ready", "completed", "failed", "cancelled", "queued"].includes(status);
+  const isTerminal = ["ready", "completed", "failed", "cancelled"].includes(status);
 
   return (
     <div className="w-full max-w-xl mx-auto">
@@ -210,21 +194,17 @@ export default function PipelineProgress({
           <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
             Tiến trình xử lý
           </span>
-          <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
-            {overallPercent}%
-          </span>
         </div>
-        <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ease-out ${
-              status === "failed" 
-                ? "bg-red-500"
-                : status === "cancelled"
-                ? "bg-amber-500"
-                : "bg-gradient-to-r from-blue-500 to-indigo-500"
-            }`}
-            style={{ width: `${overallPercent}%` }}
-          />
+        <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden relative">
+          {status === "failed" ? (
+            <div className="h-full rounded-full bg-red-500 w-full" />
+          ) : status === "cancelled" ? (
+            <div className="h-full rounded-full bg-amber-500 w-full" />
+          ) : (status === "ready" || status === "completed") ? (
+            <div className="h-full rounded-full bg-emerald-500 w-full" />
+          ) : (
+            <div className="h-full bg-blue-500 w-full animate-pulse" />
+          )}
         </div>
       </div>
 
@@ -295,18 +275,11 @@ export default function PipelineProgress({
 
               {/* Progress detail */}
               <div className="shrink-0 text-right">
-                {isActive && progress && (
+                {isActive && (
                   <div className="flex flex-col items-end">
-                    {progress.percent !== undefined && progress.percent > 0 && (
-                      <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
-                        {progress.percent}%
-                      </span>
-                    )}
-                    {step.chunked && progress.chunk_current && progress.chunk_total && (
-                      <span className="text-[10px] text-blue-500 dark:text-blue-500">
-                        chunk {progress.chunk_current}/{progress.chunk_total}
-                      </span>
-                    )}
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                      Đang xử lý...
+                    </span>
                   </div>
                 )}
                 {isDone && (
@@ -373,7 +346,7 @@ export default function PipelineProgress({
       </div>
 
       {/* Completed celebration */}
-      {status === "completed" && (
+      {(status === "ready" || status === "completed") && (
         <div className="mt-6 text-center">
           <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800">
             <CheckCircle2 className="w-5 h-5" />

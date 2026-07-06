@@ -1364,9 +1364,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // Pipeline processing statuses
   const processingStatuses = [
-    "queued", "uploading", "transcribing", "correcting",
-    "diarizing", "checking", "translating", "summarizing",
-    "extracting", "saving",
+    "queued", "uploading", "transcribing",
   ];
   const isInPipeline = meeting && processingStatuses.includes(meeting.status);
   const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status) && meeting.source_type !== "live";
