@@ -592,8 +592,10 @@ export default function Dashboard() {
         .eq("id", id);
       if (error) throw error;
       setMeetings(meetings.map((m) => (m.id === id ? { ...m, is_pinned: !currentVal } : m)));
+      await showCustomAlert(!currentVal ? "Đã ghim cuộc họp lên đầu danh sách." : "Đã bỏ ghim cuộc họp.", "success");
     } catch (err) {
       console.error("Toggle pin error:", err);
+      await showCustomAlert("Không thể cập nhật trạng thái ghim.", "error");
     }
   };
 
@@ -605,8 +607,10 @@ export default function Dashboard() {
         .eq("id", id);
       if (error) throw error;
       setMeetings(meetings.map((m) => (m.id === id ? { ...m, is_favorite: !currentVal } : m)));
+      await showCustomAlert(!currentVal ? "Đã thêm cuộc họp vào danh sách yêu thích." : "Đã bỏ cuộc họp khỏi danh sách yêu thích.", "success");
     } catch (err) {
       console.error("Toggle favorite error:", err);
+      await showCustomAlert("Không thể cập nhật trạng thái yêu thích.", "error");
     }
   };
 
@@ -1119,27 +1123,28 @@ export default function Dashboard() {
     <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans`}>
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
-        <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3 cursor-pointer" onClick={() => router.push("/")}>
-            <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
-            <span className="font-bold text-2xl tracking-tight text-blue-600 dark:text-blue-400">
+        <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between">
+          <div className="flex items-center space-x-2 sm:space-x-3 cursor-pointer" onClick={() => router.push("/")}>
+            <img src="/logo.png" alt="Logo" className="w-7 h-7 sm:w-8 h-8 object-contain" />
+            <span className="font-bold text-lg sm:text-2xl tracking-tight text-blue-600 dark:text-blue-400">
               NOTE AIPRO
             </span>
           </div>
 
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4">
             <button
               onClick={toggleTheme}
-              className="p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+              className="p-1.5 sm:p-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
             >
-              {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              {isDarkMode ? <Sun className="w-4.5 h-4.5 sm:w-5 sm:h-5" /> : <Moon className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
             </button>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="flex items-center space-x-2 btn-flat-rainbow px-5 h-10 rounded-xl font-bold text-sm transition-all cursor-pointer"
+              className="flex items-center space-x-1.5 sm:space-x-2 btn-flat-rainbow px-3.5 sm:px-5 h-9 sm:h-10 rounded-lg sm:rounded-xl font-bold text-sm transition-all cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
-              <span>Tạo Cuộc Họp Mới</span>
+              <span className="hidden sm:inline">Tạo Cuộc Họp Mới</span>
+              <span className="inline sm:hidden">Tạo mới</span>
             </button>
           </div>
         </div>
@@ -1177,46 +1182,48 @@ export default function Dashboard() {
         )}
 
         {/* SEARCH AND FILTERS */}
-        <section className="glass p-4 sm:py-3.5 sm:px-5 rounded-2xl shadow-lg shadow-indigo-500/5">
-          <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+        <section className="glass p-3 sm:py-3.5 sm:px-5 rounded-2xl shadow-lg shadow-indigo-500/5">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-2.5 sm:gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
                 placeholder="Tìm kiếm nội dung, từ khóa..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9.5 pr-9 h-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="w-full pl-9 pr-8 h-9 sm:h-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
                   title="Xóa tìm kiếm"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 text-sm text-slate-500 w-full lg:w-auto">
-              <div className="flex-1 sm:flex-initial flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
-                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mr-2 shrink-0 uppercase tracking-wider">Từ:</span>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-850 dark:text-slate-200 text-xs w-full cursor-pointer"
-                />
-              </div>
-              <div className="flex-1 sm:flex-initial flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
-                <span className="text-xs font-semibold text-slate-400 dark:text-slate-500 mr-2 shrink-0 uppercase tracking-wider">Đến:</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-850 dark:text-slate-200 text-xs w-full cursor-pointer"
-                />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 text-sm text-slate-500 w-full lg:w-auto">
+              <div className="grid grid-cols-2 gap-2 w-full lg:w-auto">
+                <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mr-1.5 shrink-0 uppercase tracking-wider">Từ:</span>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-800 dark:text-slate-200 text-xs w-full cursor-pointer"
+                  />
+                </div>
+                <div className="flex items-center bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-2.5 h-9 sm:h-10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 mr-1.5 shrink-0 uppercase tracking-wider">Đến:</span>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="bg-transparent border-none p-0 focus:ring-0 outline-none text-slate-800 dark:text-slate-200 text-xs w-full cursor-pointer"
+                  />
+                </div>
               </div>
               {(searchQuery || startDate || endDate) && (
                 <button
@@ -1226,7 +1233,7 @@ export default function Dashboard() {
                     setEndDate("");
                     setIsSearchingGlobally(false);
                   }}
-                  className="text-blue-500 hover:text-blue-600 font-semibold text-xs whitespace-nowrap ml-2 cursor-pointer w-full sm:w-auto text-center sm:text-left mt-2 sm:mt-0"
+                  className="text-blue-500 hover:text-blue-600 font-semibold text-xs whitespace-nowrap px-2 cursor-pointer w-full sm:w-auto text-center py-2 sm:py-0 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 rounded-xl sm:bg-transparent sm:dark:bg-transparent transition-colors"
                 >
                   Xóa bộ lọc
                 </button>
@@ -1306,11 +1313,11 @@ export default function Dashboard() {
         ) : (
           <section className="space-y-6">
             {/* TABS */}
-            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800">
+            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 gap-2">
               <div className="flex">
                 <button
                   onClick={() => setActiveTab("recent")}
-                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                     activeTab === "recent"
                       ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                       : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -1320,7 +1327,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => setActiveTab("pinned")}
-                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                     activeTab === "pinned"
                       ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                       : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
@@ -1330,20 +1337,21 @@ export default function Dashboard() {
                 </button>
                 <button
                   onClick={() => setActiveTab("favorite")}
-                  className={`pb-3 px-4 font-semibold text-sm border-b-2 transition-all cursor-pointer ${
+                  className={`pb-3 px-2.5 sm:px-4 font-semibold text-[13.5px] sm:text-sm border-b-2 transition-all cursor-pointer whitespace-nowrap ${
                     activeTab === "favorite"
                       ? "border-slate-900 text-slate-900 dark:border-slate-100 dark:text-slate-100"
                       : "border-transparent text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                   }`}
                 >
-                  Yêu thích (★)
+                  <span className="hidden sm:inline">Yêu thích (★)</span>
+                  <span className="inline sm:hidden">Yêu thích</span>
                 </button>
               </div>
 
-              <div ref={statusDropdownRef} className="relative mb-2.5">
+              <div ref={statusDropdownRef} className="relative mb-2.5 shrink-0 -top-[3px] sm:top-0">
                 <button
                   onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print ${getFilterButtonStyles()}`}
+                  className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
                 >
                   {statusFilter !== "all" && (
                     <span
@@ -1358,17 +1366,32 @@ export default function Dashboard() {
                     </span>
                   )}
                   <span>
-                    {statusFilter === "all"
-                      ? "Trạng thái"
-                      : statusFilter === "recording"
-                      ? "Trạng thái: Đang họp"
-                      : statusFilter === "completed"
-                      ? "Trạng thái: Đã xong"
-                      : statusFilter === "paused"
-                      ? "Trạng thái: Tạm dừng"
-                      : statusFilter === "failed"
-                      ? "Trạng thái: Lỗi xử lý"
-                      : "Trạng thái: Đang xử lý"}
+                    <span className="hidden sm:inline">
+                      {statusFilter === "all"
+                        ? "Trạng thái"
+                        : statusFilter === "recording"
+                        ? "Trạng thái: Đang họp"
+                        : statusFilter === "completed"
+                        ? "Trạng thái: Đã xong"
+                        : statusFilter === "paused"
+                        ? "Trạng thái: Tạm dừng"
+                        : statusFilter === "failed"
+                        ? "Trạng thái: Lỗi xử lý"
+                        : "Trạng thái: Đang xử lý"}
+                    </span>
+                    <span className="inline sm:hidden">
+                      {statusFilter === "all"
+                        ? "Trạng thái"
+                        : statusFilter === "recording"
+                        ? "Đang họp"
+                        : statusFilter === "completed"
+                        ? "Đã xong"
+                        : statusFilter === "paused"
+                        ? "Tạm dừng"
+                        : statusFilter === "failed"
+                        ? "Lỗi"
+                        : "Đang xử lý"}
+                    </span>
                   </span>
                   <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
                 </button>
@@ -1473,19 +1496,31 @@ export default function Dashboard() {
                 {Array.from({ length: 15 }).map((_, i) => (
                   <div
                     key={i}
-                    className="flex flex-col bg-white/50 dark:bg-slate-900/30 backdrop-blur-md rounded-2xl overflow-hidden shadow-sm border border-slate-200/50 dark:border-slate-800/50 p-6 space-y-4 animate-pulse"
+                    className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-slate-200/80 dark:border-slate-850 animate-pulse"
                   >
-                    <div className="flex justify-between items-center">
-                      <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-16" />
-                      <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-16" />
+                    {/* Header skeleton */}
+                    <div className="px-5 py-3 bg-slate-50/80 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <div className="h-5 w-14 bg-slate-200 dark:bg-slate-800 rounded" />
+                        <div className="h-5 w-12 bg-slate-200 dark:bg-slate-800 rounded" />
+                      </div>
+                      <div className="flex space-x-1.5">
+                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                        <div className="h-6 w-6 bg-slate-200 dark:bg-slate-800 rounded-lg" />
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
-                      <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
-                    </div>
-                    <div className="pt-2 flex justify-between items-center border-t border-slate-100 dark:border-slate-800/40">
-                      <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-24" />
-                      <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-12" />
+                    {/* Body skeleton */}
+                    <div className="px-5 py-5 flex-1 flex flex-col justify-between space-y-3.5">
+                      <div className="space-y-2">
+                        <div className="h-5 bg-slate-300 dark:bg-slate-850 rounded w-2/3" />
+                        <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                        <div className="space-y-2 pt-2">
+                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-full" />
+                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-11/12" />
+                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-4/5" />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1495,12 +1530,16 @@ export default function Dashboard() {
                 Không có cuộc họp nào được ghi nhận ở mục này.
               </div>
             ) : (
-              <div className="space-y-8 animate-in fade-in duration-500">
+              <div 
+                key={`${activeTab}-${statusFilter}`}
+                className="space-y-8 sm:animate-in sm:fade-in sm:duration-500"
+              >
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {filteredMeetings.slice(0, visibleMeetingsCount).map((m) => (
+                  {filteredMeetings.slice(0, visibleMeetingsCount).map((m, index) => (
                     <div
                       key={m.id}
-                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30"
+                      style={{ animationDelay: `${index * 60}ms` }}
+                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30 animate-mobile-slide-up sm:animate-none"
                     >
                       {(() => {
                         const createdFrom = Array.isArray(m.meeting_metadata)
@@ -1511,7 +1550,12 @@ export default function Dashboard() {
                           ? "YOUTUBE"
                           : createdFrom === "upload"
                           ? "FILE UPLOAD"
-                          : "TRỰC TIẾP";
+                          : (
+                            <>
+                              <span className="hidden sm:inline">TRỰC TIẾP</span>
+                              <span className="inline sm:hidden">GHI ÂM</span>
+                            </>
+                          );
 
                         const typeStyles = createdFrom === "youtube"
                           ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30"
@@ -1642,16 +1686,16 @@ export default function Dashboard() {
       {showCreateModal && (
         <div 
           onClick={() => setShowCreateModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/40 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/40 backdrop-blur-sm"
         >
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full flex flex-col bg-white dark:bg-slate-900 border dark:border-slate-800 shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-[2rem] overflow-hidden animate-in fade-in zoom-in-95 duration-300 h-[715px] max-h-[95vh]"
+            className="max-w-6xl w-full h-full sm:h-[715px] max-h-screen sm:max-h-[95vh] flex flex-col bg-white dark:bg-slate-900 border-0 shadow-none sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-none sm:rounded-[2rem] overflow-hidden animate-in fade-in sm:zoom-in-95 duration-300"
           >
             
             {/* Header */}
-            <header className="flex justify-between items-center px-8 py-4 shrink-0 bg-white dark:bg-slate-900">
+            <header className="flex justify-between items-center px-4 sm:px-6 py-4 shrink-0 bg-white dark:bg-slate-900">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl flex items-center justify-center">
                   <LayoutGrid className="w-5 h-5" />
@@ -1670,10 +1714,10 @@ export default function Dashboard() {
             </header>
 
             {/* Mode Tabs with Sliding Transition */}
-            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-2xl mx-4 sm:mx-8 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
+            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-[1.25rem] mx-4 sm:mx-6 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
               {/* Sliding Background Indicator */}
               <div 
-                className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
+                className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
                 style={{
                   width: 'calc(33.333% - 6px)',
                   left: createMode === 'live' 
@@ -1686,18 +1730,21 @@ export default function Dashboard() {
               
               <button
                 onClick={() => setCreateMode('live')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
                   createMode === 'live'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
                 <Mic className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Ghi âm trực tiếp</span>
+                <span className="truncate">
+                  <span className="hidden sm:inline">Ghi âm trực tiếp</span>
+                  <span className="inline sm:hidden">Ghi âm</span>
+                </span>
               </button>
               <button
                 onClick={() => setCreateMode('upload')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
                   createMode === 'upload'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1708,7 +1755,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setCreateMode('youtube')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
                   createMode === 'youtube'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1720,7 +1767,7 @@ export default function Dashboard() {
             </div>
 
             {/* Main Content Area - Bento Grid */}
-            <main className="flex-1 overflow-y-auto custom-scrollbar px-8 pb-2 pt-1 bg-white dark:bg-slate-900">
+            <main className="flex-1 overflow-y-auto custom-scrollbar px-4 sm:px-6 pb-2 pt-1 bg-white dark:bg-slate-900">
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 auto-rows-auto">
                 
                 {/* Block 1: Audio / Upload / YouTube (Span 4 cols, Row span 2) */}
@@ -2232,25 +2279,25 @@ export default function Dashboard() {
             </main>
 
             {/* Footer */}
-            <footer className="flex flex-col sm:flex-row justify-between items-center px-8 py-4 bg-white dark:bg-slate-900 shrink-0 border-t border-slate-100 dark:border-slate-800">
+            <footer className="flex flex-col sm:flex-row justify-between items-center px-4 sm:px-6 py-3.5 sm:py-4 bg-white dark:bg-slate-900 shrink-0 border-t border-slate-100 dark:border-slate-800">
               <button
                 onClick={resetSetupDefaults}
-                className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-bold text-[12px] hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 px-3 py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
+                className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 font-bold text-[12px] hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 px-3 py-1.5 sm:py-2 rounded-xl transition-all active:scale-95 cursor-pointer"
               >
-                <RotateCcw className="w-4.5 h-4.5" /> ĐẶT LẠI
+                <RotateCcw className="w-4 h-4" /> ĐẶT LẠI
               </button>
               
-              <div className="flex gap-3 w-full sm:w-auto mt-4 sm:mt-0">
+              <div className="flex gap-3 w-full sm:w-auto mt-2.5 sm:mt-0">
                 <button
                   onClick={() => setShowCreateModal(false)}
-                  className="flex-1 sm:flex-none bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-5 py-2.5 font-bold text-[13px] hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
+                  className="flex-1 sm:flex-none bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
                 >
                   HỦY BỎ
                 </button>
                 {createMode === 'live' && (
                 <button
                   onClick={handleStartMeeting}
-                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
                 >
                   VÀO PHÒNG HỌP <ArrowRight className="w-4 h-4" />
                 </button>
@@ -2259,7 +2306,7 @@ export default function Dashboard() {
                 <button
                   onClick={handleUploadMeeting}
                   disabled={!uploadFile || isUploading}
-                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
                 >
                   {isUploading ? 'ĐANG XỬ LÝ...' : 'BẮT ĐẦU XỬ LÝ'} <ArrowRight className="w-4 h-4" />
                 </button>
@@ -2268,7 +2315,7 @@ export default function Dashboard() {
                 <button
                   onClick={handleYoutubeMeeting}
                   disabled={!youtubeUrl.trim() || isUploading}
-                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-5 py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
                 >
                   {isUploading ? 'ĐANG XỬ LÝ...' : 'BẮT ĐẦU XỬ LÝ'} <ArrowRight className="w-4 h-4" />
                 </button>
@@ -2418,13 +2465,28 @@ export default function Dashboard() {
         .animate-toast-out {
           animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+        @keyframes mobile-slide-up {
+          from {
+            opacity: 0;
+            transform: translateY(24px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        @media (max-width: 640px) {
+          .animate-mobile-slide-up {
+            animation: mobile-slide-up 0.5s cubic-bezier(0.23, 1, 0.32, 1) both;
+          }
+        }
       `}</style>
-      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-1 sm:top-1.5 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700",
+              bg: "bg-gradient-to-r from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700",
               title: "text-white font-extrabold",
               desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
               circle: "text-white",
@@ -2432,7 +2494,7 @@ export default function Dashboard() {
             },
             warning: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-amber-400 to-amber-600 dark:from-amber-500 dark:to-amber-700",
+              bg: "bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-600 dark:to-orange-600",
               title: "text-white font-extrabold",
               desc: "text-amber-50 dark:text-amber-100 font-semibold",
               circle: "text-white",
@@ -2440,7 +2502,7 @@ export default function Dashboard() {
             },
             error: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-700",
+              bg: "bg-gradient-to-r from-rose-500 to-red-650 dark:from-rose-600 dark:to-red-750",
               title: "text-white font-extrabold",
               desc: "text-rose-50 dark:text-rose-100 font-semibold",
               circle: "text-white",
@@ -2448,7 +2510,7 @@ export default function Dashboard() {
             },
             info: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-blue-400 to-blue-600 dark:from-blue-500 dark:to-blue-700",
+              bg: "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700",
               title: "text-white font-extrabold",
               desc: "text-blue-50 dark:text-blue-100 font-semibold",
               circle: "text-white",
@@ -2461,7 +2523,7 @@ export default function Dashboard() {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
+              className={`pointer-events-auto ${style.border} ${style.bg} py-2 px-5 rounded-2xl shadow-xl flex items-center justify-between space-x-3 relative overflow-hidden ring-1 ring-white/10 transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
             >
               <div className="flex-1 min-w-0 pr-2 relative z-10">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>

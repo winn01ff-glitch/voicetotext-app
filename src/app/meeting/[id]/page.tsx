@@ -1174,25 +1174,27 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900/60 font-sans overflow-hidden select-none">
         <div className="flex-1 flex flex-col w-full max-w-[1366px] 2xl:max-w-[1600px] mx-auto bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 border-x border-slate-200/60 dark:border-slate-800/80 overflow-hidden">
           {/* HEADER (Static loading view) */}
-          <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-4 h-16 flex items-center justify-between shrink-0">
-            <div className="flex items-center space-x-3">
+          <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between shrink-0 gap-2">
+            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
               <button
                 onClick={() => router.push("/")}
-                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
                 title="Quay lại danh sách"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
-              <div className="flex items-center space-x-2">
-                <div className="w-48 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+              <div className="flex items-center space-x-2 min-w-0">
+                <div className="w-28 sm:w-48 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse shrink-0" />
               </div>
             </div>
 
-            <div className="flex items-center space-x-3 text-xs">
-              <span className="text-slate-400 font-medium italic">Đang đồng bộ cơ sở dữ liệu...</span>
-              <button className="flex items-center space-x-1 px-3 h-9 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold text-slate-600 dark:text-slate-400 opacity-50 cursor-not-allowed">
+            <div className="flex items-center space-x-1.5 sm:space-x-3 text-xs shrink-0">
+              <span className="text-slate-400 font-medium italic hidden md:inline">Đang đồng bộ cơ sở dữ liệu...</span>
+              <span className="text-slate-400 font-medium italic inline md:hidden">Đang đồng bộ...</span>
+              <button className="flex items-center space-x-1 px-2.5 sm:px-3 h-8.5 sm:h-9 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 opacity-50 cursor-not-allowed whitespace-nowrap">
                 <Maximize2 className="w-3.5 h-3.5" />
-                <span>Phụ đề Live (iPad)</span>
+                <span className="hidden sm:inline">Phụ đề Live (iPad)</span>
+                <span className="inline sm:hidden">Live</span>
               </button>
             </div>
           </header>
@@ -1415,37 +1417,42 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     <div className="h-screen flex flex-col bg-slate-100 dark:bg-slate-900/60 font-sans overflow-hidden">
       <div className="flex-1 flex flex-col w-full max-w-[1366px] 2xl:max-w-[1600px] mx-auto bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 border-x border-slate-200/60 dark:border-slate-800/80 overflow-hidden">
         {/* HEADER */}
-      <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-4 h-16 flex items-center justify-between shrink-0">
-        <div className="flex items-center space-x-3">
+      <header className="w-full border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between shrink-0 gap-2">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
           <button
             onClick={() => router.push("/")}
-            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer"
+            className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
             title="Quay lại danh sách"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex items-center space-x-2">
-            <h1 className="font-bold text-lg leading-none" title={meeting?.title}>{meeting?.title}</h1>
+          <div className="flex items-center space-x-2 min-w-0">
+            <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
           </div>
         </div>
 
         {/* Auto Save Status & Actions */}
-        <div className="flex items-center space-x-3 text-xs">
+        <div className="flex items-center space-x-1.5 sm:space-x-3 text-xs shrink-0">
           {lastSavedTime ? (
-            <span className="text-slate-400 font-medium flex items-center space-x-1">
-              <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-              <span>Đã lưu tự động lúc {lastSavedTime} ✓</span>
+            <span className="text-slate-400 font-medium flex items-center space-x-1 min-w-0">
+              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+              <span className="hidden md:inline">Đã lưu tự động lúc {lastSavedTime} ✓</span>
+              <span className="inline md:hidden">{lastSavedTime} ✓</span>
             </span>
           ) : (
-            <span className="text-slate-400 font-medium italic">Đang đồng bộ cơ sở dữ liệu...</span>
+            <span className="text-slate-400 font-medium italic hidden md:inline">Đang đồng bộ cơ sở dữ liệu...</span>
+          )}
+          {!lastSavedTime && (
+            <span className="text-slate-400 font-medium italic inline md:hidden">Đang đồng bộ...</span>
           )}
 
           <button
             onClick={() => setIsFullScreen(true)}
-            className="flex items-center space-x-1 px-3 h-9 border border-slate-200 dark:border-slate-800 rounded-md text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
+            className="flex items-center space-x-1 px-2.5 sm:px-3 h-8.5 sm:h-9 border border-slate-200 dark:border-slate-800 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer whitespace-nowrap"
           >
             <Maximize2 className="w-3.5 h-3.5" />
-            <span>Phụ đề Live (iPad)</span>
+            <span className="hidden sm:inline">Phụ đề Live (iPad)</span>
+            <span className="inline sm:hidden">Live</span>
           </button>
         </div>
       </header>
@@ -2125,12 +2132,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
-      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-1 sm:top-1.5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700",
+              bg: "bg-gradient-to-r from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700",
               title: "text-white font-extrabold",
               desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
               circle: "text-white",
@@ -2138,7 +2145,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             warning: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-amber-400 to-amber-600 dark:from-amber-500 dark:to-amber-700",
+              bg: "bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-600 dark:to-orange-600",
               title: "text-white font-extrabold",
               desc: "text-amber-50 dark:text-amber-100 font-semibold",
               circle: "text-white",
@@ -2146,7 +2153,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             error: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-700",
+              bg: "bg-gradient-to-r from-rose-500 to-red-650 dark:from-rose-600 dark:to-red-750",
               title: "text-white font-extrabold",
               desc: "text-rose-50 dark:text-rose-100 font-semibold",
               circle: "text-white",
@@ -2154,7 +2161,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             },
             info: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-blue-400 to-blue-600 dark:from-blue-500 dark:to-blue-700",
+              bg: "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700",
               title: "text-white font-extrabold",
               desc: "text-blue-50 dark:text-blue-100 font-semibold",
               circle: "text-white",
@@ -2167,7 +2174,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
+              className={`pointer-events-auto ${style.border} ${style.bg} py-2 px-5 rounded-2xl shadow-xl flex items-center justify-between space-x-3 relative overflow-hidden ring-1 ring-white/10 transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
             >
               <div className="flex-1 min-w-0 pr-2 relative z-10">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>

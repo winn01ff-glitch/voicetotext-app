@@ -3631,12 +3631,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           animation: toast-out 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
       `}</style>
-      <div className="fixed top-2 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
+      <div className="fixed top-1 sm:top-1.5 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => {
           const config = {
             success: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-emerald-400 to-emerald-600 dark:from-emerald-500 dark:to-emerald-700",
+              bg: "bg-gradient-to-r from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700",
               title: "text-white font-extrabold",
               desc: "text-emerald-50 dark:text-emerald-100 font-semibold",
               circle: "text-white",
@@ -3644,7 +3644,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             },
             warning: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-amber-400 to-amber-600 dark:from-amber-500 dark:to-amber-700",
+              bg: "bg-gradient-to-r from-amber-500 to-orange-500 dark:from-amber-600 dark:to-orange-600",
               title: "text-white font-extrabold",
               desc: "text-amber-50 dark:text-amber-100 font-semibold",
               circle: "text-white",
@@ -3652,7 +3652,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             },
             error: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-rose-400 to-rose-600 dark:from-rose-500 dark:to-rose-700",
+              bg: "bg-gradient-to-r from-rose-500 to-red-650 dark:from-rose-600 dark:to-red-750",
               title: "text-white font-extrabold",
               desc: "text-rose-50 dark:text-rose-100 font-semibold",
               circle: "text-white",
@@ -3660,11 +3660,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             },
             info: {
               border: "border-none",
-              bg: "bg-gradient-to-b from-blue-400 to-blue-600 dark:from-blue-500 dark:to-blue-700",
+              bg: "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700",
               title: "text-white font-extrabold",
               desc: "text-blue-50 dark:text-blue-100 font-semibold",
               circle: "text-white",
-              btn: "text-white hover:text-amber-100"
+              btn: "text-white hover:text-blue-100"
             }
           };
 
@@ -3673,7 +3673,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto ${style.border} ${style.bg} py-1.5 px-4 rounded-xl shadow-lg flex items-center justify-between space-x-3 relative overflow-hidden transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
+              className={`pointer-events-auto ${style.border} ${style.bg} py-2 px-5 rounded-2xl shadow-xl flex items-center justify-between space-x-3 relative overflow-hidden ring-1 ring-white/10 transition-all duration-300 ${t.closing ? "animate-toast-out" : "animate-toast-in"}`}
             >
               <div className="flex-1 min-w-0 pr-2 relative z-10">
                 <h5 className={`font-bold text-xs leading-snug ${style.title}`}>{t.title}</h5>
