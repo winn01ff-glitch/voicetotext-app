@@ -4,7 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { title, source_language, target_language, meeting_context, speakers, glossary } = body;
+    const { title, source_language, target_language, meeting_context, speakers, glossary, source_type } = body;
 
     if (!title || !target_language) {
       return NextResponse.json({ error: "Missing required fields (title, target_language)" }, { status: 400 });
@@ -21,6 +21,7 @@ export async function POST(request: Request) {
         source_language: source_language || "auto",
         target_language,
         meeting_context: meeting_context || "general",
+        source_type: source_type || "live",
       })
       .select()
       .single();
