@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, use, Fragment, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, use, Fragment, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { exportToDocx } from "@/lib/docx-helper";
@@ -71,14 +71,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // UI state
   // Single source of truth for the 4 tabs. Legacy mainTab/subTab flags are derived
   // from it so the existing content blocks keep rendering unchanged.
-  const [activeTab, setActiveTab] = useState<"transcript" | "ai" | "summary" | "ask">("summary");
+  const [activeTab, setActiveTab] = useState<"transcript" | "ai" | "summary" | "ask">("transcript");
   // Tab -> existing content block:
   //   summary    -> processed/summary   (aiSummary + action items)
   //   transcript -> processed/transcript (RAW lines, `transcripts`)
   //   ai         -> raw/transcript       (FINAL lines, `reprocessedTranscripts`) + control panel
   //   ask        -> intercepted separately (Ask AI chat)
-  const mainTab: "processed" | "raw" = activeTab === "ai" ? "raw" : "processed";
-  const subTabProcessed: "summary" | "transcript" = activeTab === "summary" ? "summary" : "transcript";
+  // Nội dung tab Transcript/AI có 100+ dòng nên render nặng. useDeferredValue để việc
+  // dựng nội dung chạy ở mức ưu tiên thấp -> nút tab phản hồi tức thì khi bấm.
+  const shownTab = useDeferredValue(activeTab);
+  const mainTab: "processed" | "raw" = shownTab === "ai" ? "raw" : "processed";
+  const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
   const subTabRaw = "transcript" as string;
   // AI jobs + Ask AI chat state
   const [aiJobs, setAiJobs] = useState<any[]>([]);
@@ -86,6 +89,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [chatInput, setChatInput] = useState("");
   const [isChatStreaming, setIsChatStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  // Tự động cuộn xuống cuối khi có tin nhắn mới, AI đang stream, hoặc khi mở tab Hỏi AI
+  useEffect(() => {
+    if (shownTab !== "ask") return;
+    const el = chatScrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMessages, shownTab]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -1271,33 +1282,27 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               <div className="w-48 sm:w-64 h-5 sm:h-6 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
             </div>
 
-            {/* Right: Action Buttons (Disabled appearance) */}
+            {/* Right: Action Buttons skeleton */}
             <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
-                <Pin className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
               </div>
-              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
-                <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
               </div>
-              <div className="p-1.5 sm:p-2 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
-                <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <div className="p-1.5 sm:p-2 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
+                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
               </div>
 
               <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-800" />
 
-              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
-                <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0 opacity-50" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="currentColor"/>
-                  <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="currentColor"/>
-                </svg>
-                <span className="hidden sm:inline text-xs font-semibold">Xuất Word</span>
+              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
+                <div className="w-4 h-4 sm:w-[18px] sm:h-[18px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                <div className="hidden sm:block h-2.5 w-[60px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
               </div>
-              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50 text-slate-300 dark:text-slate-700">
-                <svg className="w-4 h-4 sm:w-[18px] sm:h-[18px] shrink-0 opacity-50" viewBox="0 0 24 24" fill="none">
-                  <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" fill="currentColor"/>
-                  <path d="M14 2l6 6h-4a2 2 0 01-2-2V2z" fill="currentColor"/>
-                </svg>
-                <span className="hidden sm:inline text-xs font-semibold">Xuất PDF</span>
+              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
+                <div className="w-4 h-4 sm:w-[18px] sm:h-[18px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                <div className="hidden sm:block h-2.5 w-[54px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
               </div>
             </div>
           </div>
@@ -1310,31 +1315,26 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* TOP BAR skeleton */}
             <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-0">
               
-              {/* Unified 4-Tab Switcher - STATIC rendering */}
+              {/* Unified 4-Tab Switcher skeleton (khớp layout + viền 1px slate của switcher thật, không hiện trạng thái active) */}
               <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
-                <div className="hidden xl:block absolute z-10 bottom-[-1px] h-[2px] rounded-full bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500" style={{ width: "25%", transform: "translateX(0%)" }} />
-                <div className="xl:hidden absolute z-10 h-[2px] bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500" style={{ width: "50%", top: "calc(50% - 1px)", transform: "translateX(0%)" }} />
-                
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-r-2 border-r-blue-500 dark:border-r-blue-450 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 whitespace-nowrap order-1 xl:order-1 text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5">
-                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden sm:inline">Tóm tắt &amp; Hành động</span>
-                  <span className="sm:hidden">Tóm tắt</span>
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0">
+                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                  <div className="h-4 sm:h-5 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
-                
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-r-2 border-r-slate-100 dark:border-r-slate-800 xl:border-r-0 whitespace-nowrap order-3 xl:order-2 text-slate-400 dark:text-slate-500">
-                  <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span className="hidden sm:inline">Bản chi tiết</span>
-                  <span className="sm:hidden">Chi tiết</span>
+
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-3 xl:order-2 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0">
+                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                  <div className="h-4 sm:h-5 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
-                
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold border-b border-slate-200 dark:border-slate-800 xl:border-b-0 whitespace-nowrap order-2 xl:order-3 text-slate-400 dark:text-slate-500">
-                  <FileText className="w-3.5 h-3.5 shrink-0" />
-                  <span>Hội thoại gốc</span>
+
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0">
+                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                  <div className="h-4 sm:h-5 w-16 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
-                
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold whitespace-nowrap order-4 xl:order-4 text-slate-400 dark:text-slate-500">
-                  <FileText className="w-3.5 h-3.5 shrink-0" />
-                  <span>Bản chi tiết gốc</span>
+
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-4 xl:order-4">
+                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
+                  <div className="h-4 sm:h-5 w-14 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
               </div>
 
@@ -1592,36 +1592,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   : activeTab === "summary" ? 2
                   : 3;
                 
-                const indicatorBg = "bg-gradient-to-r from-blue-500 to-indigo-600 dark:from-blue-450 dark:to-indigo-500";
-                
-                const dividerColor = "border-r-blue-400/80 dark:border-r-blue-600/50";
-                
                 return (
                   <>
-                    {/* Desktop-only sliding underline indicator */}
-                    <div
-                      className={`hidden xl:block absolute z-10 bottom-[-1px] h-[2px] rounded-full transition-all duration-300 ease-out ${indicatorBg}`}
-                      style={{
-                        width: "25%",
-                        transform: `translateX(${activeIndex * 100}%)`,
-                      }}
-                    />
-                    
-                    {/* Mobile-only 2D sliding underline indicator */}
-                    <div
-                      className={`xl:hidden absolute z-10 h-[2px] transition-all duration-300 ease-out ${indicatorBg}`}
-                      style={{
-                        width: "50%",
-                        top: (activeIndex === 0 || activeIndex === 2) ? "calc(50% - 1px)" : "calc(100% - 1px)",
-                        transform: `translateX(${(activeIndex === 0 || activeIndex === 1) ? "0%" : "calc(100% - 1.5px)"})`,
-                      }}
-                    />
-                    
                     <button
                       onClick={() => setActiveTab("transcript")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 0
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1633,7 +1610,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       onClick={() => setActiveTab("ai")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-r-slate-200 dark:border-r-slate-800 whitespace-nowrap order-3 xl:order-2 ${
                         activeIndex === 1
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1645,7 +1622,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       onClick={() => setActiveTab("summary")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
                         activeIndex === 2
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1657,7 +1634,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       onClick={() => setActiveTab("ask")}
                       className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 xl:order-4 ${
                         activeIndex === 3
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
+                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
                           : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                       }`}
                     >
@@ -1692,10 +1669,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
 
           {/* MAIN CONTENT AREA */}
-          <div className="w-full space-y-6 text-left">
+          <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${activeTab !== shownTab ? "opacity-40" : ""}`}>
 
         {/* AI PIPELINE CONTROL PANEL (only on AI tab) */}
-        {activeTab === "ai" && (
+        {shownTab === "ai" && (
           <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-5 rounded-xl shadow-sm space-y-4 mb-6">
             <div className="flex items-center space-x-2.5">
               <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
@@ -1767,7 +1744,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         )}
 
         {/* MAIN TAB CONTENT CONTAINER */}
-        {activeTab === "ask" ? (
+        {shownTab === "ask" ? (
           <div className="space-y-6 text-left">
             <div className="flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-[600px] xl:h-[800px]">
               <div className="bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 px-5 py-4 border-b border-blue-100/60 dark:border-slate-800">
@@ -1778,7 +1755,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <h3 className="font-semibold text-slate-800 dark:text-slate-200">Trợ lý AI</h3>
                 </div>
               </div>
-              <div className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50 dark:bg-slate-950">
+              <div ref={chatScrollRef} className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50 dark:bg-slate-950">
                 {chatMessages.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
                     <Sparkles className="w-10 h-10 opacity-50" />
@@ -1807,6 +1784,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     if (!chatInput.trim() || isChatStreaming) return;
                     const userMsg = chatInput.trim();
                     setChatInput("");
+                    if (chatInputRef.current) chatInputRef.current.style.height = "auto";
                     setChatMessages((prev) => [...prev, { role: "user", content: userMsg }]);
                     setIsChatStreaming(true);
                     try {
@@ -1837,14 +1815,29 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       setIsChatStreaming(false);
                     }
                   }}
-                  className="flex gap-3"
+                  className="flex gap-3 items-end"
                 >
-                  <input
+                  <textarea
+                    ref={chatInputRef}
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
+                    onChange={(e) => {
+                      setChatInput(e.target.value);
+                      const t = e.currentTarget;
+                      t.style.height = "auto";
+                      t.style.height = Math.min(t.scrollHeight, 128) + "px";
+                    }}
+                    onKeyDown={(e) => {
+                      // Desktop: Enter = gửi, Shift+Enter = xuống dòng.
+                      // Mobile (touch): Enter luôn xuống dòng; chỉ nút Gửi mới gửi.
+                      if (e.key === "Enter" && !e.shiftKey && !isTouchDevice) {
+                        e.preventDefault();
+                        e.currentTarget.form?.requestSubmit();
+                      }
+                    }}
                     disabled={isChatStreaming}
+                    rows={1}
                     placeholder="Hỏi AI về cuộc họp..."
-                    className="flex-1 border border-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                    className="flex-1 resize-none max-h-32 border border-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
                   />
                   <button
                     type="submit"
