@@ -1026,7 +1026,7 @@ export default function Dashboard() {
   }, [filteredMeetings.length, visibleMeetingsCount]);
   const getFilterButtonStyles = () => {
     if (showStatusDropdown && statusFilter === "all") {
-      return "text-indigo-650 dark:text-indigo-300";
+      return "text-blue-600 dark:text-blue-400";
     }
     
     switch (statusFilter) {
@@ -1041,7 +1041,7 @@ export default function Dashboard() {
       case "processing":
         return "text-amber-500 hover:text-amber-650 dark:text-amber-400 dark:hover:text-amber-300";
       default:
-        return "text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300";
+        return "text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400";
     }
   };
 
@@ -1375,59 +1375,114 @@ export default function Dashboard() {
 
               <div className="relative shrink-0 flex items-center gap-2">
                 {isSelectionMode ? (
-                  <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 px-1 py-[2px] rounded-lg transition-all select-none no-print">
-                    <button
-                      onClick={() => {
-                        if (selectedMeetingIds.length === 0) {
-                          setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
-                        } else {
-                          deleteSelectedMeetings();
-                        }
-                      }}
-                      className={`flex items-center gap-1 font-bold text-xs py-0.5 px-1.5 rounded transition-all hover:scale-[1.02] active:scale-98 cursor-pointer ${
-                        selectedMeetingIds.length === 0
-                          ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
-                          : "text-red-500 dark:text-red-400 hover:bg-red-50/50 dark:hover:bg-red-950/20"
-                      }`}
-                    >
-                      {selectedMeetingIds.length === 0 ? (
+                  <>
+                    {/* Desktop Version */}
+                    <div className="hidden md:flex items-center gap-1 select-none no-print">
+                      <button
+                        onClick={() => {
+                          const allIds = filteredMeetings.map((m) => m.id);
+                          if (selectedMeetingIds.length === allIds.length) {
+                            setSelectedMeetingIds([]);
+                          } else {
+                            setSelectedMeetingIds(allIds);
+                          }
+                        }}
+                        className="flex items-center gap-1 font-semibold text-sm px-1 pb-1 pt-2 text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors duration-200 cursor-pointer whitespace-nowrap"
+                        title="Chọn tất cả"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
+                        <span>Chọn tất cả</span>
+                      </button>
+
+                      {selectedMeetingIds.length > 0 && (
                         <>
-                          <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                          <span>Chọn tất cả</span>
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
-                          <span className="text-red-500 dark:text-red-400">Xóa ({selectedMeetingIds.length})</span>
+                          <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800 self-center mt-1 mx-0.5" />
+                          <button
+                            onClick={deleteSelectedMeetings}
+                            className="flex items-center gap-1 font-semibold text-sm px-1 pb-1 pt-2 text-red-500 hover:text-red-655 dark:text-red-400 dark:hover:text-red-300 transition-colors duration-200 cursor-pointer whitespace-nowrap"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Xóa ({selectedMeetingIds.length})</span>
+                          </button>
                         </>
                       )}
-                    </button>
-                    <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800 mx-0.5" />
-                    <button
-                      onClick={() => {
-                        setIsSelectionMode(false);
-                        setSelectedMeetingIds([]);
-                      }}
-                      className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                      title="Hủy chọn"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+
+                      <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800 self-center mt-1 mx-0.5" />
+                      <button
+                        onClick={() => {
+                          setIsSelectionMode(false);
+                          setSelectedMeetingIds([]);
+                        }}
+                        className="px-1 pb-1 pt-2 font-semibold text-sm text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors duration-200 cursor-pointer whitespace-nowrap"
+                      >
+                        Hủy chọn
+                      </button>
+                    </div>
+
+                    {/* Mobile Floating Version */}
+                    <div className="flex md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-45 items-center gap-3 bg-red-50/95 dark:bg-red-950/95 backdrop-blur-md border border-black dark:border-red-900/60 px-4 py-2 rounded-full shadow-[0_12px_28px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_32px_rgba(0,0,0,0.5)] select-none no-print animate-in fade-in slide-in-from-bottom-5 duration-300 w-max max-w-[92vw]">
+                      <button
+                        onClick={() => {
+                          setIsSelectionMode(false);
+                          setSelectedMeetingIds([]);
+                        }}
+                        className="py-1.5 px-3.5 font-semibold text-xs text-red-700 hover:text-red-900 dark:text-red-300 dark:hover:text-red-100 hover:bg-red-100/60 dark:hover:bg-red-900/40 rounded-full transition-all duration-200 cursor-pointer whitespace-nowrap"
+                      >
+                        Hủy chọn
+                      </button>
+
+                      <div className="w-[1px] h-3.5 bg-red-200/80 dark:bg-red-900/50" />
+
+                      <button
+                        onClick={() => {
+                          const allIds = filteredMeetings.map((m) => m.id);
+                          if (selectedMeetingIds.length === allIds.length) {
+                            setSelectedMeetingIds([]);
+                          } else {
+                            setSelectedMeetingIds(allIds);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 font-semibold text-xs py-1.5 px-3 rounded-full text-red-700 hover:text-red-900 dark:text-red-300 dark:hover:text-red-100 hover:bg-red-100/60 dark:hover:bg-red-900/40 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
+                        <span>Chọn tất cả</span>
+                      </button>
+
+                      {selectedMeetingIds.length > 0 && (
+                        <>
+                          <div className="w-[1px] h-3.5 bg-red-200/80 dark:bg-red-900/50" />
+                          <button
+                            onClick={deleteSelectedMeetings}
+                            className="flex items-center gap-1.5 font-semibold text-xs py-1.5 px-3 rounded-full text-white bg-red-500 hover:bg-red-600 dark:bg-red-650 dark:hover:bg-red-500 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Xóa ({selectedMeetingIds.length})</span>
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Divider for desktop only when in selection mode */}
+                    <div className="hidden md:block w-[1px] h-3 bg-slate-200 dark:bg-slate-800 self-center mt-1 mx-0.5 no-print" />
+                  </>
                 ) : (
-                  <button
-                    onClick={() => setIsSelectionMode(true)}
-                    className="flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap"
-                  >
-                    <CheckSquare className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
-                    <span>Chọn nhiều</span>
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setIsSelectionMode(true)}
+                      className="flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm text-slate-500 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-colors duration-200 cursor-pointer select-none no-print whitespace-nowrap"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Chọn</span>
+                    </button>
+                    {/* Divider for both desktop and mobile when not in selection mode */}
+                    <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800 self-center mt-1 mx-0.5 no-print" />
+                  </>
                 )}
 
                 <div ref={statusDropdownRef} className="relative">
                 <button
                   onClick={() => setShowStatusDropdown(!showStatusDropdown)}
-                  className={`flex items-center gap-[4px] sm:gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
+                  className={`flex items-center gap-[4px] sm:gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-colors duration-200 cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
                 >
                   {statusFilter !== "all" && (
                     <span
