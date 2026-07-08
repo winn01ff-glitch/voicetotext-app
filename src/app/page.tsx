@@ -1375,7 +1375,7 @@ export default function Dashboard() {
 
               <div className="relative shrink-0 flex items-center gap-2">
                 {isSelectionMode ? (
-                  <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-xl transition-all select-none no-print">
+                  <div className="flex items-center gap-0.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-850 px-1 py-[2px] rounded-lg transition-all select-none no-print">
                     <button
                       onClick={() => {
                         if (selectedMeetingIds.length === 0) {
@@ -1384,31 +1384,31 @@ export default function Dashboard() {
                           deleteSelectedMeetings();
                         }
                       }}
-                      className={`flex items-center gap-1 font-extrabold text-[11px] py-1 px-2.5 rounded-lg transition-all hover:scale-[1.02] active:scale-98 cursor-pointer ${
+                      className={`flex items-center gap-1 font-bold text-xs py-0.5 px-1.5 rounded transition-all hover:scale-[1.02] active:scale-98 cursor-pointer ${
                         selectedMeetingIds.length === 0
-                          ? "text-blue-600 dark:text-blue-450 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
-                          : "text-red-650 dark:text-red-400 hover:bg-red-50/50 dark:hover:bg-red-950/20"
+                          ? "text-blue-600 dark:text-blue-400 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
+                          : "text-red-500 dark:text-red-400 hover:bg-red-50/50 dark:hover:bg-red-950/20"
                       }`}
                     >
                       {selectedMeetingIds.length === 0 ? (
                         <>
-                          <CheckSquare className="w-3.5 h-3.5" />
+                          <CheckSquare className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                           <span>Chọn tất cả</span>
                         </>
                       ) : (
                         <>
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Xóa ({selectedMeetingIds.length})</span>
+                          <Trash2 className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />
+                          <span className="text-red-500 dark:text-red-400">Xóa ({selectedMeetingIds.length})</span>
                         </>
                       )}
                     </button>
-                    <div className="w-[1px] h-3.5 bg-slate-200 dark:bg-slate-800 mx-0.5" />
+                    <div className="w-[1px] h-3 bg-slate-200 dark:bg-slate-800 mx-0.5" />
                     <button
                       onClick={() => {
                         setIsSelectionMode(false);
                         setSelectedMeetingIds([]);
                       }}
-                      className="p-1 rounded-lg text-slate-400 hover:text-slate-650 dark:text-slate-500 dark:hover:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      className="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       title="Hủy chọn"
                     >
                       <X className="w-3.5 h-3.5" />
