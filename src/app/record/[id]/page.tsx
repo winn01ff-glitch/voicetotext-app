@@ -262,7 +262,6 @@ export default function RecordPage({ params }: RecordPageProps) {
         .from("meetings")
         .update({
           status: "completed",
-          completed_at: new Date().toISOString(),
         })
         .eq("id", meetingId);
 
