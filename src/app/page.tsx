@@ -9,7 +9,7 @@ import {
   Plus, Search, Settings, Calendar, Pin, Star, Trash2, Mic, Volume2, 
   RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight,
   Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown,
-  ChevronUp, Upload, Link, FileAudio, Clipboard, Radio
+  ChevronUp, Upload, Link, FileAudio, Clipboard, Radio, CheckSquare, ListChecks
 } from "lucide-react";
 import { validateAudioFile } from "@/lib/ai/audio-validator";
 
@@ -56,6 +56,10 @@ export default function Dashboard() {
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Bulk selection states
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedMeetingIds, setSelectedMeetingIds] = useState<string[]>([]);
 
   // Custom Modal state
   const [modalConfig, setModalConfig] = useState<{
@@ -576,6 +580,46 @@ export default function Dashboard() {
     } catch (err) {
       console.error("Delete error:", err);
       await showCustomAlert("Không thể xóa cuộc họp. Vui lòng thử lại.", "error");
+    }
+  };
+
+  const toggleSelectMeeting = (id: string) => {
+    setSelectedMeetingIds((prev) =>
+      prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id]
+    );
+  };
+
+  const deleteSelectedMeetings = async () => {
+    if (selectedMeetingIds.length === 0) return;
+    const confirmed = await showCustomConfirm(`Bạn có chắc chắn muốn xóa ${selectedMeetingIds.length} cuộc họp đã chọn cùng toàn bộ bản chi tiết hội thoại?`);
+    if (!confirmed) return;
+
+    try {
+      const { error } = await supabase
+        .from("meetings")
+        .delete()
+        .in("id", selectedMeetingIds);
+
+      if (error) throw error;
+
+      // Remove from local meetings state
+      setMeetings((prev) => prev.filter((m) => !selectedMeetingIds.includes(m.id)));
+
+      // Clean up sessionStorage cache
+      selectedMeetingIds.forEach((id) => {
+        sessionStorage.removeItem(`audio_blob_${id}`);
+        if (recoveryMeeting?.id === id) {
+          setRecoveryMeeting(null);
+          localStorage.removeItem("active_meeting_id");
+        }
+      });
+
+      setSelectedMeetingIds([]);
+      setIsSelectionMode(false);
+      await showCustomAlert("Xóa các cuộc họp thành công!", "success");
+    } catch (err) {
+      console.error("Bulk delete error:", err);
+      await showCustomAlert("Không thể xóa các cuộc họp đã chọn. Vui lòng thử lại.", "error");
     }
   };
 
@@ -1329,7 +1373,26 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div ref={statusDropdownRef} className="relative shrink-0">
+              <div className="relative shrink-0 flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const nextMode = !isSelectionMode;
+                    setIsSelectionMode(nextMode);
+                    if (!nextMode) {
+                      setSelectedMeetingIds([]);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1 bg-white dark:bg-slate-900 border rounded-xl text-xs font-bold transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${
+                    isSelectionMode
+                      ? "bg-red-500 hover:bg-red-600 border-red-500 hover:border-red-600 text-white dark:text-white"
+                      : "border-slate-350 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  }`}
+                >
+                  {isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5 text-slate-400" />}
+                  <span>{isSelectionMode ? "Hủy chọn" : "Chọn nhiều"}</span>
+                </button>
+
+                <div ref={statusDropdownRef} className="relative">
                 <button
                   onClick={() => setShowStatusDropdown(!showStatusDropdown)}
                   className={`flex items-center gap-[4px] sm:gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${getFilterButtonStyles()}`}
@@ -1469,6 +1532,7 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
+              </div>
             </div>
 
             {/* LIST */}
@@ -1520,8 +1584,24 @@ export default function Dashboard() {
                     <div
                       key={m.id}
                       style={{ animationDelay: `${Math.min(index, 3) * 50}ms` }}
-                      className="flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30 animate-mobile-slide-up sm:animate-none"
+                      className={`relative flex flex-col bg-white dark:bg-slate-900/60 rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] dark:hover:shadow-[0_12px_24px_rgba(0,0,0,0.4)] hover:-translate-y-1 transition-all duration-300 ease-out group border border-slate-200/80 dark:border-slate-850 hover:border-blue-500/30 dark:hover:border-blue-500/30 animate-mobile-slide-up sm:animate-none ${
+                        isSelectionMode && selectedMeetingIds.includes(m.id) ? "ring-2 ring-blue-500 border-transparent dark:border-transparent shadow-blue-500/10" : ""
+                      }`}
                     >
+                      {isSelectionMode && (
+                        <div
+                          className={`absolute inset-0 z-20 cursor-pointer transition-colors duration-200 ${
+                            selectedMeetingIds.includes(m.id)
+                              ? "bg-blue-500/5 dark:bg-blue-500/10"
+                              : "hover:bg-slate-500/5"
+                          }`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleSelectMeeting(m.id);
+                          }}
+                        />
+                      )}
                       {(() => {
                         const createdFrom = Array.isArray(m.meeting_metadata)
                           ? m.meeting_metadata[0]?.created_from
@@ -1598,6 +1678,17 @@ export default function Dashboard() {
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
+                                {isSelectionMode && (
+                                  <div className="pl-1.5 flex items-center justify-center pointer-events-none text-slate-800 dark:text-white">
+                                    <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all ${
+                                      selectedMeetingIds.includes(m.id)
+                                        ? "bg-blue-600 border-blue-600 text-white"
+                                        : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                                    }`}>
+                                      {selectedMeetingIds.includes(m.id) && <Check className="w-3 h-3 stroke-[3]" />}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -1667,6 +1758,39 @@ export default function Dashboard() {
           </section>
         )}
       </main>
+
+      {/* Sticky Selection Action Bar */}
+      {isSelectionMode && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border border-slate-200 dark:border-slate-800 shadow-2xl rounded-2xl px-6 py-3.5 flex items-center justify-between gap-6 max-w-lg w-[calc(100%-2rem)] animate-in slide-in-from-bottom-8 duration-300 no-print">
+          <div className="flex flex-col">
+            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Chế độ quản lý</span>
+            <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
+              Đã chọn {selectedMeetingIds.length} cuộc họp
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (selectedMeetingIds.length === filteredMeetings.length) {
+                  setSelectedMeetingIds([]);
+                } else {
+                  setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
+                }
+              }}
+              className="px-3 py-1.5 border border-slate-350 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer select-none"
+            >
+              {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+            </button>
+            <button
+              onClick={deleteSelectedMeetings}
+              disabled={selectedMeetingIds.length === 0}
+              className="px-4 py-1.5 bg-red-650 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(239,68,68,0.2)] dark:shadow-[0_4px_12px_rgba(239,68,68,0.4)]"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* CREATE MEETING MODAL */}
       {showCreateModal && (
