@@ -1374,6 +1374,34 @@ export default function Dashboard() {
               </div>
 
               <div className="relative shrink-0 flex items-center gap-2">
+                {/* Desktop selection actions (only shown when isSelectionMode is true) */}
+                {isSelectionMode && (
+                  <div className="hidden sm:flex items-center gap-2 no-print pr-1">
+                    <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                      Đã chọn {selectedMeetingIds.length}
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (selectedMeetingIds.length === filteredMeetings.length) {
+                          setSelectedMeetingIds([]);
+                        } else {
+                          setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
+                        }
+                      }}
+                      className="px-2.5 py-1 border border-slate-300 dark:border-slate-800 text-slate-650 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-xl text-xs font-bold transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none"
+                    >
+                      {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn" : "Chọn tất cả"}
+                    </button>
+                    <button
+                      onClick={deleteSelectedMeetings}
+                      disabled={selectedMeetingIds.length === 0}
+                      className="px-3 py-1 bg-red-500 hover:bg-red-650 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shadow-red-500/10"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
+                    </button>
+                  </div>
+                )}
+
                 <button
                   onClick={() => {
                     const nextMode = !isSelectionMode;
@@ -1382,10 +1410,10 @@ export default function Dashboard() {
                       setSelectedMeetingIds([]);
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-3 py-1 bg-white dark:bg-slate-900 border rounded-xl text-xs font-bold transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${
+                  className={`flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${
                     isSelectionMode
-                      ? "bg-red-500 hover:bg-red-600 border-red-500 hover:border-red-600 text-white dark:text-white"
-                      : "border-slate-350 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                      ? "text-red-500 hover:text-red-650 dark:text-red-400 dark:hover:text-red-300"
+                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
                   }`}
                 >
                   {isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5 text-slate-400" />}
@@ -1534,6 +1562,39 @@ export default function Dashboard() {
               </div>
               </div>
             </div>
+
+            {/* Mobile Selection Action Row */}
+            {isSelectionMode && (
+              <div className="flex sm:hidden items-center justify-between bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 mt-2.5 no-print animate-in slide-in-from-top-2 duration-200">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Đang chọn</span>
+                  <span className="text-xs font-extrabold text-slate-700 dark:text-slate-350">
+                    {selectedMeetingIds.length} cuộc họp
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      if (selectedMeetingIds.length === filteredMeetings.length) {
+                        setSelectedMeetingIds([]);
+                      } else {
+                        setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-750 dark:text-slate-300 rounded-lg text-[11px] font-bold transition-all cursor-pointer"
+                  >
+                    {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn" : "Chọn hết"}
+                  </button>
+                  <button
+                    onClick={deleteSelectedMeetings}
+                    disabled={selectedMeetingIds.length === 0}
+                    className="px-2.5 py-1 bg-red-500 hover:bg-red-650 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* LIST */}
             {loading ? (
@@ -1758,39 +1819,6 @@ export default function Dashboard() {
           </section>
         )}
       </main>
-
-      {/* Sticky Selection Action Bar */}
-      {isSelectionMode && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border border-slate-200 dark:border-slate-800 shadow-2xl rounded-2xl px-6 py-3.5 flex items-center justify-between gap-6 max-w-lg w-[calc(100%-2rem)] animate-in slide-in-from-bottom-8 duration-300 no-print">
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Chế độ quản lý</span>
-            <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
-              Đã chọn {selectedMeetingIds.length} cuộc họp
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (selectedMeetingIds.length === filteredMeetings.length) {
-                  setSelectedMeetingIds([]);
-                } else {
-                  setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
-                }
-              }}
-              className="px-3 py-1.5 border border-slate-350 dark:border-slate-750 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer select-none"
-            >
-              {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn tất cả" : "Chọn tất cả"}
-            </button>
-            <button
-              onClick={deleteSelectedMeetings}
-              disabled={selectedMeetingIds.length === 0}
-              className="px-4 py-1.5 bg-red-650 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(239,68,68,0.2)] dark:shadow-[0_4px_12px_rgba(239,68,68,0.4)]"
-            >
-              <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* CREATE MEETING MODAL */}
       {showCreateModal && (
