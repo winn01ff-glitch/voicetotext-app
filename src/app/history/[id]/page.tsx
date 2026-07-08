@@ -69,20 +69,30 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [loading, setLoading] = useState(true);
 
   // UI state
-  // Single source of truth for the 4 tabs. Legacy mainTab/subTab flags are derived
-  // from it so the existing content blocks keep rendering unchanged.
-  const [activeTab, setActiveTab] = useState<"transcript" | "ai" | "summary" | "ask">("transcript");
-  // Tab -> existing content block:
-  //   summary    -> processed/summary   (aiSummary + action items)
-  //   transcript -> processed/transcript (RAW lines, `transcripts`)
-  //   ai         -> raw/transcript       (FINAL lines, `reprocessedTranscripts`) + control panel
-  //   ask        -> intercepted separately (Ask AI chat)
-  // Nội dung tab Transcript/AI có 100+ dòng nên render nặng. useDeferredValue để việc
-  // dựng nội dung chạy ở mức ưu tiên thấp -> nút tab phản hồi tức thì khi bấm.
+  // 3 tab: transcript (có công tắc Bản gốc/Đã xử lý) | summary | ask.
+  const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("transcript");
+  // Công tắc trong tab Transcript: "raw" = bản gốc STT, "ai" = bản đã xử lý (FINAL).
+  const [transcriptVer, setTranscriptVer] = useState<"raw" | "ai">("raw");
+  const verInitRef = useRef(false);
+  // useDeferredValue: nội dung 100+ dòng render nặng -> nút/công tắc phản hồi tức thì.
   const shownTab = useDeferredValue(activeTab);
-  const mainTab: "processed" | "raw" = shownTab === "ai" ? "raw" : "processed";
+  const shownVer = useDeferredValue(transcriptVer);
+  // Ánh xạ sang khối nội dung có sẵn:
+  //   transcript + raw -> processed/transcript (RAW, `transcripts`)
+  //   transcript + ai  -> raw/transcript       (FINAL, `reprocessedTranscripts`) + control panel
+  //   summary          -> processed/summary
+  //   ask              -> chặn riêng
+  const mainTab: "processed" | "raw" = (shownTab === "transcript" && shownVer === "ai") ? "raw" : "processed";
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
   const subTabRaw = "transcript" as string;
+  // Mặc định công tắc: hiện "Đã xử lý" nếu đã có bản FINAL, ngược lại "Bản gốc". Chỉ set 1 lần sau khi tải.
+  useEffect(() => {
+    if (verInitRef.current) return;
+    if (transcripts.length > 0 || reprocessedTranscripts.length > 0) {
+      verInitRef.current = true;
+      setTranscriptVer(reprocessedTranscripts.length > 0 ? "ai" : "raw");
+    }
+  }, [transcripts.length, reprocessedTranscripts.length]);
   // AI jobs + Ask AI chat state
   const [aiJobs, setAiJobs] = useState<any[]>([]);
   const [chatMessages, setChatMessages] = useState<any[]>([]);
@@ -508,7 +518,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const { data: txs } = await supabase
         .from("transcripts")
         .select(`
-          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed,
+          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, version_type, is_active,
           speakers ( display_name, color_hex, speaker_tag )
         `)
         .eq("meeting_id", meetingId)
@@ -545,12 +555,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             confidence: t.confidence,
             isEdited: t.is_edited,
             editedText: t.edited_text,
-            isReprocessed: t.is_reprocessed || false
+            isReprocessed: t.is_reprocessed || false,
+            versionType: t.version_type || "RAW"
           };
         });
 
-        setTranscripts(allTranscripts.filter((t: any) => !t.isReprocessed));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.isReprocessed));
+        // Tách theo version_type (nguồn sự thật): RAW = bản gốc, FINAL = đã xử lý AI.
+        setTranscripts(allTranscripts.filter((t: any) => t.versionType !== "FINAL"));
+        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL"));
       }
 
       // 4. Fetch summary
@@ -619,7 +631,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
       const { data: txs } = await supabase
         .from("transcripts")
-        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, speakers ( display_name, color_hex, speaker_tag )`)
+        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
         .eq("meeting_id", meetingId)
         .order("start_ms", { ascending: true });
 
@@ -651,12 +663,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             confidence: t.confidence,
             isEdited: t.is_edited,
             editedText: t.edited_text,
-            isReprocessed: t.is_reprocessed || false
+            isReprocessed: t.is_reprocessed || false,
+            versionType: t.version_type || "RAW"
           };
         });
 
-        setTranscripts(allTranscripts.filter((t: any) => !t.isReprocessed));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.isReprocessed));
+        setTranscripts(allTranscripts.filter((t: any) => t.versionType !== "FINAL"));
+        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL"));
       }
 
       const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).maybeSingle();
@@ -1315,24 +1328,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* TOP BAR skeleton */}
             <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-0">
               
-              {/* Unified 4-Tab Switcher skeleton (khớp layout + viền 1px slate của switcher thật, không hiện trạng thái active) */}
-              <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0">
+              {/* Unified 3-Tab Switcher skeleton (khớp layout switcher thật) */}
+              <div className="relative grid grid-cols-3 xl:flex w-full xl:w-[600px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap border-r border-r-slate-200 dark:border-r-slate-800">
                   <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
                   <div className="h-4 sm:h-5 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
 
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-3 xl:order-2 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0">
-                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                  <div className="h-4 sm:h-5 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-                </div>
-
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0">
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap border-r border-r-slate-200 dark:border-r-slate-800">
                   <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
                   <div className="h-4 sm:h-5 w-16 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
 
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap order-4 xl:order-4">
+                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap">
                   <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
                   <div className="h-4 sm:h-5 w-14 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
                 </div>
@@ -1584,60 +1592,33 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* TOP BAR: Unified Switcher (Left) + Meeting Info (Right) */}
           <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4">
             
-            {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
-            <div className="relative grid grid-cols-2 xl:flex w-full xl:w-[800px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
+            {/* Unified 3-Tab Switcher (Underline style, responsive layout) */}
+            <div className="relative grid grid-cols-3 xl:flex w-full xl:w-[600px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
               {(() => {
                 const activeIndex = activeTab === "transcript" ? 0
-                  : activeTab === "ai" ? 1
-                  : activeTab === "summary" ? 2
-                  : 3;
-                
+                  : activeTab === "summary" ? 1
+                  : 2;
+
+                const btnClass = (idx: number) =>
+                  `relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                    idx < 2 ? "border-r border-r-slate-200 dark:border-r-slate-800" : ""
+                  } ${
+                    activeIndex === idx
+                      ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
+                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                  }`;
+
                 return (
                   <>
-                    <button
-                      onClick={() => setActiveTab("transcript")}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-1 xl:order-1 border-r border-r-slate-200 dark:border-r-slate-800 xl:border-r-0 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
-                        activeIndex === 0
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                      }`}
-                    >
+                    <button onClick={() => setActiveTab("transcript")} className={btnClass(0)}>
                       <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span>Transcript ({filteredTranscripts.length})</span>
+                      <span>Transcript</span>
                     </button>
-                    
-                    <button
-                      onClick={() => setActiveTab("ai")}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer border-r border-r-slate-200 dark:border-r-slate-800 whitespace-nowrap order-3 xl:order-2 ${
-                        activeIndex === 1
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                      }`}
-                    >
-                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                      <span>AI Xử lý ({filteredReprocessedTranscripts.length})</span>
-                    </button>
-                    
-                    <button
-                      onClick={() => setActiveTab("summary")}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-2 xl:order-3 border-b border-slate-200 dark:border-slate-800 xl:border-b-0 ${
-                        activeIndex === 2
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                      }`}
-                    >
+                    <button onClick={() => setActiveTab("summary")} className={btnClass(1)}>
                       <List className="w-3.5 h-3.5 shrink-0" />
                       <span>Tóm tắt</span>
                     </button>
-                    
-                    <button
-                      onClick={() => setActiveTab("ask")}
-                      className={`relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap order-4 xl:order-4 ${
-                        activeIndex === 3
-                          ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
-                          : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
-                      }`}
-                    >
+                    <button onClick={() => setActiveTab("ask")} className={btnClass(2)}>
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                       <span>Hỏi AI</span>
                     </button>
@@ -1669,10 +1650,34 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
 
           {/* MAIN CONTENT AREA */}
-          <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${activeTab !== shownTab ? "opacity-40" : ""}`}>
+          <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${(activeTab !== shownTab || transcriptVer !== shownVer) ? "opacity-40" : ""}`}>
 
-        {/* AI PIPELINE CONTROL PANEL (only on AI tab) */}
-        {shownTab === "ai" && (
+        {/* Transcript version toggle: Bản gốc (RAW) ↔ Đã xử lý (FINAL/AI) */}
+        {shownTab === "transcript" && (
+          <div className="flex items-center gap-1 p-1 mb-4 bg-slate-100 dark:bg-slate-800/60 rounded-xl w-full sm:w-fit border border-slate-200/60 dark:border-slate-800">
+            {([
+              { key: "raw", label: "Bản gốc", count: filteredTranscripts.length },
+              { key: "ai", label: "Đã xử lý (AI)", count: filteredReprocessedTranscripts.length },
+            ] as const).map((opt) => (
+              <button
+                key={opt.key}
+                onClick={() => setTranscriptVer(opt.key)}
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                  transcriptVer === opt.key
+                    ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                }`}
+              >
+                {opt.key === "ai" ? <Sparkles className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
+                <span>{opt.label}</span>
+                <span className="text-[11px] opacity-60">({opt.count})</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* AI PIPELINE CONTROL PANEL (Transcript tab, "Đã xử lý" view) */}
+        {shownTab === "transcript" && shownVer === "ai" && (
           <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-5 rounded-xl shadow-sm space-y-4 mb-6">
             <div className="flex items-center space-x-2.5">
               <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
