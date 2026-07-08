@@ -1271,6 +1271,30 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return txt.includes(query) || trans.includes(query);
   });
 
+  // Phím tắt: Space = phát/dừng đọc toàn bộ, Esc = dừng. Bỏ qua khi đang gõ trong ô nhập.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (playingAllType) {
+          stopPlayingAll();
+        } else {
+          const items = activeTab === "transcript" && transcriptVer === "ai"
+            ? filteredReprocessedTranscripts
+            : filteredTranscripts;
+          startPlayingPlaylist("original", items);
+        }
+      } else if (e.key === "Escape" && playingAllType) {
+        stopPlayingAll();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playingAllType, activeTab, transcriptVer, filteredTranscripts, filteredReprocessedTranscripts, stopPlayingAll]);
+
   const formatDuration = (ms: number) => {
     if (!ms) return "0 phút";
     const mins = Math.round(ms / 60000);
