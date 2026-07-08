@@ -1374,51 +1374,55 @@ export default function Dashboard() {
               </div>
 
               <div className="relative shrink-0 flex items-center gap-2">
-                {/* Desktop selection actions (only shown when isSelectionMode is true) */}
-                {isSelectionMode && (
-                  <div className="hidden sm:flex items-center gap-2 no-print pr-1">
-                    <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-                      Đã chọn {selectedMeetingIds.length}
-                    </span>
+                {isSelectionMode ? (
+                  <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-xl transition-all select-none no-print">
                     <button
                       onClick={() => {
-                        if (selectedMeetingIds.length === filteredMeetings.length) {
-                          setSelectedMeetingIds([]);
-                        } else {
+                        if (selectedMeetingIds.length === 0) {
                           setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
+                        } else {
+                          deleteSelectedMeetings();
                         }
                       }}
-                      className="px-2.5 py-1 border border-slate-300 dark:border-slate-800 text-slate-650 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-850 rounded-xl text-xs font-bold transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none"
+                      className={`flex items-center gap-1 font-extrabold text-[11px] py-1 px-2.5 rounded-lg transition-all hover:scale-[1.02] active:scale-98 cursor-pointer ${
+                        selectedMeetingIds.length === 0
+                          ? "text-blue-600 dark:text-blue-450 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
+                          : "text-red-650 dark:text-red-400 hover:bg-red-50/50 dark:hover:bg-red-950/20"
+                      }`}
                     >
-                      {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn" : "Chọn tất cả"}
+                      {selectedMeetingIds.length === 0 ? (
+                        <>
+                          <CheckSquare className="w-3.5 h-3.5" />
+                          <span>Chọn tất cả</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Xóa ({selectedMeetingIds.length})</span>
+                        </>
+                      )}
                     </button>
+                    <div className="w-[1px] h-3.5 bg-slate-200 dark:bg-slate-800 mx-0.5" />
                     <button
-                      onClick={deleteSelectedMeetings}
-                      disabled={selectedMeetingIds.length === 0}
-                      className="px-3 py-1 bg-red-500 hover:bg-red-650 text-white rounded-xl text-xs font-bold flex items-center gap-1 transition-all hover:scale-[1.03] active:scale-97 cursor-pointer select-none disabled:opacity-40 disabled:cursor-not-allowed shadow-sm shadow-red-500/10"
+                      onClick={() => {
+                        setIsSelectionMode(false);
+                        setSelectedMeetingIds([]);
+                      }}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-650 dark:text-slate-500 dark:hover:text-slate-350 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                      title="Hủy chọn"
                     >
-                      <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
+                ) : (
+                  <button
+                    onClick={() => setIsSelectionMode(true)}
+                    className="flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap"
+                  >
+                    <CheckSquare className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    <span>Chọn nhiều</span>
+                  </button>
                 )}
-
-                <button
-                  onClick={() => {
-                    const nextMode = !isSelectionMode;
-                    setIsSelectionMode(nextMode);
-                    if (!nextMode) {
-                      setSelectedMeetingIds([]);
-                    }
-                  }}
-                  className={`flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap ${
-                    isSelectionMode
-                      ? "text-red-500 hover:text-red-650 dark:text-red-400 dark:hover:text-red-300"
-                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350"
-                  }`}
-                >
-                  {isSelectionMode ? <X className="w-3.5 h-3.5" /> : <CheckSquare className="w-3.5 h-3.5 text-slate-400" />}
-                  <span>{isSelectionMode ? "Hủy chọn" : "Chọn nhiều"}</span>
-                </button>
 
                 <div ref={statusDropdownRef} className="relative">
                 <button
@@ -1563,38 +1567,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Mobile Selection Action Row */}
-            {isSelectionMode && (
-              <div className="flex sm:hidden items-center justify-between bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 mt-2.5 no-print animate-in slide-in-from-top-2 duration-200">
-                <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Đang chọn</span>
-                  <span className="text-xs font-extrabold text-slate-700 dark:text-slate-350">
-                    {selectedMeetingIds.length} cuộc họp
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => {
-                      if (selectedMeetingIds.length === filteredMeetings.length) {
-                        setSelectedMeetingIds([]);
-                      } else {
-                        setSelectedMeetingIds(filteredMeetings.map((m) => m.id));
-                      }
-                    }}
-                    className="px-2.5 py-1 bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-750 dark:text-slate-300 rounded-lg text-[11px] font-bold transition-all cursor-pointer"
-                  >
-                    {selectedMeetingIds.length === filteredMeetings.length ? "Bỏ chọn" : "Chọn hết"}
-                  </button>
-                  <button
-                    onClick={deleteSelectedMeetings}
-                    disabled={selectedMeetingIds.length === 0}
-                    className="px-2.5 py-1 bg-red-500 hover:bg-red-650 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer disabled:opacity-40"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Xóa ({selectedMeetingIds.length})
-                  </button>
-                </div>
-              </div>
-            )}
+
 
             {/* LIST */}
             {loading ? (
