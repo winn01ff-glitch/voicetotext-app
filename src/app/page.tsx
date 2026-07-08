@@ -1026,7 +1026,7 @@ export default function Dashboard() {
   }, [filteredMeetings.length, visibleMeetingsCount]);
   const getFilterButtonStyles = () => {
     if (showStatusDropdown && statusFilter === "all") {
-      return "text-slate-650 dark:text-slate-300";
+      return "text-indigo-650 dark:text-indigo-300";
     }
     
     switch (statusFilter) {
@@ -1041,7 +1041,7 @@ export default function Dashboard() {
       case "processing":
         return "text-amber-500 hover:text-amber-650 dark:text-amber-400 dark:hover:text-amber-300";
       default:
-        return "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350";
+        return "text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300";
     }
   };
 
@@ -1417,9 +1417,9 @@ export default function Dashboard() {
                 ) : (
                   <button
                     onClick={() => setIsSelectionMode(true)}
-                    className="flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap"
+                    className="flex items-center gap-1 px-1 pb-1 pt-2 font-semibold text-sm text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 transition-all duration-200 hover:scale-[1.03] active:scale-97 cursor-pointer select-none no-print whitespace-nowrap"
                   >
-                    <CheckSquare className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                    <CheckSquare className="w-3.5 h-3.5 text-indigo-500 dark:text-indigo-400" />
                     <span>Chọn nhiều</span>
                   </button>
                 )}
@@ -1436,9 +1436,9 @@ export default function Dashboard() {
                         setStatusFilter("all");
                         setShowStatusDropdown(false);
                       }}
-                      className={`order-last sm:order-first p-0.5 rounded-full transition-colors cursor-pointer ${getClearButtonHoverStyles()}`}
+                      className={`order-last p-0.5 rounded-full transition-colors cursor-pointer ${getClearButtonHoverStyles()}`}
                     >
-                      <X className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </span>
                   )}
                   <span className="order-2">
@@ -1469,7 +1469,7 @@ export default function Dashboard() {
                         : "Đang xử lý"}
                     </span>
                   </span>
-                  <ChevronDown className={`order-first sm:order-last w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
+                  <ChevronDown className={`order-first w-3.5 h-3.5 transition-transform duration-200 ${showStatusDropdown ? "rotate-180" : ""}`} />
                 </button>
 
                 {showStatusDropdown && (
