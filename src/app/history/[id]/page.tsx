@@ -12,7 +12,7 @@ import AudioPlayer from "@/components/AudioPlayer";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List
+  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe
 } from "lucide-react";
 
 // Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
@@ -170,6 +170,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [editingTextVal, setEditingTextVal] = useState("");
 
+  // Refs for tracking initial values to detect changes for auto-save
+  const initialEditingTextRef = useRef("");
+  const initialExecSummaryRef = useRef("");
+  const initialDecisionsRef = useRef<string[]>([]);
+  const initialReprocessedExecSummaryRef = useRef("");
+  const initialReprocessedDecisionsRef = useRef<string[]>([]);
+
   // Audio player state (chỉ tồn tại trong phiên upload)
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
   const [activeAudioTranscriptId, setActiveAudioTranscriptId] = useState<string | null>(null);
@@ -238,8 +245,146 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     };
   }, [isTouchDevice]);
 
+  // Keyboard Shortcuts (Space to play/pause, ArrowUp/ArrowDown to switch lines)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts if user is typing in input, textarea, or contentEditable elements
+      const target = e.target as HTMLElement;
+      if (
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      if (e.code === "Space") {
+        e.preventDefault(); // Prevent page scrolling
+        if (typeof (window as any).__audioPlayerTogglePlay === "function") {
+          (window as any).__audioPlayerTogglePlay();
+        }
+      } else if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+        e.preventDefault();
+        
+        // Find visible transcripts depending on current tab/filter
+        const activeList = transcriptVer === "ai" ? reprocessedTranscripts : transcripts;
+        if (activeList.length === 0) return;
+
+        let targetIndex = 0;
+        if (activeAudioTranscriptId) {
+          const currentIndex = activeList.findIndex(t => t.id === activeAudioTranscriptId);
+          if (currentIndex !== -1) {
+            if (e.code === "ArrowUp") {
+              targetIndex = Math.max(0, currentIndex - 1);
+            } else {
+              targetIndex = Math.min(activeList.length - 1, currentIndex + 1);
+            }
+          }
+        } else {
+          // If no active line, ArrowDown starts at 0, ArrowUp starts at last
+          targetIndex = e.code === "ArrowDown" ? 0 : activeList.length - 1;
+        }
+
+        const targetLine = activeList[targetIndex];
+        if (targetLine) {
+          if (typeof (window as any).__audioPlayerSeekTo === "function") {
+            (window as any).__audioPlayerSeekTo(targetLine.startMs);
+          }
+          setActiveAudioTranscriptId(targetLine.id);
+          const el = document.getElementById(`transcript-row-${targetLine.id}`);
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, [activeAudioTranscriptId, transcripts, reprocessedTranscripts, activeTab, transcriptVer]);
+
   // Translation states for Summary & Decisions
   const [activeTranslateDropdown, setActiveTranslateDropdown] = useState<string | null>(null);
+  const [isTranslatingAll, setIsTranslatingAll] = useState(false);
+  const [activeTranslateAllDropdown, setActiveTranslateAllDropdown] = useState(false);
+
+  const handleTranslateAll = async (targetLang: string) => {
+    setActiveTranslateAllDropdown(false);
+    setIsTranslatingAll(true);
+    try {
+      const { data: allLines, error: fetchErr } = await supabase
+        .from("transcripts")
+        .select("id, corrected_text, original_text")
+        .eq("meeting_id", meetingId);
+
+      if (fetchErr) throw fetchErr;
+      if (!allLines || allLines.length === 0) {
+        await showCustomAlert("Không có dòng hội thoại nào để dịch.", "info");
+        return;
+      }
+
+      const textsToTranslate = allLines.map((line: any) => line.corrected_text || line.original_text || "");
+
+      const res = await fetch("/api/translate-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          texts: textsToTranslate,
+          sourceLang: meeting?.source_language || "auto",
+          targetLang,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || "Lỗi khi dịch hàng loạt");
+      }
+
+      const { translatedTexts } = await res.json();
+      if (!translatedTexts || translatedTexts.length !== allLines.length) {
+        throw new Error("Dữ liệu dịch trả về không khớp số dòng.");
+      }
+
+      const updatePromises = allLines.map((line: any, idx: number) => {
+        return supabase
+          .from("transcripts")
+          .update({
+            translated_text: translatedTexts[idx],
+          })
+          .eq("id", line.id);
+      });
+
+      const results = await Promise.all(updatePromises);
+      const firstErr = results.find(r => r.error);
+      if (firstErr) throw firstErr.error;
+
+      await supabase
+        .from("meetings")
+        .update({ target_language: targetLang })
+        .eq("id", meetingId);
+
+      await fetchMeetingData();
+      
+      const langNames: Record<string, string> = {
+        vi: "Việt",
+        en: "Anh",
+        ja: "Nhật",
+        zh: "Trung",
+        ko: "Hàn",
+        fr: "Pháp",
+        de: "Đức",
+        es: "Tây Ban Nha"
+      };
+      await showCustomAlert(`Đã dịch toàn bộ cuộc họp sang tiếng ${langNames[targetLang] || targetLang}.`, "success", "Thành công");
+    } catch (err: any) {
+      console.error("Translate all error:", err);
+      await showCustomAlert(`Lỗi dịch toàn bộ: ${err.message || String(err)}`, "error");
+    } finally {
+      setIsTranslatingAll(false);
+    }
+  };
   const [translatedExecSummary, setTranslatedExecSummary] = useState<string>("");
   const [translatedDecisions, setTranslatedDecisions] = useState<string[]>([]);
   const [translatedReprocessedExecSummary, setTranslatedReprocessedExecSummary] = useState<string>("");
@@ -320,6 +465,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       setTranslatingSection(null);
     }
   };
+
+  const findClosestRawLine = useCallback((reprocessedLine: any) => {
+    if (!transcripts || transcripts.length === 0) return null;
+    let closest = transcripts[0];
+    let minDiff = Math.abs(transcripts[0].startMs - reprocessedLine.startMs);
+    for (const line of transcripts) {
+      const diff = Math.abs(line.startMs - reprocessedLine.startMs);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = line;
+      }
+    }
+    return closest;
+  }, [transcripts]);
 
   const [lineSummaries, setLineSummaries] = useState<Record<string, { originalSummary: string, translatedSummary: string, loading?: boolean }>>({});
 
@@ -810,15 +969,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  // Manual Edit AI Summary save (Live)
-  const handleSaveSummary = async () => {
+  // Edit AI Summary save (Live)
+  const handleSaveSummary = async (execSummary?: string, decisionsList?: string[], keepEditingOpen = false) => {
+    const finalExec = execSummary !== undefined ? execSummary : editedExecSummary;
+    const finalDec = decisionsList !== undefined ? decisionsList : editedDecisions;
     setIsSavingSummary(true);
     try {
       const { error } = await supabase
         .from("ai_summaries")
         .update({
-          executive_summary: editedExecSummary,
-          decisions: editedDecisions,
+          executive_summary: finalExec,
+          decisions: finalDec,
         })
         .eq("meeting_id", meetingId);
 
@@ -826,10 +987,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
       setAiSummary((prev: any) => ({
         ...prev,
-        executive_summary: editedExecSummary,
-        decisions: editedDecisions,
+        executive_summary: finalExec,
+        decisions: finalDec,
       }));
-      setIsEditingSummary(false);
+
+      initialExecSummaryRef.current = finalExec;
+      initialDecisionsRef.current = [...finalDec];
+
+      if (!keepEditingOpen) {
+        setIsEditingSummary(false);
+      }
     } catch (err) {
       console.error(err);
       await showCustomAlert("Lỗi khi lưu tóm tắt cuộc họp.", "error");
@@ -838,15 +1005,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  // Manual Edit AI Summary save (Reprocessed)
-  const handleSaveReprocessedSummary = async () => {
+  // Edit AI Summary save (Reprocessed)
+  const handleSaveReprocessedSummary = async (execSummary?: string, decisionsList?: string[], keepEditingOpen = false) => {
+    const finalExec = execSummary !== undefined ? execSummary : editedReprocessedExecSummary;
+    const finalDec = decisionsList !== undefined ? decisionsList : editedReprocessedDecisions;
     setIsSavingSummary(true);
     try {
       const { error } = await supabase
         .from("ai_summaries")
         .update({
-          reprocessed_executive_summary: editedReprocessedExecSummary,
-          reprocessed_decisions: editedReprocessedDecisions,
+          reprocessed_executive_summary: finalExec,
+          reprocessed_decisions: finalDec,
         })
         .eq("meeting_id", meetingId);
 
@@ -854,10 +1023,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
       setAiSummary((prev: any) => ({
         ...prev,
-        reprocessed_executive_summary: editedReprocessedExecSummary,
-        reprocessed_decisions: editedReprocessedDecisions,
+        reprocessed_executive_summary: finalExec,
+        reprocessed_decisions: finalDec,
       }));
-      setIsEditingReprocessedSummary(false);
+
+      initialReprocessedExecSummaryRef.current = finalExec;
+      initialReprocessedDecisionsRef.current = [...finalDec];
+
+      if (!keepEditingOpen) {
+        setIsEditingReprocessedSummary(false);
+      }
     } catch (err) {
       console.error(err);
       await showCustomAlert("Lỗi khi lưu tóm tắt cuộc họp.", "error");
@@ -963,10 +1138,56 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // Edit transcript line text
   const startEditingTranscript = (line: any) => {
     setEditingTranscriptId(line.id);
-    setEditingTextVal(line.correctedText || line.originalText);
+    const initialText = line.correctedText || line.originalText;
+    setEditingTextVal(initialText);
+    initialEditingTextRef.current = initialText;
   };
 
-  const handleSaveTranscriptLine = async (lineId: string) => {
+  // Auto-save for transcript lines (debounce 1.5s)
+  useEffect(() => {
+    if (!editingTranscriptId) return;
+    if (editingTextVal === initialEditingTextRef.current) return;
+
+    const delayDebounceFn = setTimeout(() => {
+      handleSaveTranscriptLine(editingTranscriptId, editingTextVal, true);
+    }, 1500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [editingTextVal, editingTranscriptId]);
+
+  // Auto-save for raw summary (debounce 1.5s)
+  useEffect(() => {
+    if (!isEditingSummary) return;
+
+    const execChanged = editedExecSummary !== initialExecSummaryRef.current;
+    const decisionsChanged = JSON.stringify(editedDecisions) !== JSON.stringify(initialDecisionsRef.current);
+    if (!execChanged && !decisionsChanged) return;
+
+    const delayDebounceFn = setTimeout(() => {
+      handleSaveSummary(editedExecSummary, editedDecisions, true);
+    }, 1500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [editedExecSummary, editedDecisions, isEditingSummary]);
+
+  // Auto-save for reprocessed summary (debounce 1.5s)
+  useEffect(() => {
+    if (!isEditingReprocessedSummary) return;
+
+    const execChanged = editedReprocessedExecSummary !== initialReprocessedExecSummaryRef.current;
+    const decisionsChanged = JSON.stringify(editedReprocessedDecisions) !== JSON.stringify(initialReprocessedDecisionsRef.current);
+    if (!execChanged && !decisionsChanged) return;
+
+    const delayDebounceFn = setTimeout(() => {
+      handleSaveReprocessedSummary(editedReprocessedExecSummary, editedReprocessedDecisions, true);
+    }, 1500);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [editedReprocessedExecSummary, editedReprocessedDecisions, isEditingReprocessedSummary]);
+
+  const handleSaveTranscriptLine = async (lineId: string, textToSave?: string, keepEditingOpen = false) => {
+    const finalVal = textToSave !== undefined ? textToSave : editingTextVal;
+    if (!finalVal.trim()) return;
     setIsSavingLine(true);
     try {
       // 1. Call translation API to re-translate the edited text
@@ -974,7 +1195,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: editingTextVal,
+          text: finalVal,
           sourceLang: meeting?.source_language,
           targetLang: meeting?.target_language,
         }),
@@ -989,8 +1210,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       // 2. Update transcripts in Database
       const updatePayload: any = {
         is_edited: true,
-        edited_text: editingTextVal,
-        corrected_text: editingTextVal,
+        edited_text: finalVal,
+        corrected_text: finalVal,
       };
 
       if (newTranslation) {
@@ -1005,33 +1226,38 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (error) throw error;
 
       // 3. Update React States
-      setTranscripts(
-        transcripts.map((t) =>
+      setTranscripts((prevTranscripts) =>
+        prevTranscripts.map((t) =>
           t.id === lineId
             ? {
                 ...t,
                 isEdited: true,
-                editedText: editingTextVal,
-                correctedText: editingTextVal,
+                editedText: finalVal,
+                correctedText: finalVal,
                 translatedText: newTranslation || t.translatedText,
               }
             : t
         )
       );
-      setReprocessedTranscripts(
-        reprocessedTranscripts.map((t) =>
+      setReprocessedTranscripts((prevReprocessed) =>
+        prevReprocessed.map((t) =>
           t.id === lineId
             ? {
                 ...t,
                 isEdited: true,
-                editedText: editingTextVal,
-                correctedText: editingTextVal,
+                editedText: finalVal,
+                correctedText: finalVal,
                 translatedText: newTranslation || t.translatedText,
               }
             : t
         )
       );
-      setEditingTranscriptId(null);
+
+      initialEditingTextRef.current = finalVal;
+
+      if (!keepEditingOpen) {
+        setEditingTranscriptId(null);
+      }
     } catch (err) {
       console.error(err);
       await showCustomAlert("Lỗi khi lưu dòng hội thoại.", "error");
@@ -1896,7 +2122,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </div>
                         <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3>
                       </div>
-                      {!isEditingSummary && (
+                      {isEditingSummary ? (
+                        <button
+                          onClick={() => {
+                            setIsEditingSummary(false);
+                            if (editedExecSummary.trim() !== (aiSummary?.executive_summary || "") || JSON.stringify(editedDecisions) !== JSON.stringify(aiSummary?.decisions || [])) {
+                              handleSaveSummary(editedExecSummary, editedDecisions, false);
+                            }
+                          }}
+                          className="flex items-center space-x-1 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-semibold rounded-md shadow-sm transition-colors cursor-pointer shrink-0"
+                          title="Hoàn thành chỉnh sửa"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Xong</span>
+                        </button>
+                      ) : (
                         <div className="flex items-center space-x-1">
                           <button
                             onClick={() => handleCopyText(translatedExecSummary || aiSummary?.executive_summary || "", "exec_summary")}
@@ -1910,7 +2150,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             )}
                           </button>
                           <button
-                            onClick={() => setIsEditingSummary(true)}
+                            onClick={() => {
+                              setIsEditingSummary(true);
+                              initialExecSummaryRef.current = editedExecSummary;
+                              initialDecisionsRef.current = [...editedDecisions];
+                            }}
                             className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer shrink-0"
                             title="Sửa tóm tắt"
                           >
@@ -2029,29 +2273,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       </ul>
                     )}
 
-                    {/* Save Edit Controls */}
-                    {isEditingSummary && (
-                      <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-800/50">
-                        <button
-                          onClick={() => {
-                            setIsEditingSummary(false);
-                            setEditedExecSummary(aiSummary?.executive_summary || "");
-                            setEditedDecisions(aiSummary?.decisions || []);
-                          }}
-                          className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md cursor-pointer"
-                        >
-                          Hủy bỏ
-                        </button>
-                        <button
-                          onClick={handleSaveSummary}
-                          disabled={isSavingSummary}
-                          className="flex items-center space-x-1.5 px-4 h-9 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md shadow-sm transition-colors cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>{isSavingSummary ? "Đang lưu..." : "Lưu thay đổi"}</span>
-                        </button>
-                      </div>
-                    )}
+
                     </div>
                   </div>
                 </div>
@@ -2223,6 +2445,74 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       </select>
                       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                     </div>
+
+                    {/* Translate All Button */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setActiveTranslateAllDropdown(!activeTranslateAllDropdown)}
+                        disabled={isTranslatingAll}
+                        className="flex items-center space-x-1.5 h-9 px-3 bg-white hover:bg-slate-50 border border-slate-300 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-700/80 rounded-xl text-slate-700 dark:text-slate-200 font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                        title="Dịch toàn bộ hội thoại sang ngôn ngữ khác"
+                      >
+                        <Globe className={`w-3.5 h-3.5 ${isTranslatingAll ? "animate-spin" : ""}`} />
+                        <span>{isTranslatingAll ? "Đang dịch..." : "Dịch tất cả"}</span>
+                      </button>
+                      {activeTranslateAllDropdown && (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => setActiveTranslateAllDropdown(false)} />
+                          <div className="absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg z-30 py-1 text-slate-700 dark:text-slate-200">
+                            <button
+                              onClick={() => handleTranslateAll("vi")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Việt
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("en")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Anh
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("ja")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Nhật
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("zh")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Trung
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("ko")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Hàn
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("fr")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Pháp
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("de")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Đức
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("es")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tây Ban Nha
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -2291,10 +2581,37 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <div className="px-3 py-2.5 space-y-2">
                           {isEditing ? (
                             <div className="flex items-start space-x-2">
-                              <textarea value={editingTextVal} onChange={(e) => setEditingTextVal(e.target.value)} disabled={isSavingLine} className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50" rows={3} />
-                              <button onClick={() => handleSaveTranscriptLine(t.id)} disabled={isSavingLine} className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50">
-                                {isSavingLine ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                              </button>
+                              <textarea
+                                value={editingTextVal}
+                                onChange={(e) => setEditingTextVal(e.target.value)}
+                                onBlur={() => {
+                                  if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                    handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                  } else {
+                                    setEditingTranscriptId(null);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                      handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                    } else {
+                                      setEditingTranscriptId(null);
+                                    }
+                                  } else if (e.key === "Escape") {
+                                    setEditingTranscriptId(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
+                                rows={3}
+                              />
+                              {isSavingLine && (
+                                <span className="p-1.5 text-slate-400">
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <div 
@@ -2548,21 +2865,34 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   <textarea
                                     value={editingTextVal}
                                     onChange={(e) => setEditingTextVal(e.target.value)}
-                                    disabled={isSavingLine}
+                                    onBlur={() => {
+                                      if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                        handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                      } else {
+                                        setEditingTranscriptId(null);
+                                      }
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+                                        if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                          handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                        } else {
+                                          setEditingTranscriptId(null);
+                                        }
+                                      } else if (e.key === "Escape") {
+                                        setEditingTranscriptId(null);
+                                      }
+                                    }}
+                                    autoFocus
                                     className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
                                     rows={2}
                                   />
-                                  <button
-                                    onClick={() => handleSaveTranscriptLine(t.id)}
-                                    disabled={isSavingLine}
-                                    className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {isSavingLine ? (
+                                  {isSavingLine && (
+                                    <span className="p-1.5 text-slate-400">
                                       <RefreshCw className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <Check className="w-4 h-4" />
-                                    )}
-                                  </button>
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="leading-relaxed">
@@ -2882,7 +3212,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
                     <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 border-b border-blue-100/60 dark:border-slate-800 rounded-t-xl">
                       <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center"><BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3></div>
-                      {!isEditingReprocessedSummary && (
+                      {isEditingReprocessedSummary ? (
+                        <button
+                          onClick={() => {
+                            setIsEditingReprocessedSummary(false);
+                            if (editedReprocessedExecSummary.trim() !== (aiSummary?.reprocessed_executive_summary || "") || JSON.stringify(editedReprocessedDecisions) !== JSON.stringify(aiSummary?.reprocessed_decisions || [])) {
+                              handleSaveReprocessedSummary(editedReprocessedExecSummary, editedReprocessedDecisions, false);
+                            }
+                          }}
+                          className="flex items-center space-x-1 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-semibold rounded-md shadow-sm transition-colors cursor-pointer shrink-0"
+                          title="Hoàn thành chỉnh sửa"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Xong</span>
+                        </button>
+                      ) : (
                         <div className="flex items-center space-x-1">
                           <button
                             onClick={() => handleCopyText(translatedReprocessedExecSummary || aiSummary?.reprocessed_executive_summary || "", "reprocessed_exec_summary")}
@@ -2896,7 +3240,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             )}
                           </button>
                           <button
-                            onClick={() => setIsEditingReprocessedSummary(true)}
+                            onClick={() => {
+                              setIsEditingReprocessedSummary(true);
+                              initialReprocessedExecSummaryRef.current = editedReprocessedExecSummary;
+                              initialReprocessedDecisionsRef.current = [...editedReprocessedDecisions];
+                            }}
                             className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer shrink-0"
                             title="Sửa tóm tắt"
                           >
@@ -3002,29 +3350,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       </ul>
                     )}
 
-                    {/* Save Edit Controls */}
-                    {isEditingReprocessedSummary && (
-                      <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100 dark:border-slate-800/50">
-                        <button
-                          onClick={() => {
-                            setIsEditingReprocessedSummary(false);
-                            setEditedReprocessedExecSummary(aiSummary?.reprocessed_executive_summary || "");
-                            setEditedReprocessedDecisions(aiSummary?.reprocessed_decisions || []);
-                          }}
-                          className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md cursor-pointer"
-                        >
-                          Hủy bỏ
-                        </button>
-                        <button
-                          onClick={handleSaveReprocessedSummary}
-                          disabled={isSavingSummary}
-                          className="flex items-center space-x-1.5 px-4 h-9 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-md shadow-sm transition-colors cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>{isSavingSummary ? "Đang lưu..." : "Lưu thay đổi"}</span>
-                        </button>
-                      </div>
-                    )}
+
                     </div>
                   </div>
                 </div>
@@ -3191,6 +3517,74 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       </select>
                       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                     </div>
+
+                    {/* Translate All Button */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setActiveTranslateAllDropdown(!activeTranslateAllDropdown)}
+                        disabled={isTranslatingAll}
+                        className="flex items-center space-x-1.5 h-9 px-3 bg-white hover:bg-slate-50 border border-slate-300 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-700/80 rounded-xl text-slate-700 dark:text-slate-200 font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                        title="Dịch toàn bộ hội thoại sang ngôn ngữ khác"
+                      >
+                        <Globe className={`w-3.5 h-3.5 ${isTranslatingAll ? "animate-spin" : ""}`} />
+                        <span>{isTranslatingAll ? "Đang dịch..." : "Dịch tất cả"}</span>
+                      </button>
+                      {activeTranslateAllDropdown && (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => setActiveTranslateAllDropdown(false)} />
+                          <div className="absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg z-30 py-1 text-slate-700 dark:text-slate-200">
+                            <button
+                              onClick={() => handleTranslateAll("vi")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Việt
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("en")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Anh
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("ja")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Nhật
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("zh")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Trung
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("ko")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Hàn
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("fr")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Pháp
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("de")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tiếng Đức
+                            </button>
+                            <button
+                              onClick={() => handleTranslateAll("es")}
+                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
+                            >
+                              Tây Ban Nha
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -3198,6 +3592,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <div className="sm:hidden space-y-2">
                   {filteredReprocessedTranscripts.map((t) => {
                     const isEditing = editingTranscriptId === t.id;
+                    const closestRaw = findClosestRawLine(t);
+                    const needsReview = (typeof t.confidence === "number" && t.confidence < 0.8) || (closestRaw && typeof closestRaw.confidence === "number" && closestRaw.confidence < 0.8);
+                    const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                     const fmtTime = (ms: number) => {
                       const s = Math.floor(ms / 1000);
                       const mm = Math.floor(s / 60);
@@ -3226,10 +3623,37 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <div className="px-3 py-2.5 space-y-2">
                           {isEditing ? (
                             <div className="flex items-start space-x-2">
-                              <textarea value={editingTextVal} onChange={(e) => setEditingTextVal(e.target.value)} disabled={isSavingLine} className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50" rows={3} />
-                              <button onClick={() => handleSaveTranscriptLine(t.id)} disabled={isSavingLine} className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50">
-                                {isSavingLine ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                              </button>
+                              <textarea
+                                value={editingTextVal}
+                                onChange={(e) => setEditingTextVal(e.target.value)}
+                                onBlur={() => {
+                                  if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                    handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                  } else {
+                                    setEditingTranscriptId(null);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                      handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                    } else {
+                                      setEditingTranscriptId(null);
+                                    }
+                                  } else if (e.key === "Escape") {
+                                    setEditingTranscriptId(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
+                                rows={3}
+                              />
+                              {isSavingLine && (
+                                <span className="p-1.5 text-slate-400">
+                                  <RefreshCw className="w-4 h-4 animate-spin" />
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <div 
@@ -3239,9 +3663,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               }}
                               className="group/cell leading-relaxed cursor-pointer"
                             >
-                              <span className="text-[13px] text-slate-900 dark:text-slate-100 font-semibold">
+                              <span className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
+                                {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
                               </span>
+                              {hasDiff && (
+                                <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic transition-all group-hover/cell:opacity-100 opacity-0 h-0 group-hover/cell:h-auto overflow-hidden">
+                                  Gốc: {closestRaw.correctedText || closestRaw.originalText}
+                                </div>
+                              )}
                               <span 
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_orig_${t.id}`
@@ -3419,6 +3849,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                       {filteredReprocessedTranscripts.map((t) => {
                         const isEditing = editingTranscriptId === t.id;
+                        const closestRaw = findClosestRawLine(t);
+                        const needsReview = (typeof t.confidence === "number" && t.confidence < 0.8) || (closestRaw && typeof closestRaw.confidence === "number" && closestRaw.confidence < 0.8);
+                        const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                         const formatTime = (ms: number) => {
                           const s = Math.floor(ms / 1000);
                           const m = Math.floor(s / 60);
@@ -3455,27 +3888,46 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   <textarea
                                     value={editingTextVal}
                                     onChange={(e) => setEditingTextVal(e.target.value)}
-                                    disabled={isSavingLine}
+                                    onBlur={() => {
+                                      if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                        handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                      } else {
+                                        setEditingTranscriptId(null);
+                                      }
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" && !e.shiftKey) {
+                                        e.preventDefault();
+                                        if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
+                                          handleSaveTranscriptLine(t.id, editingTextVal, false);
+                                        } else {
+                                          setEditingTranscriptId(null);
+                                        }
+                                      } else if (e.key === "Escape") {
+                                        setEditingTranscriptId(null);
+                                      }
+                                    }}
+                                    autoFocus
                                     className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
                                     rows={2}
                                   />
-                                  <button
-                                    onClick={() => handleSaveTranscriptLine(t.id)}
-                                    disabled={isSavingLine}
-                                    className="p-1.5 bg-green-500 text-white rounded hover:bg-green-600 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    {isSavingLine ? (
+                                  {isSavingLine && (
+                                    <span className="p-1.5 text-slate-400">
                                       <RefreshCw className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <Check className="w-4 h-4" />
-                                    )}
-                                  </button>
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="leading-relaxed">
-                                  <span className="text-slate-900 dark:text-slate-100 font-semibold">
+                                  <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
+                                    {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
                                   </span>
+                                  {hasDiff && (
+                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic transition-all group-hover/cell:opacity-100 opacity-0 h-0 group-hover/cell:h-auto overflow-hidden">
+                                      Gốc: {closestRaw.correctedText || closestRaw.originalText}
+                                    </div>
+                                  )}
                                   {t.isEdited && (
                                     <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
                                       Đã sửa tay

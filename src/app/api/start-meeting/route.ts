@@ -21,6 +21,7 @@ export async function POST(request: Request) {
         source_language: source_language || "auto",
         target_language,
         meeting_context: meeting_context || "general",
+        source_type: body.source_type || "live",
       })
       .select()
       .single();

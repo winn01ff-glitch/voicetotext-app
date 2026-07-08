@@ -105,13 +105,15 @@ export default function AudioPlayer({
     }
   }, [isPlaying]);
 
-  // Expose seekTo globally for transcript click
+  // Expose seekTo and togglePlay globally
   useEffect(() => {
     (window as any).__audioPlayerSeekTo = seekTo;
+    (window as any).__audioPlayerTogglePlay = togglePlay;
     return () => {
       delete (window as any).__audioPlayerSeekTo;
+      delete (window as any).__audioPlayerTogglePlay;
     };
-  }, [seekTo]);
+  }, [seekTo, togglePlay]);
 
   // Speed change
   const cycleSpeed = () => {

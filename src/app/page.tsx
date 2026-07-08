@@ -9,7 +9,7 @@ import {
   Plus, Search, Settings, Calendar, Pin, Star, Trash2, Mic, Volume2, 
   RotateCcw, Sliders, ChevronRight, X, AlertTriangle, Moon, Sun, ArrowRight,
   Users, Info, Rocket, LogIn, Lightbulb, LayoutGrid, Check, Minus, BookOpen, ChevronDown,
-  ChevronUp, Upload, Link, FileAudio, Clipboard
+  ChevronUp, Upload, Link, FileAudio, Clipboard, Radio
 } from "lucide-react";
 import { validateAudioFile } from "@/lib/ai/audio-validator";
 
@@ -50,8 +50,8 @@ export default function Dashboard() {
   const isLoadedRef = useRef(false);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
-  // Create mode states (live / upload / youtube)
-  const [createMode, setCreateMode] = useState<'live' | 'upload' | 'youtube'>('live');
+  // Create mode states (live / record / upload / youtube)
+  const [createMode, setCreateMode] = useState<'live' | 'record' | 'upload' | 'youtube'>('live');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -737,17 +737,24 @@ export default function Dashboard() {
 
     try {
       stopMicTest();
+      
+      const payload: any = {
+        title: meetingTitle,
+        source_language: sourceLanguage,
+        target_language: createMode === 'record' ? sourceLanguage : targetLanguage,
+        meeting_context: createMode === 'record' ? 'general' : meetingContext,
+        speakers: createMode === 'record' ? [] : expectedSpeakers,
+        glossary: createMode === 'record' ? [] : glossary,
+      };
+
+      if (createMode === 'record') {
+        payload.source_type = 'record';
+      }
+
       const res = await fetch("/api/start-meeting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: meetingTitle,
-          source_language: sourceLanguage,
-          target_language: targetLanguage,
-          meeting_context: meetingContext,
-          speakers: expectedSpeakers,
-          glossary,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
@@ -761,8 +768,12 @@ export default function Dashboard() {
       localStorage.setItem("meeting_chunk_size", String(chunkSize));
       localStorage.setItem("meeting_device_id", selectedDevice);
 
-      // Route to meeting room
-      router.push(`/meeting/${data.meeting_id}`);
+      // Route to meeting or record room
+      if (createMode === 'record') {
+        router.push(`/record/${data.meeting_id}`);
+      } else {
+        router.push(`/meeting/${data.meeting_id}`);
+      }
     } catch (err) {
       console.error("Create meeting error:", err);
       await showCustomAlert(`Không thể tạo cuộc họp: ${String(err)}`, "error");
@@ -1694,12 +1705,14 @@ export default function Dashboard() {
               <div 
                 className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
                 style={{
-                  width: 'calc(33.333% - 6px)',
+                  width: 'calc(25% - 6px)',
                   left: createMode === 'live' 
                     ? '4px' 
-                    : createMode === 'upload' 
-                      ? 'calc(33.333% + 2px)' 
-                      : 'calc(66.666% + 0px)'
+                    : createMode === 'record' 
+                      ? 'calc(25% + 2px)'
+                      : createMode === 'upload' 
+                        ? 'calc(50% + 0px)' 
+                        : 'calc(75% - 2px)'
                 }}
               />
               
@@ -1711,11 +1724,19 @@ export default function Dashboard() {
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
               >
+                <Radio className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Trực tiếp</span>
+              </button>
+              <button
+                onClick={() => setCreateMode('record')}
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                  createMode === 'record'
+                    ? 'text-blue-600 dark:text-blue-450'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
                 <Mic className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">
-                  <span className="hidden sm:inline">Ghi âm trực tiếp</span>
-                  <span className="inline sm:hidden">Ghi âm</span>
-                </span>
+                <span className="truncate">Ghi âm</span>
               </button>
               <button
                 onClick={() => setCreateMode('upload')}
@@ -1746,7 +1767,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 auto-rows-auto">
                 
                 {/* Block 1: Audio / Upload / YouTube (Span 4 cols, Row span 2) */}
-                {createMode === 'live' && (
+                {(createMode === 'live' || createMode === 'record') && (
                 <section className="lg:col-span-4 lg:row-span-2 bg-[#F0F7FF] dark:bg-blue-950/10 rounded-3xl p-3.5 flex flex-col gap-3 border border-blue-100/50 dark:border-blue-900/30">
                   <div className="flex items-center gap-2">
                     <div className="text-blue-600 bg-blue-100 dark:bg-blue-950/50 p-1.5 rounded-lg flex items-center justify-center">
@@ -2041,6 +2062,7 @@ export default function Dashboard() {
                       />
                     </div>
                     
+                    {createMode !== 'record' && (
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Ngữ cảnh (Context)</label>
                       <div className="relative">
@@ -2057,6 +2079,7 @@ export default function Dashboard() {
                         <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
+                    )}
 
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Ngôn ngữ chính</label>
@@ -2074,6 +2097,7 @@ export default function Dashboard() {
                       </div>
                     </div>
 
+                    {createMode !== 'record' && (
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide">Dịch sang ngôn ngữ</label>
                       <div className="relative">
@@ -2089,10 +2113,12 @@ export default function Dashboard() {
                         <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 pointer-events-none" />
                       </div>
                     </div>
+                    )}
                   </div>
                 </section>
 
                 {/* Block 3: People (Span 4 cols, Row span 1) */}
+                {createMode !== 'record' && (
                 <section className="lg:col-span-4 bg-[#FAF5FF] dark:bg-purple-950/10 rounded-3xl flex flex-col gap-3 border border-purple-100/50 dark:border-purple-900/30 p-3.5 h-[283px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
@@ -2187,8 +2213,10 @@ export default function Dashboard() {
                     </div>
                   </div>
                 </section>
+                )}
 
                 {/* Block 4: Glossary (Span 4 cols, Row span 1) */}
+                {createMode !== 'record' && (
                 <section className="lg:col-span-4 bg-[#FFFBEB] dark:bg-amber-950/10 rounded-3xl flex flex-col gap-3 border border-amber-100/50 dark:border-amber-900/30 p-3.5 h-[283px]">
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-2">
@@ -2250,6 +2278,7 @@ export default function Dashboard() {
                     <p className="text-[11px] font-medium text-amber-900/80 dark:text-amber-300/80 leading-tight">Thêm các từ viết tắt để AI nhận diện và dịch chính xác hơn.</p>
                   </div>
                 </section>
+                )}
               </div>
             </main>
 
@@ -2275,6 +2304,14 @@ export default function Dashboard() {
                   className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
                 >
                   VÀO PHÒNG HỌP <ArrowRight className="w-4 h-4" />
+                </button>
+                )}
+                {createMode === 'record' && (
+                <button
+                  onClick={handleStartMeeting}
+                  className="flex-1 sm:flex-none bg-[#005bbf] dark:bg-blue-600 text-white rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] flex items-center justify-center gap-1.5 hover:bg-blue-700 dark:hover:bg-blue-500 transition-all active:scale-95 shadow-[0_10px_15px_-3px_rgba(0,91,191,0.3)] dark:shadow-[0_10px_15px_-3px_rgba(0,91,191,0.5)] cursor-pointer"
+                >
+                  BẮT ĐẦU GHI ÂM <ArrowRight className="w-4 h-4" />
                 </button>
                 )}
                 {createMode === 'upload' && (
