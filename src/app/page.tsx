@@ -12,6 +12,7 @@ import {
   ChevronUp, Upload, Link, FileAudio, Clipboard, Radio, CheckSquare, ListChecks
 } from "lucide-react";
 import { validateAudioFile } from "@/lib/ai/audio-validator";
+import { putAudio, deleteAudio } from "@/lib/audio-cache";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -605,9 +606,9 @@ export default function Dashboard() {
       // Remove from local meetings state
       setMeetings((prev) => prev.filter((m) => !selectedMeetingIds.includes(m.id)));
 
-      // Clean up sessionStorage cache
+      // Clean up cache audio đã ghi/upload
       selectedMeetingIds.forEach((id) => {
-        sessionStorage.removeItem(`audio_blob_${id}`);
+        deleteAudio(id);
         if (recoveryMeeting?.id === id) {
           setRecoveryMeeting(null);
           localStorage.removeItem("active_meeting_id");
@@ -864,9 +865,8 @@ export default function Dashboard() {
         throw new Error(data.error || "Gặp lỗi khi upload file.");
       }
 
-      // Store blob URL for playback on history page
-      const blobUrl = URL.createObjectURL(uploadFile);
-      sessionStorage.setItem(`audio_blob_${data.meeting_id}`, blobUrl);
+      // Cache file audio để phát lại ở trang history (sống qua reload, mất khi đóng trình duyệt)
+      await putAudio(data.meeting_id, uploadFile);
 
       router.push(`/history/${data.meeting_id}`);
     } catch (err) {

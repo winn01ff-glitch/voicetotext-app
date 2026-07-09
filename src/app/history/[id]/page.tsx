@@ -9,6 +9,7 @@ import { exportToDocx } from "@/lib/docx-helper";
 import { exportToPdf } from "@/lib/pdf-helper";
 import PipelineProgress from "@/components/PipelineProgress";
 import AudioPlayer from "@/components/AudioPlayer";
+import { getAudioUrl, deleteAudio } from "@/lib/audio-cache";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
@@ -111,7 +112,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [activeSpeech, setActiveSpeech] = useState<{ id: string } | null>(null);
+  const [activeSpeech, setActiveSpeech] = useState<{ id: string; type: "original" | "translated" } | null>(null);
 
   // Load browser speechSynthesis voices
   useEffect(() => {
@@ -480,6 +481,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return closest;
   }, [transcripts]);
 
+  // Nhấp vào một dòng hội thoại: highlight dòng đó và tua audio tới đúng thời điểm ghi âm.
+  // Việc phát (nếu có audio) sẽ khiến onTimeUpdate tự cuộn tới dòng đang phát.
+  const handleSeekToLine = useCallback(
+    (line: { id: string; startMs: number }) => {
+      setActiveAudioTranscriptId(line.id);
+      if (audioBlobUrl && typeof (window as any).__audioPlayerSeekTo === "function") {
+        (window as any).__audioPlayerSeekTo(line.startMs);
+      } else {
+        // Không có audio cache -> vẫn cuộn tới dòng được chọn cho rõ ràng.
+        const el = document.getElementById(`transcript-row-${line.id}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    },
+    [audioBlobUrl]
+  );
+
   const [lineSummaries, setLineSummaries] = useState<Record<string, { originalSummary: string, translatedSummary: string, loading?: boolean }>>({});
 
   const handleSummarizeLine = async (lineId: string, originalText: string, translatedText: string) => {
@@ -646,11 +663,29 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
     fetchMeetingData();
 
-    // Load blob URL từ sessionStorage (chỉ có trong phiên upload)
-    const blobUrl = sessionStorage.getItem(`audio_blob_${meetingId}`);
-    if (blobUrl) {
-      setAudioBlobUrl(blobUrl);
-    }
+    // Nạp audio đã cache (ghi âm/upload) từ IndexedDB. Cache sống qua reload và chỉ
+    // bị xóa khi đóng trình duyệt. getAudioUrl tạo một object URL mới từ Blob đã lưu;
+    // ta revoke nó khi unmount để tránh rò rỉ bộ nhớ.
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    getAudioUrl(meetingId)
+      .then((url) => {
+        if (!url) return;
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setAudioBlobUrl(url);
+      })
+      .catch((err) => {
+        console.warn("Không thể nạp audio đã cache:", err);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, []);
 
   const fetchMeetingData = async () => {
@@ -890,6 +925,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     try {
       const { error } = await supabase.from("meetings").delete().eq("id", meetingId);
       if (error) throw error;
+      deleteAudio(meetingId);
       sessionStorage.setItem("pending_toast", JSON.stringify({ title: "Thông báo", message: "Xóa cuộc họp thành công!", type: "success" }));
       router.push("/");
     } catch (err) {
@@ -1390,7 +1426,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       utterance.onstart = () => {
-        setActiveSpeech({ id: item.id });
+        setActiveSpeech({ id: item.id, type });
       };
 
       utterance.onend = () => {
@@ -1432,6 +1468,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
 
   const playTts = (id: string, text: string, isOriginal: boolean = false) => {
+    const type = isOriginal ? "original" : "translated";
     if (!text) return;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       if (playlistRef.current) {
@@ -1439,7 +1476,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         playlistRef.current = null;
       }
 
-      if (activeSpeech && activeSpeech.id === id) {
+      if (activeSpeech && activeSpeech.id === id && activeSpeech.type === type) {
         window.speechSynthesis.cancel();
         setActiveSpeech(null);
         return;
@@ -1463,7 +1500,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       utterance.onstart = () => {
-        setActiveSpeech({ id });
+        setActiveSpeech({ id, type });
       };
       
       utterance.onend = () => {
@@ -2544,11 +2581,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               className={`text-[11px] font-mono font-medium ${
                                 audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
                               } text-slate-400`}
-                              onClick={() => {
-                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
-                                  (window as any).__audioPlayerSeekTo(t.startMs);
-                                }
-                              }}
+                              onClick={() => handleSeekToLine(t)}
                             >
                               {fmtTime(t.startMs)}
                             </span>
@@ -2614,13 +2647,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               )}
                             </div>
                           ) : (
-                            <div 
+                            <div
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
-                                  (window as any).__audioPlayerSeekTo(t.startMs);
-                                }
+                                handleSeekToLine(t);
                               }}
                               className="group/cell leading-relaxed cursor-pointer"
                             >
@@ -2640,11 +2671,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.correctedText || t.originalText, true);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
-                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                 >
-                                  {activeSpeech?.id === t.id ? (
+                                  {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
                                     <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                   ) : (
                                     <Volume2 className="w-3 h-3" />
@@ -2668,13 +2699,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             </div>
                           )}
                           {t.translatedText && (
-                            <div 
+                            <div
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
-                                  (window as any).__audioPlayerSeekTo(t.startMs);
-                                }
+                                handleSeekToLine(t);
                               }}
                               className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
                             >
@@ -2694,7 +2723,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.translatedText, false);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
                                   title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
                                 >
@@ -2830,11 +2859,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               className={`py-4 px-4 align-top font-medium whitespace-nowrap ${
                                 audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
                               } text-slate-400`}
-                              onClick={() => {
-                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
-                                  (window as any).__audioPlayerSeekTo(t.startMs);
-                                }
-                              }}
+                              onClick={() => handleSeekToLine(t)}
                               title={audioBlobUrl ? "Click để phát từ vị trí này" : undefined}
                             >
                               {formatTime(t.startMs)}
@@ -2858,10 +2883,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 )}
                               </div>
                             </td>
-                            <td 
+                            <td
                               onClick={() => {
                                 if (!isEditing) {
                                   setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                  handleSeekToLine(t);
                                 }
                               }}
                               className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
@@ -2923,11 +2949,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
-                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                     >
-                                      {activeSpeech?.id === t.id ? (
+                                      {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
                                         <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
                                         <Volume2 className="w-3 h-3" />
@@ -2951,9 +2977,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </div>
                               )}
                             </td>
-                            <td 
+                            <td
                               onClick={() => {
                                 setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                                handleSeekToLine(t);
                               }}
                               className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell cursor-pointer"
                             >
@@ -2975,11 +3002,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.translatedText, false);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
-                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                     >
-                                      {activeSpeech?.id === t.id ? (
+                                      {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
                                         <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
                                         <Volume2 className="w-3 h-3" />
@@ -3608,10 +3635,25 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
                     };
                     return (
-                      <div key={t.id} className="border border-slate-300 dark:border-slate-700/80 rounded-xl bg-white dark:bg-slate-900 overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                      <div
+                        key={t.id}
+                        id={`transcript-row-${t.id}`}
+                        className={`border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 ${
+                          activeAudioTranscriptId === t.id
+                            ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
+                            : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900"
+                        }`}
+                      >
                         <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700/80">
                           <div className="flex items-center gap-2">
-                            <span className="text-[11px] text-slate-400 font-mono font-medium">{fmtTime(t.startMs)}</span>
+                            <span
+                              className={`text-[11px] font-mono font-medium text-slate-400 ${
+                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                              }`}
+                              onClick={() => handleSeekToLine(t)}
+                            >
+                              {fmtTime(t.startMs)}
+                            </span>
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>{t.speakerName}</span>
                             {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
                           </div>
@@ -3662,10 +3704,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               )}
                             </div>
                           ) : (
-                            <div 
+                            <div
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                handleSeekToLine(t);
                               }}
                               className="group/cell leading-relaxed cursor-pointer"
                             >
@@ -3691,11 +3734,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.correctedText || t.originalText, true);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
-                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                 >
-                                  {activeSpeech?.id === t.id ? (
+                                  {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
                                     <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                   ) : (
                                     <Volume2 className="w-3 h-3" />
@@ -3719,10 +3762,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             </div>
                           )}
                           {t.translatedText && (
-                            <div 
+                            <div
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                                handleSeekToLine(t);
                               }}
                               className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
                             >
@@ -3742,11 +3786,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.translatedText, false);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
-                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                 >
-                                  {activeSpeech?.id === t.id ? (
+                                  {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
                                     <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                   ) : (
                                     <Volume2 className="w-3 h-3" />
@@ -3867,8 +3911,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                         return (
                           <Fragment key={t.id}>
-                            <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-900/50 group">
-                            <td className="py-4 px-4 align-top text-slate-400 font-medium whitespace-nowrap">
+                            <tr
+                              id={`transcript-row-${t.id}`}
+                              className={`group transition-colors duration-200 ${
+                                activeAudioTranscriptId === t.id
+                                  ? "bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
+                                  : "hover:bg-slate-50/50 dark:hover:bg-slate-900/50"
+                              }`}
+                            >
+                            <td
+                              className={`py-4 px-4 align-top font-medium whitespace-nowrap text-slate-400 ${
+                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                              }`}
+                              onClick={() => handleSeekToLine(t)}
+                              title={audioBlobUrl ? "Click để phát từ vị trí này" : undefined}
+                            >
                               {formatTime(t.startMs)}
                             </td>
                             <td className="py-4 px-4 align-top whitespace-nowrap">
@@ -3881,10 +3938,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </span>
                               </div>
                             </td>
-                            <td 
+                            <td
                               onClick={() => {
                                 if (!isEditing) {
                                   setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                  handleSeekToLine(t);
                                 }
                               }}
                               className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
@@ -3952,11 +4010,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
-                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe gốc"}
+                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                     >
-                                      {activeSpeech?.id === t.id ? (
+                                      {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
                                         <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
                                         <Volume2 className="w-3 h-3" />
@@ -3980,9 +4038,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </div>
                               )}
                             </td>
-                            <td 
+                            <td
                               onClick={() => {
                                 setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                                handleSeekToLine(t);
                               }}
                               className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell cursor-pointer"
                             >
@@ -4006,9 +4065,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
                                         activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
-                                      title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                     >
-                                      {activeSpeech?.id === t.id ? (
+                                      {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
                                         <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                       ) : (
                                         <Volume2 className="w-3 h-3" />
@@ -4251,10 +4310,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           transcripts={transcripts.map(t => ({ id: t.id, start_ms: t.startMs, end_ms: t.endMs }))}
           activeTranscriptId={activeAudioTranscriptId}
           onTimeUpdate={(currentTimeMs: number) => {
-            // Tìm transcript đang phát
-            const active = transcripts.find(
-              (t) => currentTimeMs >= t.startMs && currentTimeMs <= t.endMs
-            );
+            // Tìm dòng đang phát trong list đang hiển thị (bản gốc hoặc đã xử lý)
+            // để highlight/cuộn khớp với tab người dùng đang xem.
+            const activeList = transcriptVer === "ai" ? reprocessedTranscripts : transcripts;
+            // Dòng đang phát = dòng có startMs lớn nhất mà vẫn <= thời điểm hiện tại.
+            // Dùng "startMs gần nhất" thay vì "range chứa currentTime" để tránh bắt nhầm
+            // khi các dòng có khoảng thời gian chồng lấn (find sẽ trả dòng trước đó).
+            let active: any = null;
+            for (const t of activeList) {
+              if (currentTimeMs >= t.startMs && (!active || t.startMs > active.startMs)) {
+                active = t;
+              }
+            }
             const newId = active?.id || null;
             if (newId !== activeAudioTranscriptId) {
               setActiveAudioTranscriptId(newId);

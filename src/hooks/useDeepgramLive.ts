@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { putAudio } from "@/lib/audio-cache";
 
 interface SpeakerInfo {
   speaker_tag: string;
@@ -444,16 +445,16 @@ export function useDeepgramLive({
       audioContextRef.current = null;
     }
 
-    // Save recorded audio cache to sessionStorage
+    // Lưu audio đã ghi vào cache IndexedDB (sống qua reload, mất khi đóng trình duyệt).
     if (recordedChunksRef.current.length > 0 && meetingId) {
       const audioBlob = new Blob(recordedChunksRef.current, { type: "audio/webm;codecs=opus" });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      try {
-        sessionStorage.setItem(`audio_blob_${meetingId}`, audioUrl);
-        console.log("[useDeepgramLive] Saved audio cache to sessionStorage for meeting:", meetingId, audioUrl);
-      } catch (err) {
-        console.error("Failed to save audio blob to sessionStorage:", err);
-      }
+      putAudio(meetingId, audioBlob)
+        .then(() => {
+          console.log("[useDeepgramLive] Saved audio cache to IndexedDB for meeting:", meetingId);
+        })
+        .catch((err) => {
+          console.error("Failed to save audio blob to cache:", err);
+        });
     }
 
     setMicLevel(0);
