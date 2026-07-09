@@ -811,6 +811,22 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     addToast("Lỗi ghi âm", err, "error");
   };
 
+  const handleResetSettings = () => {
+    setEndpointing(3000);
+    setTranslationDelay(5000);
+    setEchoCancellation(true);
+    setNoiseSuppression(true);
+    setAutoGainControl(true);
+    setDiarizationEnabled(false);
+    localStorage.setItem("meeting_endpointing", "3000");
+    localStorage.setItem("meeting_translation_delay", "5000");
+    localStorage.setItem("meeting_echo_cancellation", "true");
+    localStorage.setItem("meeting_noise_suppression", "true");
+    localStorage.setItem("meeting_auto_gain_control", "true");
+    localStorage.setItem("meeting_diarization_enabled", "false");
+    addToast("Cài đặt", "Đã khôi phục thiết lập mặc định.", "success");
+  };
+
   const handleStatusChange = (newStatus: any) => {
     // Sync states if needed
   };
@@ -1662,9 +1678,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     >
                       <option value="500">Nhanh nhạy (0.5s)</option>
                       <option value="1000">Tiêu chuẩn (1.0s)</option>
-                      <option value="1500">Mặc định (1.5s)</option>
+                      <option value="1500">Tiêu chuẩn (1.5s)</option>
                       <option value="2000">Chậm rãi (2.0s)</option>
-                      <option value="3000">Rất chậm (3.0s)</option>
+                      <option value="3000">Mặc định (3.0s)</option>
                       <option value="5000">Cực chậm (5.0s)</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
@@ -1693,9 +1709,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     >
                       <option value="1000">Tức thì (1.0s)</option>
                       <option value="2000">Rất nhanh (2.0s)</option>
-                      <option value="3000">Mặc định (3.0s)</option>
+                      <option value="3000">Tiêu chuẩn (3.0s)</option>
                       <option value="4000">Vừa phải (4.0s)</option>
-                      <option value="5000">Thong thả (5.0s)</option>
+                      <option value="5000">Mặc định (5.0s)</option>
                       <option value="10000">Cực chậm (10.0s)</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
@@ -1782,6 +1798,15 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     />
                   </div>
                 </div>
+
+                <button
+                  onClick={handleResetSettings}
+                  disabled={status === "recording"}
+                  className="w-full mt-4 py-2 border border-slate-200 dark:border-slate-800 hover:border-red-200 dark:hover:border-red-900/30 hover:bg-red-50/30 dark:hover:bg-red-950/10 rounded-lg text-xs font-semibold text-slate-500 hover:text-red-500 dark:text-slate-400 dark:hover:text-red-400 transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Khôi phục mặc định</span>
+                </button>
               </div>
             )}
           </div>

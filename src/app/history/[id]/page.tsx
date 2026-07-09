@@ -2618,6 +2618,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
+                                  (window as any).__audioPlayerSeekTo(t.startMs);
+                                }
                               }}
                               className="group/cell leading-relaxed cursor-pointer"
                             >
@@ -2669,6 +2672,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
+                                if (audioBlobUrl && (window as any).__audioPlayerSeekTo) {
+                                  (window as any).__audioPlayerSeekTo(t.startMs);
+                                }
                               }}
                               className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
                             >
