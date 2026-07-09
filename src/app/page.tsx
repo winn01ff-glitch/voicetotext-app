@@ -1879,25 +1879,23 @@ export default function Dashboard() {
             </header>
 
             {/* Mode Tabs with Sliding Transition */}
-            <div className="relative flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-[1.25rem] mx-4 sm:mx-6 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30">
+            <div className="relative grid grid-cols-2 sm:flex p-1 bg-slate-100 dark:bg-slate-800/80 rounded-[1.25rem] mx-4 sm:mx-6 mb-2 shrink-0 border border-slate-200/50 dark:border-slate-800/30 gap-1 sm:gap-0">
               {/* Sliding Background Indicator */}
               <div 
-                className="absolute top-1 bottom-1 transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5"
-                style={{
-                  width: 'calc(25% - 6px)',
-                  left: createMode === 'live' 
-                    ? '4px' 
+                className={`absolute transition-all duration-300 ease-out bg-white dark:bg-slate-900 rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.05)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)] ring-1 ring-black/5 dark:ring-white/5 sliding-indicator ${
+                  createMode === 'live' 
+                    ? 'indicator-live' 
                     : createMode === 'record' 
-                      ? 'calc(25% + 2px)'
+                      ? 'indicator-record' 
                       : createMode === 'upload' 
-                        ? 'calc(50% + 0px)' 
-                        : 'calc(75% - 2px)'
-                }}
+                        ? 'indicator-upload' 
+                        : 'indicator-youtube'
+                }`}
               />
               
               <button
                 onClick={() => setCreateMode('live')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-all cursor-pointer select-none ${
                   createMode === 'live'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1908,7 +1906,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setCreateMode('record')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-all cursor-pointer select-none ${
                   createMode === 'record'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1919,7 +1917,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setCreateMode('upload')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-all cursor-pointer select-none ${
                   createMode === 'upload'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -1930,7 +1928,7 @@ export default function Dashboard() {
               </button>
               <button
                 onClick={() => setCreateMode('youtube')}
-                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-colors cursor-pointer select-none ${
+                className={`relative z-10 flex-1 flex items-center justify-center gap-1.5 py-2 sm:py-1.5 px-2 rounded-2xl text-[12px] font-bold transition-all cursor-pointer select-none ${
                   createMode === 'youtube'
                     ? 'text-blue-600 dark:text-blue-450'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
@@ -2684,6 +2682,51 @@ export default function Dashboard() {
           .animate-mobile-slide-up {
             animation: mobile-slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
             will-change: transform, opacity;
+          }
+        }
+        /* Mobile sliding indicator styles */
+        @media (max-width: 639px) {
+          .sliding-indicator {
+            width: calc(50% - 6px) !important;
+            height: calc(50% - 6px) !important;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          }
+          .indicator-live {
+            left: 4px !important;
+            top: 4px !important;
+          }
+          .indicator-record {
+            left: calc(50% + 2px) !important;
+            top: 4px !important;
+          }
+          .indicator-upload {
+            left: 4px !important;
+            top: calc(50% + 2px) !important;
+          }
+          .indicator-youtube {
+            left: calc(50% + 2px) !important;
+            top: calc(50% + 2px) !important;
+          }
+        }
+        /* Desktop sliding indicator styles */
+        @media (min-width: 640px) {
+          .sliding-indicator {
+            width: calc(25% - 6px) !important;
+            height: calc(100% - 8px) !important;
+            top: 4px !important;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+          }
+          .indicator-live {
+            left: 4px !important;
+          }
+          .indicator-record {
+            left: calc(25% + 2px) !important;
+          }
+          .indicator-upload {
+            left: calc(50% + 0px) !important;
+          }
+          .indicator-youtube {
+            left: calc(75% - 2px) !important;
           }
         }
       `}</style>
