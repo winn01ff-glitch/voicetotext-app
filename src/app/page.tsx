@@ -1152,11 +1152,10 @@ export default function Dashboard() {
             </button>
             <button
               onClick={() => setShowCreateModal(true)}
-              className="flex items-center space-x-1.5 sm:space-x-2 btn-flat-rainbow px-3.5 sm:px-5 h-9 sm:h-10 rounded-lg sm:rounded-xl font-bold text-sm transition-all cursor-pointer whitespace-nowrap"
+              className="hidden sm:flex items-center space-x-2 btn-flat-rainbow px-5 h-10 rounded-xl font-bold text-sm transition-all cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">Tạo Cuộc Họp Mới</span>
-              <span className="inline sm:hidden">Tạo mới</span>
+              <span>Tạo Cuộc Họp Mới</span>
             </button>
           </div>
         </div>
@@ -1327,16 +1326,17 @@ export default function Dashboard() {
           </section>
         ) : (
           <section className="space-y-6">
-            {/* TABS */}
-            <div className="flex justify-between items-end border-b border-slate-200 dark:border-slate-800 gap-2">
-              <div className="relative flex select-none w-auto">
+            {/* TABS & ACTIONS CONTAINER */}
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end border-b border-slate-200 dark:border-slate-800 gap-3 pb-[3px] sm:pb-0">
+              <div className="relative flex select-none w-auto border-b sm:border-b-0 border-slate-200 dark:border-slate-800 pb-1 sm:pb-0">
                 {(() => {
                   const activeIndex = activeTab === "recent" ? 0 : activeTab === "pinned" ? 1 : 2;
                   return (
                     <div
-                      className="absolute z-10 bottom-[-1px] h-[2px] bg-blue-600 dark:bg-blue-400 transition-all duration-300 ease-out w-[80px] sm:w-[115px]"
+                      className="absolute z-10 h-[2px] bg-blue-600 dark:bg-blue-400 transition-all duration-300 ease-out w-[80px] sm:w-[115px]"
                       style={{
                         transform: `translateX(${activeIndex * 100}%)`,
+                        bottom: "-0.7px",
                       }}
                     />
                   );
@@ -1373,7 +1373,7 @@ export default function Dashboard() {
                 </button>
               </div>
 
-              <div className="relative shrink-0 flex items-center gap-2">
+              <div className="relative flex items-center justify-end gap-2 px-1 sm:px-0">
                 {isSelectionMode ? (
                   <>
                     {/* Desktop Version */}
@@ -1677,20 +1677,21 @@ export default function Dashboard() {
                         isSelectionMode && selectedMeetingIds.includes(m.id) ? "ring-2 ring-blue-500 border-transparent dark:border-transparent shadow-blue-500/10" : ""
                       }`}
                     >
-                      {isSelectionMode && (
-                        <div
-                          className={`absolute inset-0 z-20 cursor-pointer transition-colors duration-200 ${
-                            selectedMeetingIds.includes(m.id)
-                              ? "bg-blue-500/5 dark:bg-blue-500/10"
-                              : "hover:bg-slate-500/5"
-                          }`}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleSelectMeeting(m.id);
-                          }}
-                        />
-                      )}
+                      <div
+                        className={`absolute inset-0 z-20 cursor-pointer transition-colors duration-200 ${
+                          isSelectionMode
+                            ? selectedMeetingIds.includes(m.id)
+                              ? "bg-blue-500/5 dark:bg-blue-500/10 block"
+                              : "hover:bg-slate-500/5 block"
+                            : "hidden pointer-events-none"
+                        }`}
+                        onClick={(e) => {
+                          if (!isSelectionMode) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleSelectMeeting(m.id);
+                        }}
+                      />
                       {(() => {
                         const createdFrom = Array.isArray(m.meeting_metadata)
                           ? m.meeting_metadata[0]?.created_from
@@ -1767,17 +1768,15 @@ export default function Dashboard() {
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
-                                {isSelectionMode && (
-                                  <div className="pl-1.5 flex items-center justify-center pointer-events-none text-slate-800 dark:text-white">
-                                    <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all ${
-                                      selectedMeetingIds.includes(m.id)
-                                        ? "bg-blue-600 border-blue-600 text-white"
-                                        : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
-                                    }`}>
-                                      {selectedMeetingIds.includes(m.id) && <Check className="w-3 h-3 stroke-[3]" />}
-                                    </div>
+                                <div className={`pl-1.5 flex items-center justify-center pointer-events-none text-slate-800 dark:text-white transition-all ${isSelectionMode ? "flex" : "hidden"}`}>
+                                  <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all ${
+                                    selectedMeetingIds.includes(m.id)
+                                      ? "bg-blue-600 border-blue-600 text-white"
+                                      : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                                  }`}>
+                                    {selectedMeetingIds.includes(m.id) && <Check className="w-3 h-3 stroke-[3]" />}
                                   </div>
-                                )}
+                                </div>
                               </div>
                             </div>
 
@@ -2774,10 +2773,21 @@ export default function Dashboard() {
         })}
       </div>
 
-       {showScrollTop && (
+      {/* Floating Action Button (FAB) for Mobile */}
+      {!isSelectionMode && (
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="sm:hidden fixed bottom-6 right-6 z-40 flex items-center justify-center w-14 h-14 bg-blue-600 dark:bg-blue-500 hover:bg-blue-550 dark:hover:bg-blue-450 text-white rounded-full shadow-[0_4px_14px_0_rgba(0,112,243,0.39)] hover:shadow-[0_6px_20px_rgba(0,112,243,0.23)] transition-all duration-300 hover:scale-110 active:scale-95 cursor-pointer animate-in fade-in slide-in-from-bottom-6 duration-300"
+          title="Tạo cuộc họp mới"
+        >
+          <Plus className="w-6 h-6 stroke-[2.5]" />
+        </button>
+      )}
+
+      {showScrollTop && (
         <button
           onClick={scrollToTop}
-          className="fixed bottom-6 right-6 z-40 flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-500/20 shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1 active:translate-y-0 cursor-pointer animate-in fade-in slide-in-from-bottom-4 duration-300"
+          className="fixed bottom-24 sm:bottom-6 right-6 z-40 flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-500/20 shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1 active:translate-y-0 cursor-pointer animate-in fade-in slide-in-from-bottom-4 duration-300"
           title="Cuộn lên đầu trang"
         >
           <ChevronUp className="w-5 h-5" />
