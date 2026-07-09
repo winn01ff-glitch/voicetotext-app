@@ -1665,6 +1665,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       <option value="1500">Mặc định (1.5s)</option>
                       <option value="2000">Chậm rãi (2.0s)</option>
                       <option value="3000">Rất chậm (3.0s)</option>
+                      <option value="5000">Cực chậm (5.0s)</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                   </div>
@@ -1695,6 +1696,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       <option value="3000">Mặc định (3.0s)</option>
                       <option value="4000">Vừa phải (4.0s)</option>
                       <option value="5000">Thong thả (5.0s)</option>
+                      <option value="10000">Cực chậm (10.0s)</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                   </div>
