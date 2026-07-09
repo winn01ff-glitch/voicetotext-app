@@ -1610,14 +1610,22 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
             {showAdvancedSettings && (
               <div className="space-y-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                {status === "recording" && (
+                  <div className="text-[11px] font-semibold text-red-500 dark:text-red-400 bg-red-50/50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/30 px-3 py-2 rounded-lg flex items-center space-x-1.5 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                    <span>Không thể thay đổi cấu hình khi đang ghi âm. Vui lòng tạm dừng cuộc họp để chỉnh sửa.</span>
+                  </div>
+                )}
+
                 {/* Voice select */}
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 dark:text-slate-400">Giọng đọc (Phát âm)</label>
+                  <label className={`text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>Giọng đọc (Phát âm)</label>
                   <div className="relative w-full">
                     <select
                       value={selectedVoice}
                       onChange={(e) => setSelectedVoice(e.target.value)}
-                      className="w-full h-10 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none truncate cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-full h-10 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none truncate cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {allAvailableVoices.length > 0 ? (
                         allAvailableVoices.map((v) => (
@@ -1637,9 +1645,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
                 {/* Silence timeout (Deepgram Endpointing) */}
                 <div className="space-y-1.5">
-                  <div className="flex justify-between items-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                  <div className={`flex justify-between items-center text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>
                     <span>Thời gian ngắt lời (Deepgram)</span>
-                    <span className="text-blue-500 font-mono">{(endpointing / 1000).toFixed(1)}s</span>
+                    <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(endpointing / 1000).toFixed(1)}s</span>
                   </div>
                   <div className="relative w-full">
                     <select
@@ -1649,7 +1657,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setEndpointing(val);
                         localStorage.setItem("meeting_endpointing", String(val));
                       }}
-                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="500">Nhanh nhạy (0.5s)</option>
                       <option value="1000">Tiêu chuẩn (1.0s)</option>
@@ -1666,9 +1675,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
                 {/* Silence timeout (AI Translation Delay) */}
                 <div className="space-y-1.5">
-                  <div className="flex justify-between items-center text-xs font-bold text-slate-500 dark:text-slate-400">
+                  <div className={`flex justify-between items-center text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>
                     <span>Thời gian tự động dịch (AI)</span>
-                    <span className="text-blue-500 font-mono">{(translationDelay / 1000).toFixed(1)}s</span>
+                    <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(translationDelay / 1000).toFixed(1)}s</span>
                   </div>
                   <div className="relative w-full">
                     <select
@@ -1678,7 +1687,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setTranslationDelay(val);
                         localStorage.setItem("meeting_translation_delay", String(val));
                       }}
-                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <option value="1000">Tức thì (1.0s)</option>
                       <option value="2000">Rất nhanh (2.0s)</option>
@@ -1698,7 +1708,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   <label className="text-[10px] uppercase font-bold text-slate-400">Xử lý âm thanh micro</label>
                   
                   <div className="flex items-center justify-between text-xs py-1">
-                    <span className="text-slate-600 dark:text-slate-350">Khử tiếng vang (Echo)</span>
+                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Khử tiếng vang (Echo)</span>
                     <input
                       type="checkbox"
                       checked={echoCancellation}
@@ -1707,12 +1717,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setEchoCancellation(val);
                         localStorage.setItem("meeting_echo_cancellation", String(val));
                       }}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
 
                   <div className="flex items-center justify-between text-xs py-1">
-                    <span className="text-slate-600 dark:text-slate-350">Lọc nhiễu (Noise)</span>
+                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Lọc nhiễu (Noise)</span>
                     <input
                       type="checkbox"
                       checked={noiseSuppression}
@@ -1721,12 +1732,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setNoiseSuppression(val);
                         localStorage.setItem("meeting_noise_suppression", String(val));
                       }}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
 
                   <div className="flex items-center justify-between text-xs py-1">
-                    <span className="text-slate-600 dark:text-slate-350">Tự chỉnh độ nhạy (AGC)</span>
+                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Tự chỉnh độ nhạy (AGC)</span>
                     <input
                       type="checkbox"
                       checked={autoGainControl}
@@ -1735,7 +1747,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setAutoGainControl(val);
                         localStorage.setItem("meeting_auto_gain_control", String(val));
                       }}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
@@ -1746,7 +1759,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   
                   <div className="flex items-center justify-between text-xs py-1">
                     <div className="flex-1 pr-2">
-                      <span className="text-slate-600 dark:text-slate-350 font-medium">Phân biệt giọng nói (Diarize)</span>
+                      <span className={`font-medium ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Phân biệt giọng nói (Diarize)</span>
                       <p className="text-[10px] text-slate-400 leading-normal mt-0.5">
                         {diarizationEnabled 
                           ? "BẬT: Dùng sóng âm để gợi ý + AI thẩm định người nói."
@@ -1762,7 +1775,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         setDiarizationEnabled(val);
                         localStorage.setItem("meeting_diarization_enabled", String(val));
                       }}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                      disabled={status === "recording"}
+                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     />
                   </div>
                 </div>
