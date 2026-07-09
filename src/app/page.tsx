@@ -38,13 +38,24 @@ export default function Dashboard() {
   const statusDropdownRef = useRef<HTMLDivElement>(null);
 
   // New Meeting configuration states
-  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isCreateModalMounted, setIsCreateModalMounted] = useState(false);
+  const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
+
+  const handleOpenCreateModal = () => {
+    setIsCreateModalMounted(true);
+    setTimeout(() => setIsCreateModalVisible(true), 10);
+  };
+
+  const handleCloseCreateModal = () => {
+    setIsCreateModalVisible(false);
+    setTimeout(() => setIsCreateModalMounted(false), 300);
+  };
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingContext, setMeetingContext] = useState("general");
   const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
-    { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" },
+    { speaker_tag: "1", display_name: "Tôi", language_code: "ja" },
   ]);
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([]);
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
@@ -184,10 +195,10 @@ export default function Dashboard() {
         setExpectedSpeakers(JSON.parse(savedSpeakers));
       } catch (e) {
         console.error("Failed to parse speakers", e);
-        setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" }]);
+        setExpectedSpeakers([{ speaker_tag: "1", display_name: "Tôi", language_code: "ja" }]);
       }
     } else {
-      setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" }]);
+      setExpectedSpeakers([{ speaker_tag: "1", display_name: "Tôi", language_code: "ja" }]);
     }
 
     // Load saved glossary
@@ -221,7 +232,7 @@ export default function Dashboard() {
     // Check if redirecting from another page to create meeting
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get("create") === "true") {
-      setShowCreateModal(true);
+      handleOpenCreateModal();
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
@@ -276,9 +287,24 @@ export default function Dashboard() {
     localStorage.setItem("cached_meetings", JSON.stringify(meetings));
   }, [meetings]);
 
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("meeting_echo_cancellation", String(echoCancellation));
+  }, [echoCancellation]);
+
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("meeting_noise_suppression", String(noiseSuppression));
+  }, [noiseSuppression]);
+
+  useEffect(() => {
+    if (!isLoadedRef.current) return;
+    localStorage.setItem("meeting_auto_gain_control", String(autoGainControl));
+  }, [autoGainControl]);
+
   // Enumerate devices when modal opens
   useEffect(() => {
-    if (showCreateModal) {
+    if (isCreateModalMounted) {
       navigator.mediaDevices.enumerateDevices().then((devices) => {
         const audioInputs = devices.filter((d) => d.kind === "audioinput");
         setAudioDevices(audioInputs);
@@ -298,11 +324,11 @@ export default function Dashboard() {
     } else {
       stopMicTest();
     }
-  }, [showCreateModal]);
+  }, [isCreateModalMounted]);
 
   // Prevent background scrolling when modal is open
   useEffect(() => {
-    if (showCreateModal) {
+    if (isCreateModalMounted) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
@@ -310,7 +336,7 @@ export default function Dashboard() {
     return () => {
       document.body.style.overflow = "";
     };
-  }, [showCreateModal]);
+  }, [isCreateModalMounted]);
 
   // Reset pagination count when active tab changes
   useEffect(() => {
@@ -760,7 +786,7 @@ export default function Dashboard() {
     setSourceLanguage("auto");
     setTargetLanguage("vi");
     setExpectedSpeakers([
-      { speaker_tag: "speaker_1", display_name: "Tôi", language_code: "auto" },
+      { speaker_tag: "1", display_name: "Tôi", language_code: "ja" },
     ]);
     setGlossary([]);
     setEchoCancellation(true);
@@ -1151,7 +1177,7 @@ export default function Dashboard() {
               {isDarkMode ? <Sun className="w-4.5 h-4.5 sm:w-5 sm:h-5" /> : <Moon className="w-4.5 h-4.5 sm:w-5 sm:h-5" />}
             </button>
             <button
-              onClick={() => setShowCreateModal(true)}
+              onClick={() => handleOpenCreateModal()}
               className="hidden sm:flex items-center space-x-2 btn-flat-rainbow px-5 h-10 rounded-xl font-bold text-sm transition-all cursor-pointer whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -1848,15 +1874,15 @@ export default function Dashboard() {
       </main>
 
       {/* CREATE MEETING MODAL */}
-      {showCreateModal && (
+      {isCreateModalMounted && (
         <div 
-          onClick={() => setShowCreateModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/40 backdrop-blur-sm"
+          onClick={() => handleCloseCreateModal()}
+          className={`fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ease-out ${isCreateModalVisible ? "opacity-100" : "opacity-0"}`}
         >
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className="max-w-6xl w-full h-full sm:h-[715px] max-h-screen sm:max-h-[95vh] flex flex-col bg-white dark:bg-slate-900 border-0 shadow-none sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-none sm:rounded-[2rem] overflow-hidden animate-in fade-in sm:zoom-in-95 duration-300"
+            className={`max-w-6xl w-full h-full sm:h-[715px] max-h-screen sm:max-h-[95vh] flex flex-col bg-white dark:bg-slate-900 border-0 shadow-none sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-none sm:rounded-[2rem] overflow-hidden transition-all duration-300 ease-out ${isCreateModalVisible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-4"}`}
           >
             
             {/* Header */}
@@ -1871,7 +1897,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <button 
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => handleCloseCreateModal()}
                 className="w-8 h-8 flex items-center justify-center bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-800 dark:hover:text-slate-200 rounded-full transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -2470,7 +2496,7 @@ export default function Dashboard() {
               
               <div className="flex gap-3 w-full sm:w-auto mt-2.5 sm:mt-0">
                 <button
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => handleCloseCreateModal()}
                   className="flex-1 sm:flex-none bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-4 sm:px-5 py-2 sm:py-2.5 font-bold text-[13px] hover:bg-slate-200 dark:hover:bg-slate-700 transition-all active:scale-95 cursor-pointer"
                 >
                   HỦY BỎ
@@ -2819,7 +2845,7 @@ export default function Dashboard() {
       {/* Floating Action Button (FAB) for Mobile */}
       {!isSelectionMode && (
         <button
-          onClick={() => setShowCreateModal(true)}
+          onClick={() => handleOpenCreateModal()}
           className="sm:hidden fixed bottom-6 right-6 z-40 flex items-center justify-center w-14 h-14 bg-blue-600 dark:bg-blue-500 hover:bg-blue-550 dark:hover:bg-blue-450 text-white rounded-full shadow-[0_4px_14px_0_rgba(0,112,243,0.39)] hover:shadow-[0_6px_20px_rgba(0,112,243,0.23)] transition-all duration-300 hover:scale-110 active:scale-95 cursor-pointer animate-in fade-in slide-in-from-bottom-6 duration-300"
           title="Tạo cuộc họp mới"
         >

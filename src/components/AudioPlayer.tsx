@@ -215,9 +215,10 @@ export default function AudioPlayer({
       <audio ref={audioRef} src={blobUrl} preload="metadata" muted={isMuted} />
 
       {/* Sticky bottom player */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
-        {/* Progress bar — clickable */}
-        <div
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-[calc(1366px-2rem)] 2xl:max-w-[calc(1600px-2rem)] z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-x border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
+        <div className="w-full relative">
+          {/* Progress bar — clickable */}
+          <div
           ref={progressRef}
           onClick={handleProgressClick}
           className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 cursor-pointer group hover:h-2.5 transition-all"
@@ -232,7 +233,7 @@ export default function AudioPlayer({
         </div>
 
         {/* Controls */}
-        <div className="flex items-center justify-between px-4 py-2 max-w-4xl mx-auto">
+        <div className="flex items-center justify-between px-4 py-2">
           {/* Left: time */}
           <div className="flex items-center gap-2 text-xs font-mono text-slate-500 dark:text-slate-400 w-24">
             <span>{formatTime(currentTime)}</span>
@@ -300,6 +301,7 @@ export default function AudioPlayer({
           </div>
         </div>
       </div>
-    </>
+    </div>
+  </>
   );
 }

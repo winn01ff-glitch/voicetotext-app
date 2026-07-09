@@ -9,7 +9,7 @@ import { useDeepgramLive } from "@/hooks/useDeepgramLive";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle,
-  Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff,
+  Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff, ChevronUp,
   Moon, Sun, Plus, ChevronDown
 } from "lucide-react";
 

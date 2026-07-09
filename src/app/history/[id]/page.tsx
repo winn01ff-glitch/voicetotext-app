@@ -13,7 +13,7 @@ import { getAudioUrl, deleteAudio } from "@/lib/audio-cache";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe
+  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe, ChevronUp
 } from "lucide-react";
 
 // Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
@@ -68,6 +68,23 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [actionItems, setActionItems] = useState<any[]>([]); // Contains live action items
   const [reprocessedActionItems, setReprocessedActionItems] = useState<any[]>([]); // Contains reprocessed action items
   const [loading, setLoading] = useState(true);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (window.scrollY > 300) {
+        setShowScrollTop(true);
+      } else {
+        setShowScrollTop(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // UI state
   // 3 tab: transcript (có công tắc Bản gốc/Đã xử lý) | summary | ask.
@@ -2723,11 +2740,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.translatedText, false);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
-                                  title={activeSpeech?.id === t.id ? "Dừng phát" : "Nghe dịch"}
+                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                 >
-                                  {activeSpeech?.id === t.id ? (
+                                  {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
                                     <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
                                   ) : (
                                     <Volume2 className="w-3 h-3" />
@@ -2949,7 +2966,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
                                       title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                     >
@@ -3002,7 +3019,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.translatedText, false);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
                                       title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                     >
@@ -3734,7 +3751,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.correctedText || t.originalText, true);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
                                   title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                 >
@@ -3786,7 +3803,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     playTts(t.id, t.translatedText, false);
                                   }}
                                   className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                    activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                   }`}
                                   title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                 >
@@ -4010,7 +4027,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.correctedText || t.originalText, true);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
                                       title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
                                     >
@@ -4063,7 +4080,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                         playTts(t.id, t.translatedText, false);
                                       }}
                                       className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
+                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
                                       }`}
                                       title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
                                     >
@@ -4503,6 +4520,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           );
         })}
       </div>
+      {showScrollTop && (
+        <div className="fixed bottom-24 sm:bottom-28 left-0 right-0 z-50 pointer-events-none">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto relative h-full">
+            <button
+              onClick={scrollToTop}
+              className="absolute right-6 pointer-events-auto flex items-center justify-center w-11 h-11 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:border-blue-500/20 shadow-md hover:shadow-lg transition-all duration-300 hover:-translate-y-1 active:translate-y-0 cursor-pointer animate-in fade-in slide-in-from-bottom-4 duration-300"
+              title="Cuộn lên đầu trang"
+            >
+              <ChevronUp className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
