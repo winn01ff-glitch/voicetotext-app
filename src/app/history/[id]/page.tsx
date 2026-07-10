@@ -103,7 +103,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // + panel legacy); false = mọi trường hợp còn lại (Transcript+Bản gốc, hoặc tab Tóm tắt).
   const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
-  const subTabRaw = "transcript" as string;
+
   // Mặc định công tắc: hiện "Đã xử lý" nếu đã có bản FINAL, ngược lại "Bản gốc". Chỉ set 1 lần sau khi tải.
   useEffect(() => {
     if (verInitRef.current) return;
