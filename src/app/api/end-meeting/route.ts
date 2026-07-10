@@ -130,7 +130,7 @@ export async function POST(request: Request) {
     // versioned ai_summaries row, while this route's own summary step below updates
     // the single un-versioned row created at start-meeting — enqueuing both would
     // leave two rows per meeting_id and break the .maybeSingle() read on history page.
-    if (insertRows.length > 0) {
+    if ((transcripts || []).length > 0) {
       try {
         const enqueuedTypes = await enqueueAiJobs(meeting_id, ["spellcheck", "speaker", "translation"]);
         if (enqueuedTypes.length > 0) {
