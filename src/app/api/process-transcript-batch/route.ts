@@ -5,7 +5,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { meeting_id, drafts, history, last_transcript, target_language, diarize_enabled } = body;
+    const { meeting_id, drafts, history, last_transcript, target_language, diarize_enabled, rolling_summary } = body;
 
     if (!meeting_id || !drafts || !Array.isArray(drafts) || drafts.length === 0) {
       return NextResponse.json({ error: "Missing required fields (meeting_id, drafts)" }, { status: 400 });
@@ -146,6 +146,9 @@ ${JSON.stringify(allSpeakers || [])}
 MEETING CONTEXT:
 ${context || "General discussion"}
 
+EARLIER CONVERSATION SUMMARY (who's who, topics discussed before the recent history below — use this to resolve speaker identity for references beyond the recent window):
+${rolling_summary || "(none yet)"}
+
 CONVERSATION HISTORY (Last ${historyContext.length} completed lines):
 ${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — this is the first segment)"}
 ${coldStartNote}
@@ -214,9 +217,12 @@ The output must preserve the chronological order of the conversation.
     // 4. Setup Gemini Client & Call API
     const genAI = new GoogleGenerativeAI(geminiApiKey);
     const modelName = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
-    const model = genAI.getGenerativeModel({ 
+    // Low temperature: speaker assignment + translation are factual tasks with a "correct answer",
+    // not creative writing — keep sampling close to deterministic.
+    const generationConfig = { responseMimeType: "application/json" as const, temperature: 0.15, topP: 0.85 };
+    const model = genAI.getGenerativeModel({
       model: modelName,
-      generationConfig: { responseMimeType: "application/json" }
+      generationConfig
     });
 
     let result;
@@ -224,9 +230,9 @@ The output must preserve the chronological order of the conversation.
       result = await model.generateContent(systemPrompt);
     } catch (err) {
       console.warn(`Model ${modelName} failed, falling back to gemini-3.1-flash-lite:`, err);
-      const fallbackModel = genAI.getGenerativeModel({ 
+      const fallbackModel = genAI.getGenerativeModel({
         model: "gemini-3.1-flash-lite",
-        generationConfig: { responseMimeType: "application/json" }
+        generationConfig
       });
       result = await fallbackModel.generateContent(systemPrompt);
     }

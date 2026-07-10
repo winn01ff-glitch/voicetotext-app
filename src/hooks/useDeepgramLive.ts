@@ -191,6 +191,11 @@ export function useDeepgramLive({
       interim_results: "true",
       endpointing: String(endpointing),  // configurable pause before finalizing segment
       diarize: String(diarize),
+      // utterance_end_ms: word-timing-gap based turn boundary, robust to background
+      // noise that can fool silence-only endpointing. vad_events: exposes voice-activity
+      // signals the client can use for finer-grained draft/speaker-turn detection.
+      utterance_end_ms: "1000",
+      vad_events: "true",
     });
 
     // Language setting — 'multi' reduces accuracy significantly vs specific language

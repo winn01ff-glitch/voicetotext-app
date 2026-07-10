@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { runAIJobsQueue } from "@/lib/ai/queueWorker";
+import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
 
 export async function POST(req: Request) {
   try {
@@ -17,32 +18,19 @@ export async function POST(req: Request) {
       await supabase.from("ai_summaries").update({ status: "Draft" }).eq("meeting_id", meetingId);
     }
 
-    // Prepare jobs to enqueue
-    const jobs = jobTypes.map((type) => ({
-      meeting_id: meetingId,
-      type,
-      status: "queued",
-      progress: 0,
-      retry_count: 0,
-      max_retries: 3
-    }));
+    // Skips job types that already have a queued/processing row for this meeting —
+    // avoids two overlapping runs (e.g. auto-enqueue on end-meeting + manual click).
+    const enqueuedTypes = await enqueueAiJobs(meetingId, jobTypes);
 
-    // Check if these jobs are already queued or processing (to avoid duplicates)
-    // Actually, simple enqueue is fine. The user might have clicked [Regenerate].
-    
-    // Insert into ai_jobs
-    const { error: insertErr } = await supabase.from("ai_jobs").insert(jobs);
-    
-    if (insertErr) {
-      console.error("[Run Queue] Insert error:", insertErr);
-      return NextResponse.json({ error: "Không thể thêm vào hàng đợi" }, { status: 500 });
+    if (enqueuedTypes.length === 0) {
+      return NextResponse.json({ success: true, message: "Các job này đã đang chạy hoặc đang chờ." });
     }
 
-    // Trigger background worker (floating promise)
-    // In production Vercel, consider using Inngest / Upstash QStash, or waitUntil(runAIJobsQueue(meetingId))
-    runAIJobsQueue(meetingId).catch(err => {
+    // Runs after the response is sent, kept alive past the request lifecycle
+    // (Next.js `after()` — uses the platform's waitUntil under the hood on Vercel).
+    after(() => runAIJobsQueue(meetingId).catch((err) => {
       console.error("[QueueWorker] Background error:", err);
-    });
+    }));
 
     return NextResponse.json({ success: true, message: "Đã đưa vào hàng đợi xử lý ngầm" });
   } catch (error: any) {

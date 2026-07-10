@@ -100,7 +100,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   //   transcript + ai  -> raw/transcript       (FINAL, `reprocessedTranscripts`) + control panel
   //   summary          -> processed/summary
   //   ask              -> chặn riêng
-  const mainTab: "processed" | "raw" = (shownTab === "transcript" && shownVer === "ai") ? "raw" : "processed";
+  // true = viewing Transcript tab với công tắc "Đã xử lý (AI)" (nội dung FINAL/reprocessed
+  // + panel legacy); false = mọi trường hợp còn lại (Transcript+Bản gốc, hoặc tab Tóm tắt).
+  const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
+  // Panel "Hội thoại gốc"/nút "AI Phân vai" (cơ chế reprocess legacy, is_reprocessed-based)
+  // thu gọn mặc định — chỉ để debug/so sánh, không nên chồng lên nội dung FINAL chính.
+  const [showLegacyRawPanel, setShowLegacyRawPanel] = useState(false);
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
   const subTabRaw = "transcript" as string;
   // Mặc định công tắc: hiện "Đã xử lý" nếu đã có bản FINAL, ngược lại "Bản gốc". Chỉ set 1 lần sau khi tải.
@@ -767,13 +772,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             isEdited: t.is_edited,
             editedText: t.edited_text,
             isReprocessed: t.is_reprocessed || false,
-            versionType: t.version_type || "RAW"
+            versionType: t.version_type || "RAW",
+            // Legacy rows predating this column have is_active === null — treat as active.
+            isActive: t.is_active !== false,
           };
         });
 
         // Tách theo version_type (nguồn sự thật): RAW = bản gốc, FINAL = đã xử lý AI.
-        setTranscripts(allTranscripts.filter((t: any) => t.versionType !== "FINAL"));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL"));
+        // Chỉ lấy generation đang active — tránh trộn các bản FINAL cũ đã bị
+        // incrementTranscriptVersion() đánh dấu is_active=false.
+        const activeTranscripts = allTranscripts.filter((t: any) => t.isActive);
+        setTranscripts(activeTranscripts.filter((t: any) => t.versionType !== "FINAL"));
+        setReprocessedTranscripts(activeTranscripts.filter((t: any) => t.versionType === "FINAL"));
       }
 
       // 4. Fetch summary
@@ -875,12 +885,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             isEdited: t.is_edited,
             editedText: t.edited_text,
             isReprocessed: t.is_reprocessed || false,
-            versionType: t.version_type || "RAW"
+            versionType: t.version_type || "RAW",
+            isActive: t.is_active !== false,
           };
         });
 
-        setTranscripts(allTranscripts.filter((t: any) => t.versionType !== "FINAL"));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL"));
+        const activeTranscripts = allTranscripts.filter((t: any) => t.isActive);
+        setTranscripts(activeTranscripts.filter((t: any) => t.versionType !== "FINAL"));
+        setReprocessedTranscripts(activeTranscripts.filter((t: any) => t.versionType === "FINAL"));
       }
 
       const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).maybeSingle();
@@ -2159,7 +2171,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
             </div>
           </div>
-        ) : mainTab === "processed" ? (
+        ) : !showFinalPanel ? (
           <div className="space-y-6 text-left">
 
             {/* SUB-TAB CONTENT */}
@@ -3149,7 +3161,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
         ) : (
           <div className="space-y-6 text-left">
-            {/* RAW LISTENING STREAM CONTROL PANEL */}
+            {/* RAW LISTENING STREAM CONTROL PANEL — thu gọn mặc định (legacy, chỉ để debug/so sánh) */}
+            <button
+              onClick={() => setShowLegacyRawPanel((v) => !v)}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
+            >
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showLegacyRawPanel ? "rotate-180" : ""}`} />
+              <span>{showLegacyRawPanel ? "Ẩn văn bản gốc thô" : "Xem văn bản gốc thô / tách vai kiểu cũ"}</span>
+            </button>
+            {showLegacyRawPanel && (
             <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
               {/* Header row */}
               <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-slate-50/80 to-transparent dark:from-slate-800/30">
@@ -3245,6 +3265,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 )}
               </div>
             </div>
+            )}
 
             {/* SUB-TAB CONTENT */}
             {reprocessedTranscripts.length === 0 ? (

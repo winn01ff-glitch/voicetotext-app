@@ -474,7 +474,9 @@ Chú ý: start_ms và end_ms tính bằng milliseconds (nhân start/end với 10
 speaker_hint giữ nguyên giá trị speaker từ input.
 `;
 
-    const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_FAST_MODEL);
+    // No live-latency pressure here — use the quality tier so this background/full-context
+    // pass is actually better than the live batch pass, not just "the same model run twice".
+    const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_QUALITY_MODEL);
     const turns = result.corrected_turns || [];
 
     // Fallback: nếu Gemini trả về ít hơn input, pad bằng input gốc
@@ -593,7 +595,7 @@ RULES:
 - Không hallucinate nội dung.
 `;
 
-    const result = await callGemini<{ mapped_turns: MappedTurn[] }>(prompt, AI_FAST_MODEL);
+    const result = await callGemini<{ mapped_turns: MappedTurn[] }>(prompt, AI_QUALITY_MODEL);
     const turns = result.mapped_turns || [];
 
     // Đảm bảo confidence < 0.7 → Unknown Speaker
@@ -705,7 +707,7 @@ OUTPUT FORMAT — JSON ONLY
 }
 `;
 
-    const result = await callGemini<{ checked_turns: CheckedTurn[] }>(prompt, AI_FAST_MODEL);
+    const result = await callGemini<{ checked_turns: CheckedTurn[] }>(prompt, AI_QUALITY_MODEL);
     const turns = result.checked_turns || [];
     allChecked.push(...turns);
   }

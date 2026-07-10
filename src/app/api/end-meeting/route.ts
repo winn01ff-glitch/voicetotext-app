@@ -1,6 +1,8 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { runAIJobsQueue } from "@/lib/ai/queueWorker";
+import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
 
 export async function POST(request: Request) {
   try {
@@ -84,6 +86,8 @@ export async function POST(request: Request) {
     }
 
     // Insert transcripts to DB
+    // Nội dung ở đây đã qua AI (process-transcript-batch) trong lúc họp live,
+    // không phải Deepgram thô, nên đánh dấu FINAL thay vì để rơi vào RAW mặc định.
     const insertRows = (transcripts || []).map((t: any) => ({
       meeting_id,
       speaker_id: speakerTagToId[t.speakerTag] || null,
@@ -95,6 +99,9 @@ export async function POST(request: Request) {
       start_ms: t.startMs,
       end_ms: t.endMs,
       confidence: t.confidence || 1.0,
+      version_type: "FINAL",
+      version: 1,
+      is_active: true,
     }));
 
     if (insertRows.length > 0) {
@@ -102,6 +109,24 @@ export async function POST(request: Request) {
         .from("transcripts")
         .insert(insertRows);
       if (insertError) throw insertError;
+    }
+
+    // Auto-enqueue background full-context polish (spellcheck/speaker/translation).
+    // "summary" is intentionally excluded here: executeSummaryJob inserts a new
+    // versioned ai_summaries row, while this route's own summary step below updates
+    // the single un-versioned row created at start-meeting — enqueuing both would
+    // leave two rows per meeting_id and break the .maybeSingle() read on history page.
+    if (insertRows.length > 0) {
+      try {
+        const enqueuedTypes = await enqueueAiJobs(meeting_id, ["spellcheck", "speaker", "translation"]);
+        if (enqueuedTypes.length > 0) {
+          after(() => runAIJobsQueue(meeting_id).catch((err) => console.error("[QueueWorker] Background error:", err)));
+        }
+      } catch (err) {
+        // Non-fatal: live-corrected transcript is already saved: worst case the
+        // background polish simply doesn't run and the user can retry manually.
+        console.error("Failed to auto-enqueue AI polish jobs:", err);
+      }
     }
 
     // 3. Format transcripts into a text log for summary generation

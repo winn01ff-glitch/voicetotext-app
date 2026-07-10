@@ -220,6 +220,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [diarizationEnabled, setDiarizationEnabled] = useState(true);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
+  // Rolling summary: cheap running "who's who / topics" recap covering everything
+  // before the last-30-lines window, so speaker assignment holds up beyond that window.
+  const rollingSummaryRef = useRef("");
+  const summarizedUpToCountRef = useRef(0);
+  const ROLLING_SUMMARY_EVERY_N_BLOCKS = 10;
+
   // Dynamic speaker colors mapping
   const speakerColorsRef = useRef<{ [key: string]: string }>({});
 
@@ -722,6 +728,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           last_transcript,
           target_language: selectedTargetLang,
           diarize_enabled: diarizationEnabled,
+          rolling_summary: rollingSummaryRef.current,
           drafts: draftsToProcess.map((d) => ({
             id: d.id,
             speakerTag: d.speakerTag,
@@ -754,6 +761,29 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         });
         return updated;
       });
+
+      // Rolling summary: fire-and-forget, doesn't block the UI. Refreshed every
+      // ROLLING_SUMMARY_EVERY_N_BLOCKS finalized blocks so it covers the parts of the
+      // meeting that fall outside the fixed 30-line history window sent above.
+      const newCompletedCount = completedTranscripts.length + newBlocks.length;
+      if (newCompletedCount - summarizedUpToCountRef.current >= ROLLING_SUMMARY_EVERY_N_BLOCKS) {
+        const linesForSummary = [
+          ...completedTranscripts.slice(summarizedUpToCountRef.current).map((tx) => ({
+            speaker_name: tx.speakerName || "Unknown",
+            text: tx.text,
+          })),
+          ...newBlocks.map((b: any) => ({ speaker_name: b.speakerName, text: b.text })),
+        ];
+        summarizedUpToCountRef.current = newCompletedCount;
+        fetch("/api/summarize-rolling", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ previous_summary: rollingSummaryRef.current, new_lines: linesForSummary }),
+        })
+          .then((r) => r.json())
+          .then((d) => { if (d.summary) rollingSummaryRef.current = d.summary; })
+          .catch((err) => console.error("Rolling summary update failed:", err));
+      }
     } catch (err) {
       console.error("Batch processing error:", err);
       setTranscripts((prev) =>
