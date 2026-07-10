@@ -707,6 +707,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           speakers ( display_name, color_hex, speaker_tag )
         `)
         .eq("meeting_id", meetingId)
+        .eq("is_active", true)
         .order("start_ms", { ascending: true });
 
       if (txs) {
@@ -818,6 +819,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .from("transcripts")
         .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
         .eq("meeting_id", meetingId)
+        .eq("is_active", true)
         .order("start_ms", { ascending: true });
 
       if (txs) {

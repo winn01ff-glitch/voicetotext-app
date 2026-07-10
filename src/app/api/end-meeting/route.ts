@@ -88,23 +88,37 @@ export async function POST(request: Request) {
     // Insert transcripts to DB
     // Nội dung ở đây đã qua AI (process-transcript-batch) trong lúc họp live,
     // không phải Deepgram thô, nên đánh dấu FINAL thay vì để rơi vào RAW mặc định.
-    const insertRows = (transcripts || []).map((t: any) => ({
-      meeting_id,
-      speaker_id: speakerTagToId[t.speakerTag] || null,
-      original_text: t.text,
-      corrected_text: t.correctedText || t.text,
-      translated_text: t.translatedText,
-      translation_language: meeting.target_language || "vi",
-      translation_provider: "Gemini",
-      start_ms: t.startMs,
-      end_ms: t.endMs,
-      confidence: t.confidence || 1.0,
-      version_type: "FINAL",
-      version: 1,
-      is_active: true,
-    }));
+    if ((transcripts || []).length > 0) {
+      // Deactivate any existing transcripts for this meeting first
+      // (prevents duplicates if end-meeting is called multiple times)
+      await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meeting_id);
 
-    if (insertRows.length > 0) {
+      // Find next version number
+      const { data: maxVerData } = await supabase
+        .from("transcripts")
+        .select("version")
+        .eq("meeting_id", meeting_id)
+        .order("version", { ascending: false })
+        .limit(1)
+        .single();
+      const nextVersion = (maxVerData?.version || 0) + 1;
+
+      const insertRows = transcripts.map((t: any) => ({
+        meeting_id,
+        speaker_id: speakerTagToId[t.speakerTag] || null,
+        original_text: t.text,
+        corrected_text: t.correctedText || t.text,
+        translated_text: t.translatedText,
+        translation_language: meeting.target_language || "vi",
+        translation_provider: "Gemini",
+        start_ms: t.startMs,
+        end_ms: t.endMs,
+        confidence: t.confidence || 1.0,
+        version_type: "FINAL",
+        version: nextVersion,
+        is_active: true,
+      }));
+
       const { error: insertError } = await supabase
         .from("transcripts")
         .insert(insertRows);
