@@ -880,6 +880,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
+  // Auto-poll every 4s while any AI job is still queued/processing
+  const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing");
+  useEffect(() => {
+    if (!hasActiveJobs) return;
+    const interval = setInterval(refreshMeetingDataSilently, 4000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasActiveJobs]);
+
   const handleTogglePin = async () => {
     try {
       const newVal = !meeting.is_pinned;
