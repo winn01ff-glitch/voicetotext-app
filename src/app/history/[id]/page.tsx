@@ -66,7 +66,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [reprocessedTranscripts, setReprocessedTranscripts] = useState<any[]>([]); // Contains reprocessed transcripts
   const [aiSummary, setAiSummary] = useState<any>(null);
   const [actionItems, setActionItems] = useState<any[]>([]); // Contains live action items
-  const [reprocessedActionItems, setReprocessedActionItems] = useState<any[]>([]); // Contains reprocessed action items
   const [loading, setLoading] = useState(true);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -103,9 +102,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // true = viewing Transcript tab với công tắc "Đã xử lý (AI)" (nội dung FINAL/reprocessed
   // + panel legacy); false = mọi trường hợp còn lại (Transcript+Bản gốc, hoặc tab Tóm tắt).
   const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
-  // Panel "Hội thoại gốc"/nút "AI Phân vai" (cơ chế reprocess legacy, is_reprocessed-based)
-  // thu gọn mặc định — chỉ để debug/so sánh, không nên chồng lên nội dung FINAL chính.
-  const [showLegacyRawPanel, setShowLegacyRawPanel] = useState(false);
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
   const subTabRaw = "transcript" as string;
   // Mặc định công tắc: hiện "Đã xử lý" nếu đã có bản FINAL, ngược lại "Bản gốc". Chỉ set 1 lần sau khi tải.
@@ -172,19 +168,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   }, [allAvailableVoices, selectedVoice]);
 
-  // Reprocessing state for raw transcript
-  const [isReprocessingRaw, setIsReprocessingRaw] = useState(false);
-  const [numSpeakers, setNumSpeakers] = useState<string>("auto");
 
   // Editing state for AI Summary (Live)
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editedExecSummary, setEditedExecSummary] = useState("");
   const [editedDecisions, setEditedDecisions] = useState<string[]>([]);
 
-  // Editing state for AI Summary (Reprocessed)
-  const [isEditingReprocessedSummary, setIsEditingReprocessedSummary] = useState(false);
-  const [editedReprocessedExecSummary, setEditedReprocessedExecSummary] = useState("");
-  const [editedReprocessedDecisions, setEditedReprocessedDecisions] = useState<string[]>([]);
 
   const [isSavingSummary, setIsSavingSummary] = useState(false);
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
@@ -197,8 +186,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const initialEditingTextRef = useRef("");
   const initialExecSummaryRef = useRef("");
   const initialDecisionsRef = useRef<string[]>([]);
-  const initialReprocessedExecSummaryRef = useRef("");
-  const initialReprocessedDecisionsRef = useRef<string[]>([]);
 
   // Audio player state (chỉ tồn tại trong phiên upload)
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
@@ -410,10 +397,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
   const [translatedExecSummary, setTranslatedExecSummary] = useState<string>("");
   const [translatedDecisions, setTranslatedDecisions] = useState<string[]>([]);
-  const [translatedReprocessedExecSummary, setTranslatedReprocessedExecSummary] = useState<string>("");
-  const [translatedReprocessedDecisions, setTranslatedReprocessedDecisions] = useState<string[]>([]);
   const [translatedActionItems, setTranslatedActionItems] = useState<string[]>([]);
-  const [translatedReprocessedActionItems, setTranslatedReprocessedActionItems] = useState<string[]>([]);
   const [translatingSection, setTranslatingSection] = useState<string | null>(null);
 
   const handleTranslateSection = async (section: string, lang: string) => {
@@ -422,9 +406,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (section === "live_summary") setTranslatedExecSummary("");
       if (section === "live_decisions") setTranslatedDecisions([]);
       if (section === "live_actions") setTranslatedActionItems([]);
-      if (section === "raw_summary") setTranslatedReprocessedExecSummary("");
-      if (section === "raw_decisions") setTranslatedReprocessedDecisions([]);
-      if (section === "raw_actions") setTranslatedReprocessedActionItems([]);
       return;
     }
 
@@ -435,14 +416,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         textToTranslate = aiSummary?.executive_summary || "";
       } else if (section === "live_decisions") {
         textToTranslate = (aiSummary?.decisions || []).join("\n");
-      } else if (section === "raw_summary") {
-        textToTranslate = aiSummary?.reprocessed_executive_summary || "";
-      } else if (section === "raw_decisions") {
-        textToTranslate = (aiSummary?.reprocessed_decisions || []).join("\n");
       } else if (section === "live_actions") {
         textToTranslate = actionItems.map((item: any) => item.description).join("\n");
-      } else if (section === "raw_actions") {
-        textToTranslate = reprocessedActionItems.map((item: any) => item.description).join("\n");
       }
 
       if (!textToTranslate.trim()) {
@@ -472,14 +447,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       } else if (section === "live_decisions") {
         // split by newline and filter empty items
         setTranslatedDecisions(translated.split("\n").filter((line: string) => line.trim().length > 0));
-      } else if (section === "raw_summary") {
-        setTranslatedReprocessedExecSummary(translated);
-      } else if (section === "raw_decisions") {
-        setTranslatedReprocessedDecisions(translated.split("\n").filter((line: string) => line.trim().length > 0));
       } else if (section === "live_actions") {
         setTranslatedActionItems(translated.split("\n").filter((line: string) => line.trim().length > 0));
-      } else if (section === "raw_actions") {
-        setTranslatedReprocessedActionItems(translated.split("\n").filter((line: string) => line.trim().length > 0));
       }
     } catch (err) {
       console.error(err);
@@ -734,7 +703,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const { data: txs } = await supabase
         .from("transcripts")
         .select(`
-          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, version_type, is_active,
+          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active,
           speakers ( display_name, color_hex, speaker_tag )
         `)
         .eq("meeting_id", meetingId)
@@ -771,7 +740,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             confidence: t.confidence,
             isEdited: t.is_edited,
             editedText: t.edited_text,
-            isReprocessed: t.is_reprocessed || false,
             versionType: t.version_type || "RAW",
             // Legacy rows predating this column have is_active === null — treat as active.
             isActive: t.is_active !== false,
@@ -797,8 +765,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (summ) {
         setEditedExecSummary(summ.executive_summary || "");
         setEditedDecisions(summ.decisions || []);
-        setEditedReprocessedExecSummary(summ.reprocessed_executive_summary || "");
-        setEditedReprocessedDecisions(summ.reprocessed_decisions || []);
       }
 
       // 5. Fetch action items
@@ -809,11 +775,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .order("created_at", { ascending: true });
       
       if (acts) {
-        setActionItems(acts.filter((item: any) => !item.is_reprocessed));
-        setReprocessedActionItems(acts.filter((item: any) => item.is_reprocessed));
+        setActionItems(acts);
       } else {
         setActionItems([]);
-        setReprocessedActionItems([]);
       }
 
       // 6. Fetch AI jobs + chat history (new pipeline)
@@ -852,7 +816,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
       const { data: txs } = await supabase
         .from("transcripts")
-        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, is_reprocessed, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
+        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
         .eq("meeting_id", meetingId)
         .order("start_ms", { ascending: true });
 
@@ -884,7 +848,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             confidence: t.confidence,
             isEdited: t.is_edited,
             editedText: t.edited_text,
-            isReprocessed: t.is_reprocessed || false,
             versionType: t.version_type || "RAW",
             isActive: t.is_active !== false,
           };
@@ -900,14 +863,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (summ) {
         setEditedExecSummary(summ.executive_summary || "");
         setEditedDecisions(summ.decisions || []);
-        setEditedReprocessedExecSummary(summ.reprocessed_executive_summary || "");
-        setEditedReprocessedDecisions(summ.reprocessed_decisions || []);
       }
 
       const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
       if (acts) {
-        setActionItems(acts.filter((item: any) => !item.is_reprocessed));
-        setReprocessedActionItems(acts.filter((item: any) => item.is_reprocessed));
+        setActionItems(acts);
       }
 
       // Poll AI job progress
@@ -1070,41 +1030,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  // Edit AI Summary save (Reprocessed)
-  const handleSaveReprocessedSummary = async (execSummary?: string, decisionsList?: string[], keepEditingOpen = false) => {
-    const finalExec = execSummary !== undefined ? execSummary : editedReprocessedExecSummary;
-    const finalDec = decisionsList !== undefined ? decisionsList : editedReprocessedDecisions;
-    setIsSavingSummary(true);
-    try {
-      const { error } = await supabase
-        .from("ai_summaries")
-        .update({
-          reprocessed_executive_summary: finalExec,
-          reprocessed_decisions: finalDec,
-        })
-        .eq("meeting_id", meetingId);
-
-      if (error) throw error;
-
-      setAiSummary((prev: any) => ({
-        ...prev,
-        reprocessed_executive_summary: finalExec,
-        reprocessed_decisions: finalDec,
-      }));
-
-      initialReprocessedExecSummaryRef.current = finalExec;
-      initialReprocessedDecisionsRef.current = [...finalDec];
-
-      if (!keepEditingOpen) {
-        setIsEditingReprocessedSummary(false);
-      }
-    } catch (err) {
-      console.error(err);
-      await showCustomAlert("Lỗi khi lưu tóm tắt cuộc họp.", "error");
-    } finally {
-      setIsSavingSummary(false);
-    }
-  };
 
   const handleAddDecisionField = () => {
     setEditedDecisions([...editedDecisions, ""]);
@@ -1118,17 +1043,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     setEditedDecisions(editedDecisions.map((d, idx) => (idx === index ? val : d)));
   };
 
-  const handleAddReprocessedDecisionField = () => {
-    setEditedReprocessedDecisions([...editedReprocessedDecisions, ""]);
-  };
-
-  const handleRemoveReprocessedDecisionField = (index: number) => {
-    setEditedReprocessedDecisions(editedReprocessedDecisions.filter((_, idx) => idx !== index));
-  };
-
-  const handleUpdateReprocessedDecision = (index: number, val: string) => {
-    setEditedReprocessedDecisions(editedReprocessedDecisions.map((d, idx) => (idx === index ? val : d)));
-  };
 
   // Call API route /api/regenerate-summary
   const handleRegenerateSummary = async () => {
@@ -1155,50 +1069,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  // Call API route /api/reprocess-raw-transcript
-  const handleReprocessRawTranscript = async () => {
-    const rawText = meeting?.raw_transcript || transcripts.map(t => t.originalText).join(" ");
-    if (!rawText.trim()) {
-      await showCustomAlert("Không có văn bản gốc nào để xử lý.", "error");
-      return;
-    }
-    
-    const confirmed = await showCustomConfirm("Hệ thống sẽ chạy AI phân tích ngữ cảnh toàn bộ câu chuyện và chia lại vai người nói. Thao tác này sẽ ghi đè lên danh sách hội thoại, tóm tắt và hành động hiện tại. Bạn có chắc chắn muốn tiếp tục?");
-    if (!confirmed) {
-      return;
-    }
-
-    setIsReprocessingRaw(true);
-    try {
-      const res = await fetch("/api/reprocess-raw-transcript", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          meeting_id: meetingId,
-          raw_transcript: rawText,
-          num_speakers: numSpeakers
-        }),
-      });
-
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "Phân tích thất bại");
-      }
-
-      // Silent reload data without loading spinner (prevents screen flash)
-      await refreshMeetingDataSilently();
-      
-      // Show toast instead of blocking modal
-      addToast("Thành công", "Đã phân tích và tách vai lại cuộc họp.", "success");
-      
-      setActiveTab("transcript");
-    } catch (err: any) {
-      console.error(err);
-      addToast("Lỗi xử lý", err.message || "", "error");
-    } finally {
-      setIsReprocessingRaw(false);
-    }
-  };
 
   // Edit transcript line text
   const startEditingTranscript = (line: any) => {
@@ -1235,20 +1105,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return () => clearTimeout(delayDebounceFn);
   }, [editedExecSummary, editedDecisions, isEditingSummary]);
 
-  // Auto-save for reprocessed summary (debounce 1.5s)
-  useEffect(() => {
-    if (!isEditingReprocessedSummary) return;
-
-    const execChanged = editedReprocessedExecSummary !== initialReprocessedExecSummaryRef.current;
-    const decisionsChanged = JSON.stringify(editedReprocessedDecisions) !== JSON.stringify(initialReprocessedDecisionsRef.current);
-    if (!execChanged && !decisionsChanged) return;
-
-    const delayDebounceFn = setTimeout(() => {
-      handleSaveReprocessedSummary(editedReprocessedExecSummary, editedReprocessedDecisions, true);
-    }, 1500);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [editedReprocessedExecSummary, editedReprocessedDecisions, isEditingReprocessedSummary]);
 
   const handleSaveTranscriptLine = async (lineId: string, textToSave?: string, keepEditingOpen = false) => {
     const finalVal = textToSave !== undefined ? textToSave : editingTextVal;
@@ -3161,388 +3017,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
         ) : (
           <div className="space-y-6 text-left">
-            {/* RAW LISTENING STREAM CONTROL PANEL — thu gọn mặc định (legacy, chỉ để debug/so sánh) */}
-            <button
-              onClick={() => setShowLegacyRawPanel((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors cursor-pointer"
-            >
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showLegacyRawPanel ? "rotate-180" : ""}`} />
-              <span>{showLegacyRawPanel ? "Ẩn văn bản gốc thô" : "Xem văn bản gốc thô / tách vai kiểu cũ"}</span>
-            </button>
-            {showLegacyRawPanel && (
-            <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
-              {/* Header row */}
-              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-slate-50/80 to-transparent dark:from-slate-800/30">
-                <div className="flex items-center space-x-3 min-w-0">
-                  <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center shrink-0">
-                    <FileText className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">Hội thoại gốc</h3>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
-                      Dữ liệu thô — AI sẽ phân tích ngữ cảnh và tách vai người nói
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0 flex-wrap ml-auto">
-
-                  <select
-                    value={numSpeakers}
-                    onChange={(e) => setNumSpeakers(e.target.value)}
-                    className="h-7 px-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="auto">Tự động</option>
-                    <option value="1">1 người</option>
-                    <option value="2">2 người</option>
-                    <option value="3">3 người</option>
-                    <option value="4">4 người</option>
-                    <option value="5">5 người</option>
-                  </select>
-
-                  <button
-                    onClick={handleReprocessRawTranscript}
-                    disabled={isReprocessingRaw || (!meeting?.raw_transcript && transcripts.length === 0)}
-                    className="flex items-center space-x-1.5 px-3 h-7 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-semibold shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${isReprocessingRaw ? "animate-spin" : ""}`} />
-                    <span>{isReprocessingRaw ? "Đang xử lý..." : "AI Phân vai"}</span>
-                  </button>
-                </div>
-              </div>
-
-
-
-              {/* Raw text content */}
-              <div className="p-5">
-                {isReprocessingRaw ? (
-                  <div className="py-10 text-center space-y-3">
-                    <RefreshCw className="w-7 h-7 text-blue-500 animate-spin mx-auto" />
-                    <div className="space-y-0.5">
-                      <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                        AI đang phân tích và tách vai hội thoại...
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        Khoảng 10 – 20 giây tùy độ dài văn bản.
-                      </p>
-                    </div>
-                  </div>
-                ) : meeting?.raw_transcript || transcripts.length > 0 ? (() => {
-                  const rawText = meeting?.raw_transcript || transcripts.map((t: any) => t.originalText).join(" ");
-                  const charCount = rawText.length;
-                  const wordCount = rawText.split(/\s+/).filter(Boolean).length;
-                  return (
-                    <div className="space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3 text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
-                          <span>{charCount.toLocaleString()} ký tự</span>
-                          <span className="w-0.5 h-0.5 rounded-full bg-slate-300" />
-                          <span>{wordCount.toLocaleString()} từ/cụm</span>
-                        </div>
-                        <button
-                          onClick={() => handleCopyText(rawText, "raw_transcript")}
-                          className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 uppercase tracking-wider font-semibold transition-colors cursor-pointer"
-                          title="Sao chép hội thoại gốc"
-                        >
-                          {copiedKey === "raw_transcript" ? (
-                            <Check className="w-3.5 h-3.5 text-green-500" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
-                      <div className="p-4 bg-slate-100/60 dark:bg-slate-950/50 rounded-lg max-h-[300px] overflow-y-auto custom-scrollbar shadow-[inset_0_2px_6px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_2px_6px_rgba(0,0,0,0.25)]">
-                        <p className="text-[13px] leading-[1.85] text-slate-600 dark:text-slate-350 font-normal selection:bg-blue-100 dark:selection:bg-blue-900/40">
-                          {rawText}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })() : (
-                  <div className="py-10 text-center text-slate-400 italic text-xs">
-                    Không tìm thấy văn bản gốc. Cuộc họp này có thể được tạo trước khi cập nhật tính năng.
-                  </div>
-                )}
-              </div>
-            </div>
-            )}
-
             {/* SUB-TAB CONTENT */}
             {reprocessedTranscripts.length === 0 ? (
               <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-8 rounded-xl shadow-sm text-center space-y-2">
                 <Sparkles className="w-6 h-6 text-slate-300 dark:text-slate-600 mx-auto" />
                 <p className="text-xs text-slate-400 italic max-w-md mx-auto">
-                  Chưa có dữ liệu phân tích lại. Chọn số người phát biểu và bấm <strong>"AI Phân vai"</strong> ở trên để bắt đầu.
+                  Chưa có dữ liệu phân tích. Bấm <strong>"Phân tích toàn diện (Generate All)"</strong> ở trên để AI xử lý toàn bộ cuộc họp.
                 </p>
-              </div>
-            ) : subTabRaw === "summary" ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                {/* Left/Middle Column: Summary & Decisions */}
-                <div className="lg:col-span-2 space-y-6">
-                  {/* Executive Summary */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 border-b border-blue-100/60 dark:border-slate-800 rounded-t-xl">
-                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center"><BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3></div>
-                      {isEditingReprocessedSummary ? (
-                        <button
-                          onClick={() => {
-                            setIsEditingReprocessedSummary(false);
-                            if (editedReprocessedExecSummary.trim() !== (aiSummary?.reprocessed_executive_summary || "") || JSON.stringify(editedReprocessedDecisions) !== JSON.stringify(aiSummary?.reprocessed_decisions || [])) {
-                              handleSaveReprocessedSummary(editedReprocessedExecSummary, editedReprocessedDecisions, false);
-                            }
-                          }}
-                          className="flex items-center space-x-1 px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white text-xs font-semibold rounded-md shadow-sm transition-colors cursor-pointer shrink-0"
-                          title="Hoàn thành chỉnh sửa"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Xong</span>
-                        </button>
-                      ) : (
-                        <div className="flex items-center space-x-1">
-                          <button
-                            onClick={() => handleCopyText(translatedReprocessedExecSummary || aiSummary?.reprocessed_executive_summary || "", "reprocessed_exec_summary")}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-colors cursor-pointer shrink-0"
-                            title="Sao chép tóm tắt"
-                          >
-                            {copiedKey === "reprocessed_exec_summary" ? (
-                              <Check className="w-4 h-4 text-green-500" />
-                            ) : (
-                              <Copy className="w-4 h-4" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setIsEditingReprocessedSummary(true);
-                              initialReprocessedExecSummaryRef.current = editedReprocessedExecSummary;
-                              initialReprocessedDecisionsRef.current = [...editedReprocessedDecisions];
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer shrink-0"
-                            title="Sửa tóm tắt"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          {renderTranslateDropdown("raw_summary")}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="px-5 py-4">
-                    {isEditingReprocessedSummary ? (
-                      <textarea
-                        rows={6}
-                        value={editedReprocessedExecSummary}
-                        onChange={(e) => setEditedReprocessedExecSummary(e.target.value)}
-                        className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                      />
-                    ) : (
-                      <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">
-                        {translatingSection === "raw_summary" ? (
-                          <span className="flex items-center space-x-2 text-slate-400 dark:text-slate-500 text-sm italic py-2">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Đang dịch tóm tắt...</span>
-                          </span>
-                        ) : (
-                          translatedReprocessedExecSummary || aiSummary?.reprocessed_executive_summary || "Chưa có bản tóm tắt nào cho cuộc họp này."
-                        )}
-                      </p>
-                    )}
-                    </div>
-                  </div>
-
-                  {/* Key Decisions */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-amber-50/80 to-transparent dark:from-amber-950/20 border-b border-amber-100/60 dark:border-slate-800 rounded-t-xl">
-                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Quyết định cốt lõi</h3></div>
-                      {isEditingReprocessedSummary ? (
-                        <button
-                          onClick={handleAddReprocessedDecisionField}
-                          className="flex items-center space-x-1 px-2.5 h-7 border border-blue-200 dark:border-blue-850 bg-blue-50/30 hover:bg-blue-50 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:border-blue-300 hover:text-blue-700 dark:hover:text-blue-300 rounded transition-all cursor-pointer"
-                        >
-                          <span>+ Thêm quyết định</span>
-                        </button>
-                      ) : (
-                        <div className="flex items-center space-x-1">
-                          {((translatedReprocessedDecisions.length > 0 ? translatedReprocessedDecisions : aiSummary?.reprocessed_decisions) || []).length > 0 && (
-                            <button
-                              onClick={() => handleCopyText((translatedReprocessedDecisions.length > 0 ? translatedReprocessedDecisions : aiSummary.reprocessed_decisions).map((d: string) => `- ${d}`).join("\n"), "reprocessed_decisions")}
-                              className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-colors cursor-pointer shrink-0"
-                              title="Sao chép quyết định"
-                            >
-                              {copiedKey === "reprocessed_decisions" ? (
-                                <Check className="w-4 h-4 text-green-500" />
-                              ) : (
-                                <Copy className="w-4 h-4" />
-                              )}
-                            </button>
-                          )}
-                          {((translatedReprocessedDecisions.length > 0 ? translatedReprocessedDecisions : aiSummary?.reprocessed_decisions) || []).length > 0 && renderTranslateDropdown("raw_decisions")}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="px-5 py-4">
-                    {isEditingReprocessedSummary ? (
-                      <div className="space-y-3">
-                        {editedReprocessedDecisions.map((dec, idx) => (
-                          <div key={idx} className="flex items-center space-x-2">
-                            <span className="text-xs text-slate-400 font-semibold">{idx + 1}.</span>
-                            <input
-                              type="text"
-                              value={dec}
-                              onChange={(e) => handleUpdateReprocessedDecision(idx, e.target.value)}
-                              className="flex-1 h-9 px-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md text-xs focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button
-                              onClick={() => handleRemoveReprocessedDecisionField(idx)}
-                              className="p-1.5 text-slate-400 hover:text-red-500 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <ul className="space-y-2.5">
-                        {translatingSection === "raw_decisions" ? (
-                          <li className="flex items-center space-x-2 text-slate-400 dark:text-slate-500 text-sm italic py-2">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Đang dịch quyết định...</span>
-                          </li>
-                        ) : (translatedReprocessedDecisions.length > 0 ? translatedReprocessedDecisions : (aiSummary?.reprocessed_decisions || [])).length > 0 ? (
-                          (translatedReprocessedDecisions.length > 0 ? translatedReprocessedDecisions : (aiSummary?.reprocessed_decisions || [])).map((dec: string, idx: number) => (
-                            <li key={idx} className="text-sm flex items-start space-x-2">
-                              <span className="text-blue-500 mt-0.5">•</span>
-                              <span className="text-slate-700 dark:text-slate-300">{dec}</span>
-                            </li>
-                          ))
-                        ) : (
-                          <li className="text-sm text-slate-400 italic">Không có quyết định cụ thể nào được ghi nhận.</li>
-                        )}
-                      </ul>
-                    )}
-
-
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column: Action Items Checklist */}
-                <div className="space-y-6">
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="flex items-center justify-between px-5 py-3 bg-gradient-to-r from-emerald-50/80 to-transparent dark:from-emerald-950/20 border-b border-emerald-100/60 dark:border-slate-800 rounded-t-xl">
-                      <div className="flex items-center space-x-2.5"><div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center"><CheckSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /></div><h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Phân công công việc</h3></div>
-                      <div className="flex items-center space-x-1">
-                      {reprocessedActionItems.length > 0 && (
-                        <button
-                          onClick={() =>
-                            handleCopyText(
-                              reprocessedActionItems
-                                .map(
-                                  (item) =>
-                                    `- [${item.is_completed ? "x" : " "}] ${item.description} (Phụ trách: ${
-                                      item.owner || "Chưa gán"
-                                    }, Hạn: ${item.deadline ? new Date(item.deadline).toLocaleDateString("vi-VN") : "N/A"})`
-                                )
-                                .join("\n"),
-                              "reprocessed_action_items"
-                            )
-                          }
-                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded transition-colors cursor-pointer shrink-0"
-                          title="Sao chép tất cả công việc"
-                        >
-                          {copiedKey === "reprocessed_action_items" ? (
-                            <Check className="w-4 h-4 text-green-500" />
-                          ) : (
-                            <Copy className="w-4 h-4" />
-                          )}
-                        </button>
-                      )}
-                      {reprocessedActionItems.length > 0 && renderTranslateDropdown("raw_actions")}
-                      </div>
-                    </div>
-
-                    <div className="px-5 py-4">
-                    <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                      {reprocessedActionItems.length === 0 ? (
-                        <p className="text-sm text-slate-400 italic py-4">Không có công việc nào được phân công.</p>
-                      ) : (
-                        reprocessedActionItems.map((item) => {
-                          let deadlineStr = "N/A";
-                          if (item.deadline) {
-                            const d = new Date(item.deadline);
-                            deadlineStr = isNaN(d.getTime())
-                              ? item.deadline
-                              : d.toLocaleDateString("vi-VN") +
-                                " " +
-                                d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-                          }
-
-                          return (
-                            <div
-                              key={item.id}
-                              className={`py-3 flex items-start space-x-3 transition-all ${
-                                item.is_completed ? "opacity-60" : ""
-                              }`}
-                            >
-                              <button
-                                onClick={() => handleToggleActionItem(item.id, item.is_completed)}
-                                className={`p-1 shrink-0 rounded transition-colors cursor-pointer ${
-                                  item.is_completed ? "text-green-500" : "text-slate-400 hover:text-blue-500"
-                                }`}
-                              >
-                                {item.is_completed ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
-                              </button>
-
-                              <div className="flex-1 space-y-1">
-                                <div className="flex items-start justify-between gap-2">
-                                  <p
-                                    className={`text-sm font-semibold leading-snug text-slate-800 dark:text-slate-200 ${
-                                      item.is_completed ? "line-through text-slate-400 dark:text-slate-500" : ""
-                                    }`}
-                                  >
-                                    {translatingSection === "raw_actions" ? (
-                                      <span className="flex items-center space-x-1.5 text-slate-400 text-xs italic">
-                                        <RefreshCw className="w-3 h-3 animate-spin" />
-                                        <span>Đang dịch...</span>
-                                      </span>
-                                    ) : (
-                                      translatedReprocessedActionItems[reprocessedActionItems.indexOf(item)] || item.description
-                                    )}
-                                  </p>
-                                  <button
-                                    onClick={() => handleCopyText(item.description, `act_${item.id}`)}
-                                    className="p-1 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:text-slate-400 dark:hover:text-blue-400 dark:hover:bg-blue-950/30 rounded cursor-pointer shrink-0 mt-0.5"
-                                    title="Sao chép mô tả"
-                                  >
-                                    {copiedKey === `act_${item.id}` ? (
-                                      <Check className="w-3.5 h-3.5 text-green-500" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                  </button>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
-                                  <span>
-                                    Phụ trách: <strong>{item.owner || "Chưa gán"}</strong>
-                                  </span>
-                                  {item.deadline && (
-                                    <>
-                                      <span>•</span>
-                                      <span>
-                                        Hạn: <strong>{deadlineStr}</strong>
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             ) : (
               <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">

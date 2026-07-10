@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS speakers (
     display_name TEXT NOT NULL, -- Tên hiển thị cấu hình (ví dụ: "Anh Hùng", "Tanaka-san")
     language_code TEXT DEFAULT 'auto', -- Ngôn ngữ mặc định
     color_hex TEXT NOT NULL, -- Mã màu sắc pastel gán ngẫu nhiên
-    is_reprocessed BOOLEAN DEFAULT false,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     UNIQUE(meeting_id, speaker_tag)
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS transcripts (
     start_ms INTEGER NOT NULL, -- Thời điểm bắt đầu câu (mili-giây từ lúc họp)
     end_ms INTEGER NOT NULL, -- Thời điểm kết thúc câu (mili-giây từ lúc họp)
     confidence REAL, -- Điểm tin cậy từ Deepgram
-    is_reprocessed BOOLEAN DEFAULT false,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -70,8 +70,7 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
     status TEXT DEFAULT 'Draft' NOT NULL, -- 'Draft', 'Generating', 'Completed'
     executive_summary TEXT,
     decisions TEXT[],
-    reprocessed_executive_summary TEXT,
-    reprocessed_decisions TEXT[],
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -84,7 +83,7 @@ CREATE TABLE IF NOT EXISTS action_items (
     owner TEXT,
     deadline TIMESTAMP WITH TIME ZONE, -- Hạn chót dạng timestamp (NULL nếu AI không chắc chắn)
     is_completed BOOLEAN DEFAULT false,
-    is_reprocessed BOOLEAN DEFAULT false,
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );

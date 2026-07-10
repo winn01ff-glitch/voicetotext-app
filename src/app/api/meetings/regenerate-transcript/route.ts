@@ -55,7 +55,7 @@ export async function POST(request: Request) {
 
     // Lấy speakers và glossary mới nhất
     const [{ data: speakers }, { data: glossary }] = await Promise.all([
-      supabase.from("speakers").select("*").eq("meeting_id", meeting_id).eq("is_reprocessed", false),
+      supabase.from("speakers").select("*").eq("meeting_id", meeting_id).eq("is_active", true),
       supabase.from("glossary").select("*").eq("meeting_id", meeting_id),
     ]);
 
