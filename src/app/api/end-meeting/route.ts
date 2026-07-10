@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         .eq("meeting_id", meeting_id)
         .order("version", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
       const nextVersion = (maxVerData?.version || 0) + 1;
 
       const insertRows = transcripts.map((t: any) => ({
