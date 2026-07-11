@@ -384,7 +384,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     } catch (err) {
       console.error(err);
       await showCustomAlert("Không thể tải thông tin cuộc họp.", "error");
-      router.push("/");
+      // replace: this /meeting/[id] URL just failed to load — leaving it in history
+      // means pressing back re-triggers the same failed fetch.
+      router.replace("/");
     }
   };
 

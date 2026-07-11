@@ -808,7 +808,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     } catch (err) {
       console.error(err);
       await showCustomAlert("Không thể tải thông tin cuộc họp.", "error");
-      router.push("/");
+      // replace: this /history/[id] URL just failed to load — leaving it in history
+      // means pressing back re-triggers the same failed fetch.
+      router.replace("/");
     } finally {
       setLoading(false);
     }
@@ -935,7 +937,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (error) throw error;
       deleteAudio(meetingId);
       sessionStorage.setItem("pending_toast", JSON.stringify({ title: "Thông báo", message: "Xóa cuộc họp thành công!", type: "success" }));
-      router.push("/");
+      // replace: the meeting record is gone from the DB — leaving /history/[id] in
+      // history means pressing back tries to fetch a meeting that no longer exists.
+      router.replace("/");
     } catch (err) {
       console.error(err);
     }
