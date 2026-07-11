@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateEmbeddings } from "@/lib/ai/rag";
+import { getGeminiClient } from "@/lib/ai/geminiClient";
 
 const AI_MODEL = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
 const EMBEDDING_MODEL = "gemini-embedding-001";
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
       await generateEmbeddings(meetingId);
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    const genAI = getGeminiClient();
     const embeddingModel = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
     const aiModel = genAI.getGenerativeModel({ model: AI_MODEL });
 

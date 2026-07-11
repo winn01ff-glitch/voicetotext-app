@@ -13,7 +13,9 @@ import { getAudioUrl, deleteAudio } from "@/lib/audio-cache";
 import {
   ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe, ChevronUp
+  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe, ChevronUp,
+  AlignLeft, ListChecks, PenLine, Briefcase, Maximize2, Minimize2, LayoutList, RotateCcw, Eraser, Zap, Shield,
+  Users, UserCheck, GitMerge, Hash
 } from "lucide-react";
 
 // Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
@@ -87,7 +89,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // UI state
   // 3 tab: transcript (có công tắc Bản gốc/Đã xử lý) | summary | ask.
-  const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("transcript");
+  const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("summary");
   // Công tắc trong tab Transcript: "raw" = bản gốc STT, "ai" = bản đã xử lý (FINAL).
   const [transcriptVer, setTranscriptVer] = useState<"raw" | "ai">("raw");
   const verInitRef = useRef(false);
@@ -103,6 +105,34 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // + panel legacy); false = mọi trường hợp còn lại (Transcript+Bản gốc, hoặc tab Tóm tắt).
   const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
+  const [activeSummaryMode, setActiveSummaryMode] = useState<string | null>(null);
+  const [activeEditingMode, setActiveEditingMode] = useState<string | null>(null);
+  const [isRewritingRaw, setIsRewritingRaw] = useState(false);
+  const [rawLangMode, setRawLangMode] = useState<"original" | "translated">("original");
+
+  // Simple markdown renderer for summary text (handles ## headings, **bold**, bullet lists)
+  const renderMarkdownText = (text: string) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    const elements: React.ReactNode[] = [];
+    lines.forEach((line, i) => {
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith('## ')) {
+        elements.push(<h3 key={i} className="font-bold text-base text-slate-800 dark:text-slate-200 mt-4 mb-1.5 first:mt-0">{trimmed.slice(3)}</h3>);
+      } else if (trimmed.startsWith('### ')) {
+        elements.push(<h4 key={i} className="font-semibold text-sm text-slate-700 dark:text-slate-300 mt-3 mb-1 first:mt-0">{trimmed.slice(4)}</h4>);
+      } else if (trimmed.startsWith('# ')) {
+        elements.push(<h2 key={i} className="font-bold text-lg text-slate-800 dark:text-slate-200 mt-4 mb-2 first:mt-0">{trimmed.slice(2)}</h2>);
+      } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+        elements.push(<li key={i} className="text-sm text-slate-700 dark:text-slate-300 ml-4 list-disc leading-relaxed">{trimmed.slice(2)}</li>);
+      } else if (trimmed === '') {
+        elements.push(<div key={i} className="h-2" />);
+      } else {
+        elements.push(<p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{line}</p>);
+      }
+    });
+    return <>{elements}</>;
+  };
 
   // Mặc định công tắc: hiện "Đã xử lý" nếu đã có bản FINAL, ngược lại "Bản gốc". Chỉ set 1 lần sau khi tải.
   useEffect(() => {
@@ -114,18 +144,32 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   }, [transcripts.length, reprocessedTranscripts.length]);
   // AI jobs + Ask AI chat state
   const [aiJobs, setAiJobs] = useState<any[]>([]);
+  const [showReprocessMenu, setShowReprocessMenu] = useState(false);
+  const [reprocessTab, setReprocessTab] = useState<"spellcheck" | "speaker" | "translate" | "editing">("spellcheck");
   const [chatMessages, setChatMessages] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isChatStreaming, setIsChatStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
+  const reprocessMenuRef = useRef<HTMLDivElement>(null);
   // Tự động cuộn xuống cuối khi có tin nhắn mới, AI đang stream, hoặc khi mở tab Hỏi AI
   useEffect(() => {
     if (shownTab !== "ask") return;
     const el = chatScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [chatMessages, shownTab]);
+  // Close reprocess dropdown on outside click
+  useEffect(() => {
+    if (!showReprocessMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (reprocessMenuRef.current && !reprocessMenuRef.current.contains(e.target as Node)) {
+        setShowReprocessMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showReprocessMenu]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -325,120 +369,76 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   }, [activeAudioTranscriptId, transcripts, reprocessedTranscripts, activeTab, transcriptVer]);
 
   // Translation states for Summary & Decisions
-  const [activeTranslateDropdown, setActiveTranslateDropdown] = useState<string | null>(null);
-  const [isTranslatingAll, setIsTranslatingAll] = useState(false);
-  const [activeTranslateAllDropdown, setActiveTranslateAllDropdown] = useState(false);
-
-  const handleTranslateAll = async (targetLang: string) => {
-    setActiveTranslateAllDropdown(false);
-    setIsTranslatingAll(true);
-    try {
-      const { data: allLines, error: fetchErr } = await supabase
-        .from("transcripts")
-        .select("id, corrected_text, original_text")
-        .eq("meeting_id", meetingId);
-
-      if (fetchErr) throw fetchErr;
-      if (!allLines || allLines.length === 0) {
-        await showCustomAlert("Không có dòng hội thoại nào để dịch.", "info");
-        return;
-      }
-
-      const textsToTranslate = allLines.map((line: any) => line.corrected_text || line.original_text || "");
-
-      const res = await fetch("/api/translate-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          texts: textsToTranslate,
-          sourceLang: meeting?.source_language || "auto",
-          targetLang,
-        }),
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || "Lỗi khi dịch hàng loạt");
-      }
-
-      const { translatedTexts } = await res.json();
-      if (!translatedTexts || translatedTexts.length !== allLines.length) {
-        throw new Error("Dữ liệu dịch trả về không khớp số dòng.");
-      }
-
-      const updatePromises = allLines.map((line: any, idx: number) => {
-        return supabase
-          .from("transcripts")
-          .update({
-            translated_text: translatedTexts[idx],
-          })
-          .eq("id", line.id);
-      });
-
-      const results = await Promise.all(updatePromises);
-      const firstErr = results.find(r => r.error);
-      if (firstErr) throw firstErr.error;
-
-      await supabase
-        .from("meetings")
-        .update({ target_language: targetLang })
-        .eq("id", meetingId);
-
-      await fetchMeetingData();
-      
-      const langNames: Record<string, string> = {
-        vi: "Việt",
-        en: "Anh",
-        ja: "Nhật",
-        zh: "Trung",
-        ko: "Hàn",
-        fr: "Pháp",
-        de: "Đức",
-        es: "Tây Ban Nha"
-      };
-      await showCustomAlert(`Đã dịch toàn bộ cuộc họp sang tiếng ${langNames[targetLang] || targetLang}.`, "success", "Thành công");
-    } catch (err: any) {
-      console.error("Translate all error:", err);
-      await showCustomAlert(`Lỗi dịch toàn bộ: ${err.message || String(err)}`, "error");
-    } finally {
-      setIsTranslatingAll(false);
-    }
-  };
   const [translatedExecSummary, setTranslatedExecSummary] = useState<string>("");
   const [translatedDecisions, setTranslatedDecisions] = useState<string[]>([]);
   const [translatedActionItems, setTranslatedActionItems] = useState<string[]>([]);
-  const [translatingSection, setTranslatingSection] = useState<string | null>(null);
+  const [isTranslatingSummary, setIsTranslatingSummary] = useState(false);
+  const [isTranslatingDecisions, setIsTranslatingDecisions] = useState(false);
+  const [isTranslatingActionItems, setIsTranslatingActionItems] = useState(false);
+  const [globalLanguage, setGlobalLanguage] = useState<string>("original");
+  const [activeGlobalTranslateDropdown, setActiveGlobalTranslateDropdown] = useState(false);
 
-  const handleTranslateSection = async (section: string, lang: string) => {
-    setActiveTranslateDropdown(null);
+  const getReprocessToastMessage = (actionDesc: string) => {
+    const langNames: Record<string, string> = {
+      vi: "tiếng Việt",
+      en: "tiếng Anh",
+      ja: "tiếng Nhật",
+    };
+    if (globalLanguage && globalLanguage !== "original" && langNames[globalLanguage]) {
+      return `${actionDesc} và dịch sang ${langNames[globalLanguage]}...`;
+    }
+    return `${actionDesc}...`;
+  };
+
+  const translateAllSections = async (
+    lang: string,
+    overrideData?: { summary?: string; decisions?: string[]; action_items?: string[] },
+    isFromReprocess?: boolean
+  ) => {
+    const langNames: Record<string, string> = {
+      vi: "tiếng Việt",
+      en: "tiếng Anh",
+      ja: "tiếng Nhật",
+      original: "Bản gốc",
+    };
+
     if (lang === "original") {
-      if (section === "live_summary") setTranslatedExecSummary("");
-      if (section === "live_decisions") setTranslatedDecisions([]);
-      if (section === "live_actions") setTranslatedActionItems([]);
+      setTranslatedExecSummary("");
+      setTranslatedDecisions([]);
+      setTranslatedActionItems([]);
+      addToast("Khôi phục", "Đã chuyển về ngôn ngữ gốc.", "success");
       return;
     }
 
-    setTranslatingSection(section);
-    try {
-      let textToTranslate = "";
-      if (section === "live_summary") {
-        textToTranslate = aiSummary?.executive_summary || "";
-      } else if (section === "live_decisions") {
-        textToTranslate = (aiSummary?.decisions || []).join("\n");
-      } else if (section === "live_actions") {
-        textToTranslate = actionItems.map((item: any) => item.description).join("\n");
-      }
+    if (!isFromReprocess) {
+      addToast("Đang dịch", `Đang dịch nội dung sang ${langNames[lang] || lang}...`, "success");
+    }
+    setIsTranslatingSummary(true);
+    setIsTranslatingDecisions(true);
+    setIsTranslatingActionItems(true);
 
-      if (!textToTranslate.trim()) {
-        setTranslatingSection(null);
-        return;
-      }
+    try {
+      const summaryText = overrideData?.summary !== undefined 
+        ? overrideData.summary 
+        : (aiSummary?.executive_summary || "");
+
+      const decisionsArray = overrideData?.decisions !== undefined
+        ? overrideData.decisions
+        : (aiSummary?.decisions || []);
+
+      const actionItemsArray = overrideData?.action_items !== undefined
+        ? overrideData.action_items
+        : actionItems.map((item: any) => item.description);
 
       const res = await fetch("/api/translate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: textToTranslate,
+          sections: {
+            summary: summaryText,
+            decisions: decisionsArray,
+            action_items: actionItemsArray,
+          },
           sourceLang: "auto",
           targetLang: lang,
         }),
@@ -449,21 +449,23 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       const data = await res.json();
-      const translated = data.translatedText || "";
+      const translatedSections = data.translatedSections || {};
 
-      if (section === "live_summary") {
-        setTranslatedExecSummary(translated);
-      } else if (section === "live_decisions") {
-        // split by newline and filter empty items
-        setTranslatedDecisions(translated.split("\n").filter((line: string) => line.trim().length > 0));
-      } else if (section === "live_actions") {
-        setTranslatedActionItems(translated.split("\n").filter((line: string) => line.trim().length > 0));
+      setTranslatedExecSummary(translatedSections.summary || "");
+      setTranslatedDecisions(translatedSections.decisions || []);
+      setTranslatedActionItems(translatedSections.action_items || []);
+      if (isFromReprocess) {
+        addToast("Thành công", `Đã hoàn thành tạo mới và dịch sang ${langNames[lang] || lang}!`, "success");
+      } else {
+        addToast("Thành công", `Đã dịch nội dung sang ${langNames[lang] || lang}!`, "success");
       }
     } catch (err) {
       console.error(err);
-      showCustomAlert("Gặp lỗi khi dịch nội dung. Vui lòng thử lại sau.", "error");
+      addToast("Lỗi dịch thuật", "Không thể dịch các thẻ nội dung. Vui lòng thử lại sau.", "error");
     } finally {
-      setTranslatingSection(null);
+      setIsTranslatingSummary(false);
+      setIsTranslatingDecisions(false);
+      setIsTranslatingActionItems(false);
     }
   };
 
@@ -548,44 +550,66 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  const renderTranslateDropdown = (section: string) => {
+  const renderGlobalTranslateDropdown = () => {
+    const isAnyTranslating = isTranslatingSummary || isTranslatingDecisions || isTranslatingActionItems;
+    const langNames: Record<string, string> = {
+      vi: "Tiếng Việt",
+      en: "English",
+      ja: "日本語",
+      original: "Bản gốc",
+    };
+
     return (
       <div className="relative">
         <button
-          onClick={() => setActiveTranslateDropdown(activeTranslateDropdown === section ? null : section)}
-          className="p-1.5 text-slate-400 hover:text-indigo-650 hover:bg-indigo-50 dark:text-slate-400 dark:hover:text-indigo-400 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer shrink-0"
-          title="Dịch nội dung"
+          onClick={() => setActiveGlobalTranslateDropdown(!activeGlobalTranslateDropdown)}
+          disabled={isAnyTranslating}
+          className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-650 hover:border-indigo-200 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 dark:hover:border-indigo-805 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
         >
-          <Languages className="w-4 h-4" />
+          <Languages className={`w-3.5 h-3.5 ${isAnyTranslating ? "animate-pulse text-indigo-600 dark:text-indigo-400" : "text-slate-400 dark:text-slate-500"}`} />
+          <span>Ngôn ngữ: {langNames[globalLanguage]}</span>
+          <ChevronDown className="w-3 h-3 text-slate-400 dark:text-slate-500" />
         </button>
-        {activeTranslateDropdown === section && (
+
+        {activeGlobalTranslateDropdown && (
           <>
-            <div className="fixed inset-0 z-20" onClick={() => setActiveTranslateDropdown(null)} />
-            <div className="absolute right-0 mt-1 w-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-30 text-xs text-left overflow-hidden ring-1 ring-black/5">
+            <div className="fixed inset-0 z-20" onClick={() => setActiveGlobalTranslateDropdown(false)} />
+            <div className="absolute left-0 right-0 mt-2 min-w-[160px] bg-white dark:bg-slate-955 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl z-30 text-xs text-left overflow-hidden ring-1 ring-black/5">
+              <div className="px-3.5 py-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider bg-slate-50/50 dark:bg-slate-900/20 border-b border-slate-100 dark:border-slate-800">
+                Chọn ngôn ngữ hiển thị
+              </div>
+              {(["vi", "en", "ja"] as const).map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => {
+                    setActiveGlobalTranslateDropdown(false);
+                    setGlobalLanguage(lang);
+                    translateAllSections(lang);
+                  }}
+                  className={`w-full flex items-center justify-between px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400 font-medium cursor-pointer transition-colors ${
+                    globalLanguage === lang
+                      ? "text-indigo-600 dark:text-indigo-400 bg-indigo-50/30 dark:bg-slate-850/50"
+                      : "text-slate-650 dark:text-slate-350"
+                  }`}
+                >
+                  <span>{langNames[lang]}</span>
+                  {globalLanguage === lang && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                </button>
+              ))}
               <button
-                onClick={() => handleTranslateSection(section, "vi")}
-                className="w-full text-left px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400 font-medium cursor-pointer transition-colors"
+                onClick={() => {
+                  setActiveGlobalTranslateDropdown(false);
+                  setGlobalLanguage("original");
+                  translateAllSections("original");
+                }}
+                className={`w-full flex items-center justify-between px-3.5 py-2 hover:bg-rose-50/60 hover:text-rose-600 dark:hover:bg-rose-950/20 dark:hover:text-rose-455 font-medium cursor-pointer transition-colors border-t border-slate-100 dark:border-slate-800 ${
+                  globalLanguage === "original"
+                    ? "text-rose-600 dark:text-rose-450 bg-rose-50/20 dark:bg-rose-955/10"
+                    : "text-slate-400"
+                }`}
               >
-                Tiếng Việt
-              </button>
-              <button
-                onClick={() => handleTranslateSection(section, "en")}
-                className="w-full text-left px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400 font-medium cursor-pointer transition-colors"
-              >
-                English
-              </button>
-              <button
-                onClick={() => handleTranslateSection(section, "ja")}
-                className="w-full text-left px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400 font-medium cursor-pointer transition-colors"
-              >
-                日本語
-              </button>
-              <div className="border-t border-slate-100 dark:border-slate-800" />
-              <button
-                onClick={() => handleTranslateSection(section, "original")}
-                className="w-full text-left px-3.5 py-2 hover:bg-rose-50/60 hover:text-rose-600 dark:hover:bg-rose-950/20 dark:hover:text-rose-400 text-slate-400 font-medium cursor-pointer transition-colors"
-              >
-                Bản gốc
+                <span>{langNames["original"]}</span>
+                {globalLanguage === "original" && <Check className="w-3.5 h-3.5 text-rose-500 dark:text-rose-450" />}
               </button>
             </div>
           </>
@@ -716,7 +740,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           speakers ( display_name, color_hex, speaker_tag )
         `)
         .eq("meeting_id", meetingId)
-        .eq("is_active", true)
+        .or("is_active.eq.true,version_type.eq.RAW")
         .order("start_ms", { ascending: true });
 
       if (txs) {
@@ -756,12 +780,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           };
         });
 
-        // Tách theo version_type (nguồn sự thật): RAW = bản gốc, FINAL = đã xử lý AI.
-        // Chỉ lấy generation đang active — tránh trộn các bản FINAL cũ đã bị
-        // incrementTranscriptVersion() đánh dấu is_active=false.
-        const activeTranscripts = allTranscripts.filter((t: any) => t.isActive);
-        setTranscripts(activeTranscripts.filter((t: any) => t.versionType !== "FINAL"));
-        setReprocessedTranscripts(activeTranscripts.filter((t: any) => t.versionType === "FINAL"));
+        // Bản gốc = RAW. Hội thoại = active FINAL (hoặc active RAW nếu chưa có FINAL).
+        setTranscripts(allTranscripts.filter((t: any) => t.versionType === "RAW" || t.versionType === "raw"));
+        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL" && t.isActive));
       }
 
       // 4. Fetch summary
@@ -805,6 +826,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("meeting_id", meetingId)
         .order("created_at", { ascending: true });
       setAiJobs(jobs || []);
+      if (jobs) {
+        const summaryJob = jobs.find((j: any) => j.type === "summary");
+        if (summaryJob) {
+          setActiveSummaryMode(summaryJob.mode);
+        }
+      }
 
       const { data: chats } = await supabase
         .from("meeting_chats")
@@ -838,7 +865,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .from("transcripts")
         .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
         .eq("meeting_id", meetingId)
-        .eq("is_active", true)
+        .or("is_active.eq.true,version_type.eq.RAW")
         .order("start_ms", { ascending: true });
 
       if (txs) {
@@ -874,9 +901,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           };
         });
 
-        const activeTranscripts = allTranscripts.filter((t: any) => t.isActive);
-        setTranscripts(activeTranscripts.filter((t: any) => t.versionType !== "FINAL"));
-        setReprocessedTranscripts(activeTranscripts.filter((t: any) => t.versionType === "FINAL"));
+        setTranscripts(allTranscripts.filter((t: any) => t.versionType === "RAW" || t.versionType === "raw"));
+        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL" && t.isActive));
       }
 
       const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).eq("is_active", true).maybeSingle();
@@ -894,6 +920,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       // Poll AI job progress
       const { data: jobs } = await supabase.from("ai_jobs").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
       setAiJobs(jobs || []);
+      if (jobs) {
+        const summaryJob = jobs.find((j: any) => j.type === "summary");
+        if (summaryJob) {
+          setActiveSummaryMode(summaryJob.mode);
+        }
+      }
     } catch (err) {
       console.error("Silent refresh error:", err);
     }
@@ -907,6 +939,29 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveJobs]);
+
+  const prevHasActiveJobsRef = useRef(false);
+  useEffect(() => {
+    if (prevHasActiveJobsRef.current && !hasActiveJobs) {
+      const completedJobs = aiJobs.filter((j) => j.status === "completed");
+      const failedJobs = aiJobs.filter((j) => j.status === "failed");
+      const cancelledJobs = aiJobs.filter((j) => j.status === "cancelled");
+
+      if (failedJobs.length > 0) {
+        addToast("Lỗi", "Một số bước xử lý AI của cuộc họp đã thất bại.", "error");
+      } else if (cancelledJobs.length > 0) {
+        addToast("Đã dừng", "Tiến trình xử lý AI cuộc họp đã bị dừng.", "warning");
+      } else if (completedJobs.length > 0) {
+        // Auto translate to currently selected custom global language if it's set
+        if (globalLanguage && globalLanguage !== "original") {
+          translateAllSections(globalLanguage, undefined, true);
+        } else {
+          addToast("Thành công", "Đã hoàn thành toàn bộ tiến trình xử lý AI cuộc họp!", "success");
+        }
+      }
+    }
+    prevHasActiveJobsRef.current = hasActiveJobs;
+  }, [hasActiveJobs, aiJobs, globalLanguage]);
 
   // Default the translate-target dropdown to the meeting's current target_language once
   // loaded (only once — don't fight the user's own dropdown choice after that).
@@ -1136,6 +1191,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       // Reload all data
       await fetchMeetingData();
       await showCustomAlert("Cập nhật tóm tắt thành công!", "success");
+
+      // Auto translate to currently selected custom languages if they were set
+      if (globalLanguage && globalLanguage !== "original") {
+        const actionDescriptions = data.action_items
+          ? data.action_items.map((item: any) => item.description)
+          : [];
+        translateAllSections(globalLanguage, {
+          summary: data.summary,
+          decisions: data.decisions,
+          action_items: actionDescriptions,
+        });
+      } else {
+        setTranslatedExecSummary("");
+        setTranslatedDecisions([]);
+        setTranslatedActionItems([]);
+      }
     } catch (err) {
       console.error(err);
       await showCustomAlert("Lỗi khi tạo lại tóm tắt cuộc họp.", "error");
@@ -1830,25 +1901,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </button>
           </div>
         </div>
-      </header>
-
-      {/* CORE CONTAINER */}
-      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
-        <div className="space-y-6">
 
           {/* TOP BAR: Unified Switcher (Left) + Meeting Info (Right) */}
-          <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 flex flex-col xl:flex-row xl:items-end justify-between border-t border-slate-100 dark:border-slate-800/50 gap-4">
             
-            {/* Unified 3-Tab Switcher (Underline style, responsive layout) */}
-            <div className="relative grid grid-cols-3 xl:flex w-full xl:w-[600px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
+            {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
+            <div className="relative grid grid-cols-4 xl:flex w-full xl:w-[760px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
               {(() => {
-                const activeIndex = activeTab === "transcript" ? 0
-                  : activeTab === "summary" ? 1
-                  : 2;
+                const activeIndex = activeTab === "summary" ? 0
+                  : (activeTab === "transcript" && transcriptVer === "ai") ? 1
+                  : activeTab === "ask" ? 2
+                  : 3;
 
                 const btnClass = (idx: number) =>
-                  `relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
-                    idx < 2 ? "border-r border-r-slate-200 dark:border-r-slate-800" : ""
+                  `relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-3.5 pb-3 xl:pt-4 xl:pb-2.5 text-xs sm:text-sm font-bold transition-colors duration-200 cursor-pointer whitespace-nowrap ${
+                    idx < 3 ? "border-r border-r-slate-200 dark:border-r-slate-800" : ""
                   } ${
                     activeIndex === idx
                       ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
@@ -1857,17 +1924,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                 return (
                   <>
-                    <button onClick={() => setActiveTab("transcript")} className={btnClass(0)}>
-                      <FileText className="w-3.5 h-3.5 shrink-0" />
-                      <span>Transcript</span>
-                    </button>
-                    <button onClick={() => setActiveTab("summary")} className={btnClass(1)}>
+                    <button onClick={() => setActiveTab("summary")} className={btnClass(0)}>
                       <List className="w-3.5 h-3.5 shrink-0" />
                       <span>Tóm tắt</span>
+                    </button>
+                    <button onClick={() => { setActiveTab("transcript"); setTranscriptVer("ai"); }} className={btnClass(1)}>
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <span>Hội thoại</span>
+                      <span className="text-[11px] opacity-60">({filteredReprocessedTranscripts.length})</span>
                     </button>
                     <button onClick={() => setActiveTab("ask")} className={btnClass(2)}>
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                       <span>Hỏi AI</span>
+                    </button>
+                    <button onClick={() => { setActiveTab("transcript"); setTranscriptVer("raw"); }} className={btnClass(3)}>
+                      <FileText className="w-3.5 h-3.5 shrink-0" />
+                      <span>Bản gốc</span>
                     </button>
                   </>
                 );
@@ -1875,69 +1947,241 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {/* Meeting Info Bar */}
-            <div className="grid grid-cols-4 xl:flex w-full xl:w-auto bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 rounded-lg text-[11px] xl:mb-[5.5px] xl:ml-auto overflow-hidden divide-x divide-slate-200 dark:divide-slate-800 shadow-sm order-1 xl:order-2 shrink-0 whitespace-nowrap">
-              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/20 dark:bg-blue-950/10">
+            <div className="grid grid-cols-4 xl:flex w-full xl:w-auto text-[11px] xl:mb-[5.5px] xl:ml-auto overflow-hidden divide-x divide-slate-100 dark:divide-slate-800/50 shrink-0 whitespace-nowrap order-1 xl:order-2">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-blue-600 dark:text-blue-400 font-semibold bg-blue-50/70 dark:bg-blue-950/30">
                 <Calendar className="w-3.5 h-3.5" />
                 <span>{(() => { const d = new Date(meeting.created_at); return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}`; })()}</span>
               </div>
-              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/20 dark:bg-indigo-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-indigo-600 dark:text-indigo-400 font-semibold bg-indigo-50/70 dark:bg-indigo-950/30">
                 <Clock className="w-3.5 h-3.5" />
                 <span>{formatDuration(meeting.duration_ms)}</span>
               </div>
-              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/20 dark:bg-emerald-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50/70 dark:bg-emerald-950/30">
                 <BookOpen className="w-3.5 h-3.5" />
                 <span className="capitalize">{meeting.meeting_context}</span>
               </div>
-              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/20 dark:bg-amber-950/10">
+              <div className="flex items-center justify-center xl:justify-start space-x-1.5 px-3 py-1.5 text-amber-600 dark:text-amber-400 font-semibold bg-amber-50/70 dark:bg-amber-950/30">
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>{meeting.source_language.toUpperCase()} ➔ {meeting.target_language.toUpperCase()}</span>
               </div>
             </div>
 
           </div>
-
+      </header>
+ 
+      {/* CORE CONTAINER */}
+      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4 pb-24">
+        <div className="space-y-6">
+ 
           {/* MAIN CONTENT AREA */}
           <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${(activeTab !== shownTab || transcriptVer !== shownVer) ? "opacity-40" : ""}`}>
 
-        {/* Transcript version toggle: Bản gốc (RAW) ↔ Đã xử lý (FINAL/AI) */}
-        {shownTab === "transcript" && (
-          <div className="flex items-center gap-1 p-1 mb-4 bg-slate-100 dark:bg-slate-800/60 rounded-xl w-full sm:w-fit border border-slate-200/60 dark:border-slate-800">
-            {([
-              { key: "raw", label: "Bản gốc", count: filteredTranscripts.length },
-              { key: "ai", label: "Đã xử lý (AI)", count: filteredReprocessedTranscripts.length },
-            ] as const).map((opt) => (
-              <button
-                key={opt.key}
-                onClick={() => setTranscriptVer(opt.key)}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
-                  transcriptVer === opt.key
-                    ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
-                    : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                }`}
-              >
-                {opt.key === "ai" ? <Sparkles className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
-                <span>{opt.label}</span>
-                <span className="text-[11px] opacity-60">({opt.count})</span>
-              </button>
-            ))}
-          </div>
-        )}
-
         {/* AI PIPELINE CONTROL PANEL — hiện ở cả 2 view (Bản gốc / Đã xử lý) của tab Transcript.
             "Bản gốc": checklist cho chọn từng bước. "Đã xử lý (AI)": nút chạy toàn bộ như cũ. */}
-        {shownTab === "transcript" && (
-          <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-5 rounded-xl shadow-sm space-y-4 mb-6">
-            <div className="flex items-center space-x-2.5">
-              <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
-                <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-slate-800 dark:text-slate-200">Pipeline AI</h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Sửa chính tả → Phân vai → Dịch → Tóm tắt</p>
-              </div>
-            </div>
+        {shownTab === "transcript" && shownVer === "ai" && (
+          <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-4 sm:p-5 rounded-xl shadow-sm space-y-4 mb-6">
+            {/* Header chỉ hiện khi có job đang chạy hoặc ở view "Đã xử lý" — ở view Bản gốc,
+                tiêu đề nằm gọn cùng hàng với checklist bên dưới. */}
+            {(aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 || shownVer !== "raw") && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
+                    <Sparkles className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-200">Xử lý AI</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Sửa chính tả → Phân vai → Dịch → Tóm tắt</p>
+                  </div>
+                </div>
+                {/* Right side: Cancel button when processing, or Reprocess dropdown when idle */}
+                {aiJobs.some((j) => j.status === "processing" || j.status === "queued") ? (
+                  <button
+                    onClick={async () => {
+                      const activeJob = aiJobs.find((j) => j.status === "processing" || j.status === "queued");
+                      if (!activeJob) return;
+                      await fetch("/api/meetings/reprocess/cancel-job", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ jobId: activeJob.id }),
+                      });
+                      await refreshMeetingDataSilently();
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50 rounded-lg transition-colors cursor-pointer border border-red-200 dark:border-red-800/50"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Huỷ tiến trình</span>
+                  </button>
+                ) : shownVer !== "raw" && (
+                  <div className="relative">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowReprocessMenu((v) => !v); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-950/60 rounded-lg transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800/50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Tùy chỉnh AI</span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showReprocessMenu ? "rotate-180" : ""}`} />
+                    </button>
+                    {showReprocessMenu && (
+                      <div ref={reprocessMenuRef} className="absolute right-0 top-full mt-1.5 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        {/* Top: Xử lý lại toàn bộ */}
+                        <button
+                          onClick={async () => {
+                            setShowReprocessMenu(false);
+                            addToast("Đã bắt đầu", getReprocessToastMessage("Đang xử lý lại toàn bộ pipeline"), "success");
+                            const res = await fetch("/api/meetings/reprocess/run-queue", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ meetingId, jobTypes: ["spellcheck", "speaker", "translation", "summary"], isFromReprocess: true }),
+                            });
+                            if (res.ok) {
+                              setTimeout(refreshMeetingDataSilently, 1000);
+                            } else {
+                              addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                            }
+                          }}
+                          className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors flex items-center gap-3 cursor-pointer border-b border-slate-100 dark:border-slate-800"
+                        >
+                          <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center shrink-0">
+                            <RefreshCw className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                          </div>
+                          <div>
+                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">Xử lý lại toàn bộ</div>
+                            <div className="text-xs text-slate-400 dark:text-slate-500">Chạy lại tất cả 4 bước pipeline</div>
+                          </div>
+                        </button>
 
-            {aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 ? (
+                        {/* Tabs: Chính tả → Phân vai → Dịch thuật */}
+                        <div className="flex border-b border-slate-100 dark:border-slate-800 px-1 pt-1">
+                          {([
+                            { key: "spellcheck" as const, label: "Chính tả", icon: Edit2 },
+                            { key: "speaker" as const, label: "Phân vai", icon: Users },
+                            { key: "translate" as const, label: "Dịch", icon: Languages },
+                          ]).map((tab) => (
+                            <button
+                              key={tab.key}
+                              onClick={() => setReprocessTab(tab.key)}
+                              className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium transition-colors cursor-pointer rounded-t-lg ${
+                                reprocessTab === tab.key
+                                  ? "text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/20 border-b-2 border-indigo-500"
+                                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+                              }`}
+                            >
+                              <tab.icon className="w-3.5 h-3.5" />
+                              <span>{tab.label}</span>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Tab content */}
+                        <div className="py-1 max-h-64 overflow-y-auto">
+                          {reprocessTab === "spellcheck" && ([
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Bỏ từ lặp & filler", icon: Eraser, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "remove_fillers", desc: "Bỏ uh, um, えー, từ lặp" },
+                            { label: "Làm sạch toàn bộ", icon: Sparkles, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "deep_clean", desc: "Sửa lỗi + bỏ filler + cải thiện" },
+                            { label: "Giữ nguyên tối đa", icon: Shield, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "minimal", desc: "Chỉ sửa lỗi rõ ràng nhất" },
+                            { label: "Sửa mạnh (khôi phục)", icon: Zap, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "aggressive", desc: "Khôi phục từ gốc từ lỗi ASR" },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.label}
+                              onClick={async () => {
+                                setShowReprocessMenu(false);
+                                addToast("Đã bắt đầu", getReprocessToastMessage(`Đang ${opt.label.toLowerCase()}`), "success");
+                                const res = await fetch("/api/meetings/reprocess/run-queue", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
+                                });
+                                if (res.ok) {
+                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                } else {
+                                  addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                                }
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                            >
+                              <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                              </div>
+                            </button>
+                          ))}
+
+                          {reprocessTab === "speaker" && ([
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["speaker", "translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Độc thoại (Tách câu)", icon: FileText, jobs: ["speaker", "translation", "summary"], mode: "single_speaker_split", desc: "Giữ các câu ngắn tách biệt (phù hợp video 1 người)" },
+                            { label: "Gán tên từ nội dung", icon: UserCheck, jobs: ["speaker", "translation", "summary"], mode: "by_name", desc: "Tìm tên thật từ ngữ cảnh hội thoại" },
+                            { label: "Theo vai trò", icon: Briefcase, jobs: ["speaker", "translation", "summary"], mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng..." },
+                            { label: "Gộp người nói", icon: GitMerge, jobs: ["speaker", "translation", "summary"], mode: "merge_speakers", desc: "Gộp speaker bị ASR tách nhầm" },
+                            { label: "Đánh số đơn giản", icon: Hash, jobs: ["speaker", "translation", "summary"], mode: "numbered", desc: "Speaker 1, Speaker 2..." },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.label}
+                              onClick={async () => {
+                                setShowReprocessMenu(false);
+                                addToast("Đã bắt đầu", getReprocessToastMessage(`Đang ${opt.label.toLowerCase()}`), "success");
+                                const res = await fetch("/api/meetings/reprocess/run-queue", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
+                                });
+                                if (res.ok) {
+                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                } else {
+                                  addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                                }
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                            >
+                              <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                              </div>
+                            </button>
+                          ))}
+
+                          {reprocessTab === "translate" && ([
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Dịch và chỉnh sửa", icon: Sparkles, jobs: ["translation", "summary"], mode: "translate_clean", desc: "Sửa ngữ pháp, rõ ràng hơn" },
+                            { label: "Dịch đơn giản", icon: Globe, jobs: ["translation", "summary"], mode: "translate_simplify", desc: "Dễ đọc và dễ hiểu hơn" },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.label}
+                              onClick={async () => {
+                                setShowReprocessMenu(false);
+                                addToast("Đã bắt đầu", getReprocessToastMessage(`Đang ${opt.label.toLowerCase()}`), "success");
+                                const res = await fetch("/api/meetings/reprocess/run-queue", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
+                                });
+                                if (res.ok) {
+                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                } else {
+                                  addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                                }
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                            >
+                              <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                              </div>
+                            </button>
+                          ))}
+
+
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {aiJobs.length > 0 ? (
               <div className="space-y-3 border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-5 bg-slate-50 dark:bg-slate-950">
                 {/* Horizontal stepper: numbered circles + connector lines. The circle of the
                     step currently processing gets a spinning ring border. */}
@@ -1950,79 +2194,144 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       translation: "Dịch",
                       summary: "Tóm tắt",
                     };
-                    const visibleJobs = aiJobs
-                      .filter((j) => j.status !== "idle" && j.status !== "cancelled")
-                      .sort((a, b) => STEP_ORDER.indexOf(a.type) - STEP_ORDER.indexOf(b.type));
-                    return visibleJobs.map((job, idx) => {
-                      const isDone = job.status === "completed";
-                      const isProcessing = job.status === "processing";
-                      const isFailed = job.status === "failed";
-                      return (
-                        <Fragment key={job.id}>
-                          <div className="flex items-center gap-2 shrink-0">
-                            <div className="relative w-8 h-8 shrink-0">
-                              {isProcessing && (
-                                <div className="absolute -inset-1 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-                              )}
-                              <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
-                                  isDone
-                                    ? "bg-blue-600 text-white"
-                                    : isProcessing
-                                    ? "bg-blue-600 text-white"
-                                    : isFailed
-                                    ? "bg-red-500 text-white"
-                                    : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
-                                }`}
-                              >
-                                {isDone ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
-                              </div>
-                            </div>
-                            <span
-                              className={`text-xs sm:text-sm font-semibold whitespace-nowrap ${
-                                isDone || isProcessing
-                                  ? "text-slate-800 dark:text-slate-200"
-                                  : isFailed
-                                  ? "text-red-600 dark:text-red-400"
-                                  : "text-slate-400 dark:text-slate-500"
-                              }`}
-                            >
-                              {STEP_LABEL[job.type] || job.type}
-                            </span>
+                    
+                    const activeOrFailed = aiJobs.find(
+                      (j) => j.status === "processing" || (j.status === "queued" && (j.retry_count || 0) > 0) || j.status === "failed"
+                    );
+
+                    return (
+                      <div className="space-y-4 w-full">
+                        <div className="flex items-center">
+                          {STEP_ORDER.map((stepType, idx) => {
+                            const job = aiJobs.find((j) => j.type === stepType);
+                            const isDone = job?.status === "completed";
+                            const isRetrying = job?.status === "queued" && (job.retry_count || 0) > 0;
+                            const isProcessing = job?.status === "processing";
+                            const isFailed = job?.status === "failed";
+                            const isCancelled = job?.status === "cancelled";
+                            
+                            return (
+                              <Fragment key={stepType}>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <div className="relative w-8 h-8 shrink-0">
+                                    {isProcessing && (
+                                      <div className="absolute -inset-1 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                                    )}
+                                    {isRetrying && (
+                                      <div className="absolute -inset-1 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+                                    )}
+                                    <div
+                                      className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                                        isDone
+                                          ? "bg-blue-600 text-white"
+                                          : isProcessing
+                                          ? "bg-blue-600 text-white"
+                                          : isRetrying
+                                          ? "bg-amber-500 text-white animate-pulse"
+                                          : isFailed
+                                          ? "bg-red-500 text-white"
+                                          : isCancelled
+                                          ? "bg-slate-100 dark:bg-slate-850 text-slate-400 dark:text-slate-500 border border-dashed border-slate-300 dark:border-slate-700"
+                                          : "bg-slate-200 dark:bg-slate-800 text-slate-550 dark:text-slate-400"
+                                      }`}
+                                    >
+                                      {isDone ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className={`text-xs sm:text-sm font-semibold whitespace-nowrap ${
+                                      isDone || isProcessing
+                                        ? "text-slate-800 dark:text-slate-200"
+                                        : isRetrying
+                                        ? "text-amber-600 dark:text-amber-400 font-bold"
+                                        : isFailed
+                                        ? "text-red-600 dark:text-red-400"
+                                        : isCancelled
+                                        ? "text-slate-400 dark:text-slate-500 italic"
+                                        : "text-slate-450 dark:text-slate-500"
+                                    }`}
+                                  >
+                                    {STEP_LABEL[stepType]}
+                                  </span>
+                                </div>
+                                {idx < STEP_ORDER.length - 1 && (
+                                  <div
+                                    className={`flex-1 h-px mx-3 min-w-6 ${
+                                      isDone ? "bg-blue-400 dark:bg-blue-700" : "bg-slate-200 dark:bg-slate-800"
+                                    }`}
+                                  />
+                                )}
+                              </Fragment>
+                            );
+                          })}
+                        </div>
+
+                        {activeOrFailed && (
+                          <div className={`p-3 rounded-lg text-xs border ${
+                            activeOrFailed.status === "failed"
+                              ? "bg-red-50/50 dark:bg-red-950/10 border-red-200 dark:border-red-900/30 text-red-700 dark:text-red-400"
+                              : (activeOrFailed.status === "queued" && (activeOrFailed.retry_count || 0) > 0)
+                              ? "bg-amber-50/50 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400 animate-pulse"
+                              : "bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400"
+                          }`}>
+                            <p className="leading-relaxed">
+                              <span className="font-bold mr-1.5 shrink-0 inline-flex items-center gap-1">
+                                {activeOrFailed.status === "failed" && "❌ Lỗi:"}
+                                {activeOrFailed.status === "queued" && "⚠️ Thử lại:"}
+                                {activeOrFailed.status === "processing" && "⚡ Đang xử lý:"}
+                              </span>
+                              {(() => {
+                                const getFriendlyErrorMessage = (errorStr: string) => {
+                                  if (!errorStr) return "Gặp sự cố không xác định khi gọi AI.";
+                                  const lower = errorStr.toLowerCase();
+                                  if (lower.includes("429") || lower.includes("quota exceeded") || lower.includes("too many requests")) {
+                                    return "Hệ thống AI đang quá tải hoặc vượt quá giới hạn lượt gọi (Rate Limit / Quota Exceeded). Hệ thống đang tạm dừng giãn cách và sẽ tự động gửi lại yêu cầu sau ít giây.";
+                                  }
+                                  if (lower.includes("api key") || lower.includes("key not found") || lower.includes("invalid api key")) {
+                                    return "Khóa API của Gemini không hợp lệ hoặc chưa cấu hình đúng. Vui lòng kiểm tra cấu hình dự án.";
+                                  }
+                                  if (lower.includes("offline") || lower.includes("network") || lower.includes("fetch failed") || lower.includes("econnrefused")) {
+                                    return "Lỗi kết nối mạng: Không thể kết nối tới máy chủ Google Gemini. Đang tự động kết nối lại...";
+                                  }
+                                  if (lower.includes("timeout")) {
+                                    return "Kết nối tới Google Gemini bị hết hạn (Timeout). Đang tự động gửi lại yêu cầu...";
+                                  }
+                                  if (lower.includes("blocked") || lower.includes("safety")) {
+                                    return "Nội dung bị chặn bởi bộ lọc an toàn của Google Gemini.";
+                                  }
+                                  return errorStr.replace(/^Error:\s*/i, "").replace(/^\[GoogleGenerativeAI Error\]:\s*/i, "").split('\n')[0];
+                                };
+
+                                if (activeOrFailed.status === "failed") {
+                                  return (
+                                    <>
+                                      Bước <strong>{STEP_LABEL[activeOrFailed.type]}</strong> thất bại. {getFriendlyErrorMessage(activeOrFailed.error)}
+                                    </>
+                                  );
+                                }
+                                if (activeOrFailed.status === "queued") {
+                                  return (
+                                    <>
+                                      Đang thử lại bước <strong>{STEP_LABEL[activeOrFailed.type]}</strong> (lần {activeOrFailed.retry_count}/{activeOrFailed.max_retries || 3}) sau ít giây... Chi tiết: {getFriendlyErrorMessage(activeOrFailed.error)}
+                                    </>
+                                  );
+                                }
+                                return (
+                                  <>
+                                    Đang xử lý bước <strong>{STEP_LABEL[activeOrFailed.type]}</strong>... Tiến trình có thể mất từ 1-2 phút tùy độ dài cuộc họp.
+                                  </>
+                                );
+                              })()}
+                            </p>
                           </div>
-                          {idx < visibleJobs.length - 1 && (
-                            <div
-                              className={`flex-1 h-px mx-3 min-w-6 ${
-                                isDone ? "bg-blue-400 dark:bg-blue-700" : "bg-slate-200 dark:bg-slate-800"
-                              }`}
-                            />
-                          )}
-                        </Fragment>
-                      );
-                    });
+                        )}
+                      </div>
+                    );
                   })()}
                 </div>
-                {aiJobs.some((j) => j.status === "processing" || j.status === "queued") && (
-                  <div className="flex justify-end pt-1">
-                    <button
-                      onClick={async () => {
-                        const activeJob = aiJobs.find((j) => j.status === "processing" || j.status === "queued");
-                        if (!activeJob) return;
-                        await fetch("/api/meetings/reprocess/cancel-job", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ jobId: activeJob.id }),
-                        });
-                        await refreshMeetingDataSilently();
-                      }}
-                      className="text-xs text-red-600 hover:underline px-2 py-1 cursor-pointer"
-                    >
-                      Huỷ tiến trình
-                    </button>
-                  </div>
-                )}
+
               </div>
-            ) : shownVer === "raw" ? (
+            ) : shownVer === "raw" ? ( 
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer select-none">
@@ -2071,27 +2380,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <span>Xử lý</span>
                 </button>
               </div>
-            ) : (
-              <button
-                onClick={async () => {
-                  const res = await fetch("/api/meetings/reprocess/run-queue", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ meetingId, jobTypes: ["spellcheck", "speaker", "translation", "summary"] }),
-                  });
-                  if (res.ok) {
-                    addToast("Đã bắt đầu", "Pipeline AI đang chạy ngầm.", "success");
-                    setTimeout(refreshMeetingDataSilently, 1000);
-                  } else {
-                    addToast("Lỗi", "Không thể bắt đầu pipeline.", "error");
-                  }
-                }}
-                className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:from-indigo-700 hover:to-blue-700 transition-all flex items-center justify-center space-x-2 cursor-pointer"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>Phân tích toàn diện (Generate All)</span>
-              </button>
-            )}
+            ) : null}
           </div>
         )}
 
@@ -2207,6 +2496,56 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
             {/* SUB-TAB CONTENT */}
             {subTabProcessed === "summary" ? (
+              <div className="space-y-5">
+                {/* Summary mode quick actions */}
+                <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm px-4 py-3">
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <Sparkles className="w-4 h-4 text-indigo-500" />
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Tạo lại tóm tắt</span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        { label: "Mặc định", icon: RotateCcw, mode: null as string | null, desc: "Prompt sau khi kết thúc họp" },
+                        { label: "Chi tiết", icon: AlignLeft, mode: "detailed" as string | null, desc: "Phân tích đầy đủ" },
+                        { label: "Bullet", icon: List, mode: "bullets" as string | null, desc: "Gạch đầu dòng" },
+                        { label: "Biên bản", icon: BookOpen, mode: "meeting_minutes" as string | null, desc: "Biên bản họp" },
+                        { label: "Công việc", icon: ListChecks, mode: "action_items_only" as string | null, desc: "Task & cam kết" },
+                      ]).map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={async () => {
+                            setActiveSummaryMode(opt.mode);
+                            const res = await fetch("/api/meetings/reprocess/run-queue", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ meetingId, jobTypes: ["summary"], mode: opt.mode }),
+                            });
+                            if (res.ok) {
+                              addToast("Đã bắt đầu", `Đang tạo ${opt.label.toLowerCase()}...`, "success");
+                              setTimeout(refreshMeetingDataSilently, 1000);
+                            } else {
+                              addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                            }
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer border ${
+                            activeSummaryMode === opt.mode
+                              ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/50 ring-1 ring-indigo-200 dark:ring-indigo-800/50"
+                              : "text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400 dark:hover:border-indigo-800/50"
+                          }`}
+                          title={opt.desc}
+                        >
+                          <opt.icon className="w-3.5 h-3.5" />
+                          <span>{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Global Translation Dropdown */}
+                    {renderGlobalTranslateDropdown()}
+                  </div>
+                </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                 {/* Left/Middle Column: Summary & Decisions */}
                 <div className="lg:col-span-2 space-y-6">
@@ -2217,7 +2556,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center">
                           <BookOpen className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
                         </div>
-                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Tóm tắt tổng quan</h3>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                          <span>Tóm tắt tổng quan</span>
+                          {isTranslatingSummary && (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+                          )}
+                        </h3>
                       </div>
                       {isEditingSummary ? (
                         <button
@@ -2257,15 +2601,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
-                          {renderTranslateDropdown("live_summary")}
-                          <button
-                            onClick={handleRegenerateSummary}
-                            disabled={isRegeneratingSummary}
-                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:text-slate-400 dark:hover:text-emerald-400 dark:hover:bg-emerald-950/30 rounded transition-colors disabled:opacity-50 cursor-pointer shrink-0"
-                            title="Tạo lại tóm tắt (AI)"
-                          >
-                            <RefreshCw className={`w-4 h-4 ${isRegeneratingSummary ? "animate-spin" : ""}`} />
-                          </button>
                         </div>
                       )}
                     </div>
@@ -2279,16 +2614,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:ring-1 focus:ring-blue-500 focus:outline-none"
                       />
                     ) : (
-                      <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">
-                        {translatingSection === "live_summary" ? (
-                          <span className="flex items-center space-x-2 text-slate-400 dark:text-slate-500 text-sm italic py-2">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Đang dịch tóm tắt...</span>
-                          </span>
-                        ) : (
-                          translatedExecSummary || aiSummary?.executive_summary || "Chưa có bản tóm tắt nào cho cuộc họp này. Bạn có thể nhấn 'Tạo lại (AI)' để tạo."
-                        )}
-                      </p>
+                      renderMarkdownText(translatedExecSummary || aiSummary?.executive_summary || "Chưa có bản tóm tắt nào cho cuộc họp này. Bạn có thể nhấn 'Tạo lại (AI)' để tạo.")
                     )}
                     </div>
                   </div>
@@ -2300,7 +2626,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-950/50 flex items-center justify-center">
                           <CheckSquare className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                         </div>
-                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Quyết định cốt lõi</h3>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                          <span>Quyết định cốt lõi</span>
+                          {isTranslatingDecisions && (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
+                          )}
+                        </h3>
                       </div>
                       {isEditingSummary ? (
                         <button
@@ -2324,7 +2655,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               )}
                             </button>
                           )}
-                          {((translatedDecisions.length > 0 ? translatedDecisions : aiSummary?.decisions) || []).length > 0 && renderTranslateDropdown("live_decisions")}
                         </div>
                       )}
                     </div>
@@ -2352,12 +2682,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       </div>
                     ) : (
                       <ul className="space-y-2.5">
-                        {translatingSection === "live_decisions" ? (
-                          <li className="flex items-center space-x-2 text-slate-400 dark:text-slate-500 text-sm italic py-2">
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Đang dịch quyết định...</span>
-                          </li>
-                        ) : (translatedDecisions.length > 0 ? translatedDecisions : (aiSummary?.decisions || [])).length > 0 ? (
+                        {(translatedDecisions.length > 0 ? translatedDecisions : (aiSummary?.decisions || [])).length > 0 ? (
                           (translatedDecisions.length > 0 ? translatedDecisions : (aiSummary?.decisions || [])).map((dec: string, idx: number) => (
                             <li key={idx} className="text-sm flex items-start space-x-2">
                               <span className="text-blue-500 mt-0.5">•</span>
@@ -2383,7 +2708,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <div className="w-7 h-7 rounded-lg bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center">
                           <CheckSquare className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                         </div>
-                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200">Phân công công việc</h3>
+                        <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                          <span>Phân công công việc</span>
+                          {isTranslatingActionItems && (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                          )}
+                        </h3>
                       </div>
                       <div className="flex items-center space-x-1">
                       {actionItems.length > 0 && (
@@ -2411,7 +2741,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           )}
                         </button>
                       )}
-                      {actionItems.length > 0 && renderTranslateDropdown("live_actions")}
                       </div>
                     </div>
 
@@ -2454,14 +2783,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                       item.is_completed ? "line-through text-slate-400 dark:text-slate-500" : ""
                                     }`}
                                   >
-                                    {translatingSection === "live_actions" ? (
-                                      <span className="flex items-center space-x-1.5 text-slate-400 text-xs italic">
-                                        <RefreshCw className="w-3 h-3 animate-spin" />
-                                        <span>Đang dịch...</span>
-                                      </span>
-                                    ) : (
-                                      translatedActionItems[actionItems.indexOf(item)] || item.description
-                                    )}
+                                    {translatedActionItems[actionItems.indexOf(item)] || item.description}
                                   </p>
                                   <button
                                     onClick={() => handleCopyText(item.description, `act_${item.id}`)}
@@ -2498,694 +2820,151 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </div>
                 </div>
               </div>
+              </div>
             ) : (
-              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
-                {/* Internal Search & Voice selector */}
-                <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
-                  <div className="relative w-full sm:max-w-xs md:max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Lọc từ khóa trong cuộc hội thoại..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
-                    />
-                    {searchQuery && (
-                      <button
-                        onClick={() => setSearchQuery("")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
-                        title="Xóa lọc"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
-                    <span className="text-slate-400 font-medium shrink-0">Giọng đọc:</span>
-                    <div className="relative flex-1 sm:flex-initial max-w-[240px] sm:max-w-[200px] w-full">
-                      <select
-                        value={selectedVoice}
-                        onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-3 pr-8 w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer shadow-sm font-semibold text-slate-700 dark:text-slate-200"
-                      >
-                        {allAvailableVoices.length > 0 ? (
-                          allAvailableVoices.map((v) => (
-                            <option key={v.value} value={v.value}>
-                              {v.name}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="">Giọng mặc định hệ thống</option>
-                        )}
-                      </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
-                    </div>
-
-                    {/* Translate All Button */}
-                    <div className="relative">
-                      <button
-                        onClick={() => setActiveTranslateAllDropdown(!activeTranslateAllDropdown)}
-                        disabled={isTranslatingAll}
-                        className="flex items-center space-x-1.5 h-9 px-3 bg-white hover:bg-slate-50 border border-slate-300 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-700/80 rounded-xl text-slate-700 dark:text-slate-200 font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
-                        title="Dịch toàn bộ hội thoại sang ngôn ngữ khác"
-                      >
-                        <Globe className={`w-3.5 h-3.5 ${isTranslatingAll ? "animate-spin" : ""}`} />
-                        <span>{isTranslatingAll ? "Đang dịch..." : "Dịch tất cả"}</span>
-                      </button>
-                      {activeTranslateAllDropdown && (
-                        <>
-                          <div className="fixed inset-0 z-20" onClick={() => setActiveTranslateAllDropdown(false)} />
-                          <div className="absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg z-30 py-1 text-slate-700 dark:text-slate-200">
-                            <button
-                              onClick={() => handleTranslateAll("vi")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Việt
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("en")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Anh
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("ja")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Nhật
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("zh")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Trung
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("ko")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Hàn
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("fr")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Pháp
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("de")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Đức
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("es")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tây Ban Nha
-                            </button>
-                          </div>
-                        </>
-                      )}
+              <div className="space-y-5">
+                {/* Editing mode quick actions */}
+                <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm px-4 py-3">
+                  <div className="flex items-center justify-between mb-2.5">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-500" />
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wide">Sửa bản ghi gốc (AI)</span>
                     </div>
                   </div>
-                </div>
-
-                {/* Transcript — Mobile Cards */}
-                <div className="sm:hidden space-y-2">
-                  {filteredTranscripts.map((t) => {
-                    const isEditing = editingTranscriptId === t.id;
-                    const needsReview = typeof t.confidence === "number" && t.confidence < 0.8;
-                    const fmtTime = (ms: number) => {
-                      const s = Math.floor(ms / 1000);
-                      const mm = Math.floor(s / 60);
-                      const ss = s % 60;
-                      return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
-                    };
-                    return (
-                      <div
-                        key={t.id}
-                        id={`transcript-row-${t.id}`}
-                        className={`border rounded-xl overflow-hidden transition-all duration-300 shadow-sm hover:shadow-md ${
-                          activeAudioTranscriptId === t.id
-                            ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
-                            : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900"
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      { label: "Bản gốc", icon: RotateCcw, mode: null as string | null, desc: "Bản ghi gốc thuần từ Deepgram" },
+                      { label: "Viết lại rõ ràng", icon: PenLine, mode: "rephrase" as string | null, desc: "Diễn đạt lại cho mạch lạc" },
+                      { label: "Thêm cấu trúc", icon: LayoutList, mode: "add_structure" as string | null, desc: "Tổ chức đoạn văn & dấu câu" },
+                      { label: "Chuyên nghiệp", icon: Briefcase, mode: "professional" as string | null, desc: "Giọng điệu trang trọng" },
+                      { label: "Mở rộng", icon: Maximize2, mode: "make_longer" as string | null, desc: "Thêm chi tiết vào nội dung" },
+                      { label: "Rút gọn", icon: Minimize2, mode: "make_shorter" as string | null, desc: "Thu gọn nội dung ngắn hơn" },
+                    ]).map((opt) => (
+                      <button
+                        key={opt.label}
+                        disabled={isRewritingRaw}
+                        onClick={async () => {
+                          setIsRewritingRaw(true);
+                          setActiveEditingMode(opt.mode);
+                          try {
+                            const res = await fetch("/api/meetings/reprocess/raw-rewrite", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ meetingId, mode: opt.mode }),
+                            });
+                            if (res.ok) {
+                              await refreshMeetingDataSilently();
+                              addToast(
+                                "Thành công",
+                                opt.mode 
+                                  ? `Đã cập nhật ${opt.label.toLowerCase()} thành công!`
+                                  : "Đã khôi phục bản gốc thành công!", 
+                                "success"
+                              );
+                            } else {
+                              addToast("Lỗi", "Không thể viết lại văn bản gốc.", "error");
+                            }
+                          } catch (e) {
+                            addToast("Lỗi", "Lỗi mạng hoặc máy chủ không phản hồi.", "error");
+                          } finally {
+                            setIsRewritingRaw(false);
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer border ${
+                          activeEditingMode === opt.mode
+                            ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/50 ring-1 ring-indigo-200 dark:ring-indigo-800/50"
+                            : "text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400 dark:hover:border-indigo-800/50"
                         }`}
+                        title={opt.desc}
                       >
-                        {/* Header: time + speaker + tools */}
-                        <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700/80">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`text-[11px] font-mono font-medium ${
-                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
-                              } text-slate-400`}
-                              onClick={() => handleSeekToLine(t)}
-                            >
-                              {fmtTime(t.startMs)}
-                            </span>
-                            <span
-                              className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-blue-300 dark:hover:ring-blue-700 transition-all"
-                              style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setRenamingSpeaker({ tag: t.speakerTag, name: t.speakerName });
-                                setRenameValue(t.speakerName);
-                              }}
-                            >
-                              {t.speakerName}
-                            </span>
-                            {needsReview && <span className="text-amber-500 text-xs">⚠️</span>}
-                            {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
-                          </div>
-                          <div className="flex items-center gap-0.5">
-                            <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
-                              <Sparkles className="w-3.5 h-3.5" />
-                            </button>
-                            {!isEditing && (
-                              <button onClick={() => startEditingTranscript(t)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors cursor-pointer" title="Sửa">
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                        {/* Body */}
-                        <div className="px-3 py-2.5 space-y-2">
-                          {isEditing ? (
-                            <div className="flex items-start space-x-2">
-                              <textarea
-                                value={editingTextVal}
-                                onChange={(e) => setEditingTextVal(e.target.value)}
-                                onBlur={() => {
-                                  if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                    handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                  } else {
-                                    setEditingTranscriptId(null);
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && !e.shiftKey) {
-                                    e.preventDefault();
-                                    if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                      handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                    } else {
-                                      setEditingTranscriptId(null);
-                                    }
-                                  } else if (e.key === "Escape") {
-                                    setEditingTranscriptId(null);
-                                  }
-                                }}
-                                autoFocus
-                                className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
-                                rows={3}
-                              />
-                              {isSavingLine && (
-                                <span className="p-1.5 text-slate-400">
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                handleSeekToLine(t);
-                              }}
-                              className="group/cell leading-relaxed cursor-pointer"
-                            >
-                              <span className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 text-amber-800 px-1.5 py-[1px] rounded border border-dashed border-amber-250 inline" : ""}`}>
-                                {highlightText(t.correctedText || t.originalText, searchQuery)}
-                              </span>
-                              <span 
-                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
-                                  activeTouchKey === `tx_orig_${t.id}`
-                                    ? "opacity-100 delay-0"
-                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
-                                }`}
-                              >
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    playTts(t.id, t.correctedText || t.originalText, true);
-                                  }}
-                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
-                                  }`}
-                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
-                                >
-                                  {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
-                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
-                                  ) : (
-                                    <Volume2 className="w-3 h-3" />
-                                  )}
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
-                                  }}
-                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
-                                  title="Sao chép gốc"
-                                >
-                                  {copiedKey === `tx_orig_${t.id}` ? (
-                                    <Check className="w-3 h-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="w-3 h-3" />
-                                  )}
-                                </button>
-                              </span>
-                            </div>
-                          )}
-                          {t.translatedText && (
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                handleSeekToLine(t);
-                              }}
-                              className="group/cell leading-relaxed pt-1.5 border-t border-slate-100 dark:border-slate-800/50 cursor-pointer"
-                            >
-                              <span className="text-[13px] text-slate-500 dark:text-slate-400 italic">
-                                {highlightText(t.translatedText, searchQuery)}
-                              </span>
-                              <span 
-                                className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
-                                  activeTouchKey === `tx_trans_${t.id}`
-                                    ? "opacity-100 delay-0"
-                                    : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
-                                }`}
-                              >
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    playTts(t.id, t.translatedText, false);
-                                  }}
-                                  className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                    activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
-                                  }`}
-                                  title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
-                                >
-                                  {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
-                                    <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
-                                  ) : (
-                                    <Volume2 className="w-3 h-3" />
-                                  )}
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleCopyText(t.translatedText, `tx_trans_${t.id}`);
-                                  }}
-                                  className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
-                                  title="Sao chép bản dịch"
-                                >
-                                  {copiedKey === `tx_trans_${t.id}` ? (
-                                    <Check className="w-3 h-3 text-green-500" />
-                                  ) : (
-                                    <Copy className="w-3 h-3" />
-                                  )}
-                                </button>
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                        {/* Line Summary */}
-                        {lineSummaries[t.id] && (
-                          <div className="px-3 py-2 bg-emerald-50/50 dark:bg-emerald-950/10 border-t border-emerald-100 dark:border-emerald-900/30 text-xs space-y-2">
-                            {lineSummaries[t.id].loading ? (
-                              <span className="flex items-center space-x-1.5 text-emerald-600"><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span>Đang tóm tắt...</span></span>
-                            ) : (
-                              <>
-                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt gốc:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].originalSummary}</p></div>
-                                <div><span className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider">Tóm tắt dịch:</span><p className="mt-0.5 text-slate-700 dark:text-slate-350 leading-relaxed whitespace-pre-line">{lineSummaries[t.id].translatedSummary}</p></div>
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {filteredTranscripts.length === 0 && (
-                    <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.</p>
+                        <opt.icon className="w-3.5 h-3.5" />
+                        <span>{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {isRewritingRaw && (
+                    <div className="mt-3 p-3 rounded-lg text-xs border bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400 flex items-center gap-2.5 shadow-sm">
+                      <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-indigo-500" />
+                      <p className="leading-relaxed">
+                        <span className="font-bold mr-1.5 shrink-0 inline-flex items-center gap-1">
+                          Đang xử lý:
+                        </span>
+                        Đang viết lại và sửa đổi văn bản bản ghi gốc bằng AI. Tiến trình này có thể mất ít giây, vòng xoay sẽ kết thúc sau khi cập nhật dữ liệu...
+                      </p>
+                    </div>
                   )}
                 </div>
 
-                {/* Transcript — Desktop Table */}
-                <div className="hidden sm:block overflow-x-auto pr-1">
-                  <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
-                        <th className="py-3 px-4 text-left style-none w-16 whitespace-nowrap">Giây</th>
-                        <th className="py-3 px-4 text-left style-none w-32 whitespace-nowrap">Người nói</th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">
-                          <div className="flex items-center space-x-1.5 select-none">
-                            <span>Văn bản gốc</span>
-                            <button
-                              onClick={() => {
-                                if (playingAllType === "original") {
-                                  stopPlayingAll();
-                                } else {
-                                  startPlayingPlaylist("original", filteredTranscripts);
-                                }
-                              }}
-                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
-                                playingAllType === "original"
-                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
-                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
-                              }`}
-                              title={playingAllType === "original" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản gốc từ trên xuống"}
-                            >
-                              {playingAllType === "original" ? (
-                                <VolumeX className="w-3 h-3 text-red-500" />
-                              ) : (
-                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
-                              )}
-                            </button>
-                          </div>
-                        </th>
-                        <th className="py-3 px-4 text-left style-none w-[40%]">
-                          <div className="flex items-center space-x-1.5 select-none">
-                            <span>Bản dịch</span>
-                            <button
-                              onClick={() => {
-                                if (playingAllType === "translated") {
-                                  stopPlayingAll();
-                                } else {
-                                  startPlayingPlaylist("translated", filteredTranscripts);
-                                }
-                              }}
-                              className={`p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center ${
-                                playingAllType === "translated"
-                                  ? "bg-red-50 text-red-500 border border-red-200 dark:bg-red-950/30 dark:border-red-900/30 shadow-sm animate-pulse"
-                                  : "bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-800"
-                              }`}
-                              title={playingAllType === "translated" ? "Dừng phát toàn bộ" : "Phát lại toàn bộ bản dịch từ trên xuống"}
-                            >
-                              {playingAllType === "translated" ? (
-                                <VolumeX className="w-3 h-3 text-red-500" />
-                              ) : (
-                                <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
-                              )}
-                            </button>
-                          </div>
-                        </th>
-                        <th className="py-3 px-4 text-center style-none w-20 whitespace-nowrap">Công cụ</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filteredTranscripts.map((t) => {
-                        const isEditing = editingTranscriptId === t.id;
-                        const needsReview = typeof t.confidence === "number" && t.confidence < 0.8;
-                        const formatTime = (ms: number) => {
-                          const s = Math.floor(ms / 1000);
-                          const m = Math.floor(s / 60);
-                          const secs = s % 60;
-                          return `${String(m).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-                        };
+                <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 p-5 sm:p-6 rounded-xl shadow-sm">
+                  {/* Card title */}
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <FileText className="w-4.5 h-4.5 text-indigo-500" />
+                    <span>Bản ghi gốc từ Deepgram</span>
+                    <span className="text-xs font-normal opacity-60">({filteredTranscripts.length} đoạn)</span>
+                  </div>
 
-                        return (
-                          <Fragment key={t.id}>
-                            <tr
-                              id={`transcript-row-${t.id}`}
-                              className={`group transition-colors duration-200 ${
-                                activeAudioTranscriptId === t.id
-                                  ? "bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
-                                  : "hover:bg-slate-50/55 dark:hover:bg-slate-900/50"
-                              }`}
-                            >
-                            <td
-                              className={`py-4 px-4 align-top font-medium whitespace-nowrap ${
-                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
-                              } text-slate-400`}
-                              onClick={() => handleSeekToLine(t)}
-                              title={audioBlobUrl ? "Click để phát từ vị trí này" : undefined}
-                            >
-                              {formatTime(t.startMs)}
-                            </td>
-                            <td className="py-4 px-4 align-top whitespace-nowrap">
-                              <div className="flex items-center space-x-1.5">
-                                <span
-                                  className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-blue-300 dark:hover:ring-blue-700 transition-all"
-                                  style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setRenamingSpeaker({ tag: t.speakerTag, name: t.speakerName });
-                                    setRenameValue(t.speakerName);
-                                  }}
-                                  title="Click để đổi tên người nói"
-                                >
-                                  <span>{t.speakerName}</span>
-                                </span>
-                                {needsReview && (
-                                  <span className="text-amber-500 font-extrabold text-xs cursor-help select-none" title="Độ tin cậy nhận diện thấp">⚠️</span>
-                                )}
-                              </div>
-                            </td>
-                            <td
-                              onClick={() => {
-                                if (!isEditing) {
-                                  setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                  handleSeekToLine(t);
-                                }
-                              }}
-                              className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
-                            >
-                              {isEditing ? (
-                                <div className="flex items-start space-x-2">
-                                  <textarea
-                                    value={editingTextVal}
-                                    onChange={(e) => setEditingTextVal(e.target.value)}
-                                    onBlur={() => {
-                                      if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                        handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                      } else {
-                                        setEditingTranscriptId(null);
-                                      }
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" && !e.shiftKey) {
-                                        e.preventDefault();
-                                        if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                          handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                        } else {
-                                          setEditingTranscriptId(null);
-                                        }
-                                      } else if (e.key === "Escape") {
-                                        setEditingTranscriptId(null);
-                                      }
-                                    }}
-                                    autoFocus
-                                    className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
-                                    rows={2}
-                                  />
-                                  {isSavingLine && (
-                                    <span className="p-1.5 text-slate-400">
-                                      <RefreshCw className="w-4 h-4 animate-spin" />
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="leading-relaxed">
-                                  <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
-                                    {highlightText(t.correctedText || t.originalText, searchQuery)}
-                                  </span>
-                                  {t.isEdited && (
-                                    <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
-                                      Đã sửa tay
-                                    </span>
-                                  )}
-                                  <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
-                                      activeTouchKey === `tx_orig_${t.id}`
-                                        ? "opacity-100 delay-0"
-                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
-                                    }`}
-                                  >
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        playTts(t.id, t.correctedText || t.originalText, true);
-                                      }}
-                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
-                                      }`}
-                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "original" ? "Dừng phát" : "Nghe gốc"}
-                                    >
-                                      {activeSpeech?.id === t.id && activeSpeech?.type === "original" ? (
-                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
-                                      ) : (
-                                        <Volume2 className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleCopyText(t.correctedText || t.originalText, `tx_orig_${t.id}`);
-                                      }}
-                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
-                                      title="Sao chép gốc"
-                                    >
-                                      {copiedKey === `tx_orig_${t.id}` ? (
-                                        <Check className="w-3 h-3 text-green-500" />
-                                      ) : (
-                                        <Copy className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                  </span>
-                                </div>
-                              )}
-                            </td>
-                            <td
-                              onClick={() => {
-                                setActiveTouchKey(activeTouchKey === `tx_trans_${t.id}` ? null : `tx_trans_${t.id}`);
-                                handleSeekToLine(t);
-                              }}
-                              className="py-4 px-4 align-top text-slate-500 dark:text-slate-400 italic leading-relaxed group/cell cursor-pointer"
-                            >
-                              {t.translatedText && (
-                                <div className="leading-relaxed">
-                                  <span>
-                                    {highlightText(t.translatedText, searchQuery)}
-                                  </span>
-                                  <span 
-                                    className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
-                                      activeTouchKey === `tx_trans_${t.id}`
-                                        ? "opacity-100 delay-0"
-                                        : "opacity-100 xl:opacity-0 xl:group-hover/cell:opacity-100 xl:group-hover/cell:delay-[150ms]"
-                                    }`}
-                                  >
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        playTts(t.id, t.translatedText, false);
-                                      }}
-                                      className={`p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 cursor-pointer transition-colors ${
-                                        activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "border-blue-200 dark:border-blue-900/50 text-red-500 bg-red-50 dark:bg-red-950/30 border-red-200" : ""
-                                      }`}
-                                      title={activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? "Dừng phát" : "Nghe dịch"}
-                                    >
-                                      {activeSpeech?.id === t.id && activeSpeech?.type === "translated" ? (
-                                        <VolumeX className="w-3 h-3 text-red-500 animate-pulse" />
-                                      ) : (
-                                        <Volume2 className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleCopyText(t.translatedText, `tx_trans_${t.id}`);
-                                      }}
-                                      className="p-0.5 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-750 rounded shadow-sm text-slate-400 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400 transition-all cursor-pointer"
-                                      title="Sao chép bản dịch"
-                                    >
-                                      {copiedKey === `tx_trans_${t.id}` ? (
-                                        <Check className="w-3 h-3 text-green-500" />
-                                      ) : (
-                                        <Copy className="w-3 h-3" />
-                                      )}
-                                    </button>
-                                  </span>
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-4 px-4 align-top text-center">
-                              <div className="flex items-center justify-center space-x-1.5">
-                                <button
-                                  onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")}
-                                  className={`p-1 rounded transition-colors cursor-pointer ${
-                                    lineSummaries[t.id]
-                                      ? "text-emerald-600 bg-emerald-50 dark:text-emerald-450 dark:bg-emerald-950/30"
-                                      : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:text-slate-400 dark:hover:text-emerald-400 dark:hover:bg-emerald-950/30"
-                                  }`}
-                                  title="Tóm tắt bằng AI"
-                                >
-                                  <Sparkles className="w-4 h-4" />
-                                </button>
-                                {!isEditing && (
-                                  <button
-                                    onClick={() => startEditingTranscript(t)}
-                                    className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer"
-                                    title="Chỉnh sửa văn bản"
-                                  >
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                          {lineSummaries[t.id] && (
-                            <tr className="bg-slate-50/50 dark:bg-slate-900/10 border-b border-slate-200/50 dark:border-slate-800/50">
-                              <td className="hidden sm:table-cell" />
-                              <td />
-                              <td className="py-3 px-2 sm:px-4 text-xs leading-relaxed text-slate-600 dark:text-slate-400 align-top">
-                                {lineSummaries[t.id].loading ? (
-                                  <span className="flex items-center space-x-1.5 py-1">
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-                                    <span>Đang tạo tóm tắt văn bản gốc bằng AI...</span>
-                                  </span>
-                                ) : (
-                                  <div className="space-y-1">
-                                    <div className="flex items-center space-x-1.5">
-                                      <span className="font-bold text-[10px] uppercase text-emerald-600 dark:text-emerald-400 tracking-wider block">Tóm tắt văn bản gốc:</span>
-                                      <button
-                                        onClick={() => handleCopyText(lineSummaries[t.id].originalSummary, `line_orig_sum_${t.id}`)}
-                                        className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400 rounded transition-colors cursor-pointer"
-                                        title="Sao chép tóm tắt gốc"
-                                      >
-                                        {copiedKey === `line_orig_sum_${t.id}` ? (
-                                          <Check className="w-3 h-3 text-green-500" />
-                                        ) : (
-                                          <Copy className="w-3 h-3" />
-                                        )}
-                                      </button>
-                                    </div>
-                                    <p className="whitespace-pre-line leading-relaxed text-slate-700 dark:text-slate-350">{lineSummaries[t.id].originalSummary}</p>
-                                  </div>
-                                )}
-                              </td>
-                              <td className="py-3 px-4 text-xs leading-relaxed text-slate-600 dark:text-slate-400 align-top">
-                                {lineSummaries[t.id].loading ? (
-                                  <span className="flex items-center space-x-1.5 py-1">
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-500" />
-                                    <span>Đang tạo tóm tắt bản dịch bằng AI...</span>
-                                  </span>
-                                ) : (
-                                  <div className="space-y-1">
-                                    <div className="flex items-center space-x-1.5">
-                                      <span className="font-bold text-[10px] uppercase text-emerald-600 dark:text-emerald-400 tracking-wider block">Tóm tắt bản dịch:</span>
-                                      <button
-                                        onClick={() => handleCopyText(lineSummaries[t.id].translatedSummary, `line_trans_sum_${t.id}`)}
-                                        className="p-0.5 text-slate-400 hover:text-blue-600 dark:text-slate-500 dark:hover:text-blue-400 rounded transition-colors cursor-pointer"
-                                        title="Sao chép tóm tắt dịch"
-                                      >
-                                        {copiedKey === `line_trans_sum_${t.id}` ? (
-                                          <Check className="w-3 h-3 text-green-500" />
-                                        ) : (
-                                          <Copy className="w-3 h-3" />
-                                        )}
-                                      </button>
-                                    </div>
-                                    <p className="whitespace-pre-line leading-relaxed text-slate-700 dark:text-slate-355">{lineSummaries[t.id].translatedSummary}</p>
-                                  </div>
-                                )}
-                              </td>
-                              <td className="hidden sm:table-cell" />
-                            </tr>
-                          )}
-                        </Fragment>
-                        );
-                      })}
-                      {filteredTranscripts.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="py-12 text-center text-slate-400 italic">
-                            Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.
-                          </td>
-                        </tr>
+                  {/* Search & Language pill control bar */}
+                  <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
+                    <div className="relative w-full sm:max-w-xs md:max-w-md">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Tìm kiếm từ khóa trong bản ghi gốc..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-8 h-9 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                      />
+                      {searchQuery && (
+                        <button
+                          onClick={() => setSearchQuery("")}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                          title="Xóa lọc"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       )}
-                    </tbody>
-                  </table>
+                    </div>
+
+                    <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
+                      <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-lg border border-slate-200/50 dark:border-slate-700/50 shadow-inner">
+                        <button
+                          onClick={() => setRawLangMode("original")}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                            rawLangMode === "original"
+                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                          }`}
+                        >
+                          Bản gốc
+                        </button>
+                        <button
+                          onClick={() => setRawLangMode("translated")}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                            rawLangMode === "translated"
+                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                              : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                          }`}
+                        >
+                          Bản dịch
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-0 divide-y divide-slate-50 dark:divide-slate-800/50">
+                    {filteredTranscripts.length > 0 ? filteredTranscripts.map((t: any) => (
+                      <div key={t.id} className="py-2.5 first:pt-0 last:pb-0">
+                        <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">
+                          {rawLangMode === "translated"
+                            ? (t.translatedText || <span className="text-slate-400 dark:text-slate-500 italic text-xs">(Chưa có bản dịch cho câu này. Hãy chạy lại pipeline dịch ở Hội thoại)</span>)
+                            : (t.correctedText || t.originalText)}
+                        </p>
+                      </div>
+                    )) : (
+                      <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -3245,73 +3024,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                     </div>
 
-                    {/* Translate All Button */}
-                    <div className="relative">
-                      <button
-                        onClick={() => setActiveTranslateAllDropdown(!activeTranslateAllDropdown)}
-                        disabled={isTranslatingAll}
-                        className="flex items-center space-x-1.5 h-9 px-3 bg-white hover:bg-slate-50 border border-slate-300 dark:bg-slate-900 dark:hover:bg-slate-800 dark:border-slate-700/80 rounded-xl text-slate-700 dark:text-slate-200 font-semibold shadow-sm transition-colors cursor-pointer disabled:opacity-50"
-                        title="Dịch toàn bộ hội thoại sang ngôn ngữ khác"
-                      >
-                        <Globe className={`w-3.5 h-3.5 ${isTranslatingAll ? "animate-spin" : ""}`} />
-                        <span>{isTranslatingAll ? "Đang dịch..." : "Dịch tất cả"}</span>
-                      </button>
-                      {activeTranslateAllDropdown && (
-                        <>
-                          <div className="fixed inset-0 z-20" onClick={() => setActiveTranslateAllDropdown(false)} />
-                          <div className="absolute right-0 mt-1.5 w-40 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg shadow-lg z-30 py-1 text-slate-700 dark:text-slate-200">
-                            <button
-                              onClick={() => handleTranslateAll("vi")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Việt
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("en")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Anh
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("ja")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Nhật
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("zh")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Trung
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("ko")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Hàn
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("fr")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Pháp
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("de")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tiếng Đức
-                            </button>
-                            <button
-                              onClick={() => handleTranslateAll("es")}
-                              className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs font-medium cursor-pointer transition-colors"
-                            >
-                              Tây Ban Nha
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
+
                   </div>
                 </div>
 
@@ -3410,11 +3123,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
                               </span>
-                              {hasDiff && (
-                                <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic transition-all group-hover/cell:opacity-100 opacity-0 h-0 group-hover/cell:h-auto overflow-hidden">
-                                  Gốc: {closestRaw.correctedText || closestRaw.originalText}
-                                </div>
-                              )}
+
                               <span 
                                 className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                   activeTouchKey === `tx_orig_${t.id}`
@@ -3681,11 +3390,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                     {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
                                   </span>
-                                  {hasDiff && (
-                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic transition-all group-hover/cell:opacity-100 opacity-0 h-0 group-hover/cell:h-auto overflow-hidden">
-                                      Gốc: {closestRaw.correctedText || closestRaw.originalText}
-                                    </div>
-                                  )}
+
                                   {t.isEdited && (
                                     <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
                                       Đã sửa tay

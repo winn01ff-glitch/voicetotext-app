@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiClient, runWithGeminiClient } from "@/lib/ai/geminiClient";
 
 export async function POST(request: Request) {
   try {
@@ -15,11 +16,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY environment variable is not configured" }, { status: 500 });
     }
 
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
     const translationModelName = process.env.AI_TRANSLATION_MODEL || "gemini-3.1-flash-lite";
-    const model = genAI.getGenerativeModel({
-      model: translationModelName,
-    });
 
     // 1. Summarize original text (if it's long, otherwise just return it)
     let originalSummary = originalText;
@@ -30,8 +27,11 @@ Task: Summarize the following text briefly (in 1 or 2 sentences max) in its orig
 - Return only the summary text. Do not add explanations or notes.
 Text: "${originalText}"
 `;
-      const result = await model.generateContent(originalPrompt);
-      originalSummary = result.response.text().trim();
+      originalSummary = await runWithGeminiClient(async (client) => {
+        const model = client.getGenerativeModel({ model: translationModelName });
+        const result = await model.generateContent(originalPrompt);
+        return result.response.text().trim();
+      });
     }
 
     // 2. Summarize translated text (if it's long, otherwise just return it)
@@ -43,8 +43,11 @@ Task: Summarize the following text briefly (in 1 or 2 sentences max) in Vietname
 - Return only the summary text. Do not add explanations or notes.
 Text: "${translatedText}"
 `;
-      const result = await model.generateContent(translatedPrompt);
-      translatedSummary = result.response.text().trim();
+      translatedSummary = await runWithGeminiClient(async (client) => {
+        const model = client.getGenerativeModel({ model: translationModelName });
+        const result = await model.generateContent(translatedPrompt);
+        return result.response.text().trim();
+      });
     }
 
     return NextResponse.json({ originalSummary, translatedSummary });

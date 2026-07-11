@@ -1,32 +1,27 @@
-const fs = require('fs');
+const { createClient } = require("@supabase/supabase-js");
 
-let code = fs.readFileSync('src/app/history/[id]/page.tsx', 'utf8');
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://cxjorywgtvwpsmhgxcar.supabase.co";
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-// The block starts at:
-//         {/* MAIN TAB CONTENT CONTAINER */}
-//         {mainTab === "processed" ? (
-const split1 = code.split('{/* MAIN TAB CONTENT CONTAINER */}');
-const beforeContent = split1[0];
-let contentToReplace = split1[1];
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-// We need to find the exact end of this block which is right before:
-//         </div>
-//       </main>
-//     </div>
-//   );
-const split2 = contentToReplace.split('</main>');
-let mainContent = split2[0];
-const afterContent = '</main>' + split2.slice(1).join('</main>');
+async function run() {
+  const { data, error } = await supabase
+    .from("transcripts")
+    .select("id, version_type, is_active")
+    .eq("meeting_id", "e89c6bca-2c83-4ef0-add2-a60b155f315d");
 
-// mainContent contains the huge {mainTab === "processed" ? ... } block
-// Let's replace the top level ternary with independent if blocks.
+  if (error) {
+    console.error(error);
+    return;
+  }
 
-// Quick hack: just let React compile it by replacing the state variables locally!
-// We can change the file so that:
-// const subTabProcessed = mainTab === 'summary' ? 'summary' : 'transcript';
-// const subTabRaw = mainTab === 'ask' ? 'summary' : 'transcript';
-// This is messy.
+  const versions = {};
+  data.forEach(t => {
+    const key = `${t.version_type} (active: ${t.is_active})`;
+    versions[key] = (versions[key] || 0) + 1;
+  });
+  console.log("Versions count:", versions);
+}
 
-// Let's inject Ask AI and Control Panel directly.
-// The easiest way is to append Ask AI at the end of the file or in the JSX.
-// And for Control Panel, put it inside the AI tab.
+run();

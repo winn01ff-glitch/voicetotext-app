@@ -257,7 +257,7 @@ async function executeSpellcheckJob(job: any, config: PipelineConfig) {
     confidence: r.confidence || 1.0
   }));
 
-  const corrected = await step1_correctSTT(rawUtterances, config);
+  const corrected = await step1_correctSTT(rawUtterances, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
   // step1's prompt guarantees "same order and count — one output per input" (no merge/split
@@ -293,11 +293,11 @@ async function executeSpeakerJob(job: any, config: PipelineConfig) {
 
   // Diarize
   let mapped: MappedTurn[] = [];
-  const batches = chunkArray(correctedTurns, 20); // batch size 20
+  const batches = chunkArray(correctedTurns, 30); // batch size 30
   for (let i = 0; i < batches.length; i++) {
     if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
     const prevContext = i > 0 ? mapped.slice(-10) : undefined;
-    const result = await step2_speakerMapping(batches[i], config, prevContext);
+    const result = await step2_speakerMapping(batches[i], config, prevContext, job.mode);
     mapped.push(...result);
   }
 
@@ -343,7 +343,7 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
     confidence: r.confidence || 1.0
   }));
 
-  const translated = await step4_translate(checkedTurns, config);
+  const translated = await step4_translate(checkedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
   const newRows = activeTranscripts.map((r, i) => {
@@ -362,6 +362,36 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
   });
 
   await incrementTranscriptVersion(job.meeting_id, newRows, 'FINAL');
+
+  // Translate RAW transcripts for the "Bản gốc" tab
+  const { data: rawTranscripts } = await supabase
+    .from("transcripts")
+    .select("*")
+    .eq("meeting_id", job.meeting_id)
+    .or("version_type.eq.RAW,version_type.eq.raw")
+    .order("start_ms", { ascending: true });
+
+  if (rawTranscripts && rawTranscripts.length > 0) {
+    const rawTurns = rawTranscripts.map(r => ({
+      text: r.corrected_text || r.original_text || "",
+      start_ms: r.start_ms || 0,
+      end_ms: r.end_ms || 0,
+      speaker_tag: r.speaker_tag || "",
+      speaker_name: r.speaker_name || "",
+      confidence: r.confidence || 1.0
+    }));
+    const translatedRaw = await step4_translate(rawTurns, config, job.mode);
+    if (!(await checkJobCancelled(job.id))) {
+      const updates = rawTranscripts.map((r, i) => {
+        const t = translatedRaw[i];
+        return supabase
+          .from("transcripts")
+          .update({ translated_text: t ? t.translated_text : null })
+          .eq("id", r.id);
+      });
+      await Promise.all(updates);
+    }
+  }
 }
 
 // Job 4: Summary
@@ -379,7 +409,7 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
     confidence: r.confidence || 1.0
   }));
 
-  const summary = await step5_summarize(translatedTurns, config);
+  const summary = await step5_summarize(translatedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
   
   const actions = await step6_extractActions(translatedTurns, summary, config);

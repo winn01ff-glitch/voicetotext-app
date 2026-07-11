@@ -257,7 +257,7 @@ export default function Dashboard() {
           .from("meetings")
           .select(`
             id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
-            ai_summaries ( executive_summary ),
+            ai_summaries ( executive_summary, is_active ),
             meeting_metadata ( created_from )
           `)
           .order("created_at", { ascending: false });
@@ -408,7 +408,7 @@ export default function Dashboard() {
         .from("meetings")
         .select(`
           id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
-          ai_summaries ( executive_summary ),
+          ai_summaries ( executive_summary, is_active ),
           meeting_metadata ( created_from )
         `)
         .order("created_at", { ascending: false });
@@ -1854,9 +1854,7 @@ export default function Dashboard() {
                                 <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
                                   {m.status === "recording"
                                     ? "Cuộc họp đang diễn ra. Thông tin hội thoại và tóm tắt sẽ hiển thị sau khi kết thúc."
-                                    : m.ai_summaries?.executive_summary
-                                    ? highlightText(m.ai_summaries.executive_summary, searchQuery)
-                                    : "(Cuộc họp chưa được tóm tắt)"}
+                                    : (() => { const s = Array.isArray(m.ai_summaries) ? m.ai_summaries.find((s: any) => s.is_active)?.executive_summary || m.ai_summaries[0]?.executive_summary : m.ai_summaries?.executive_summary; return s ? highlightText(s, searchQuery) : "(Cuộc họp chưa được tóm tắt)"; })()}
                                 </p>
                               )}
                             </div>

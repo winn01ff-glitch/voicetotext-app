@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiClient } from "@/lib/ai/geminiClient";
 
 export async function POST(request: Request) {
   try {
@@ -215,7 +216,7 @@ The output must preserve the chronological order of the conversation.
 
 
     // 4. Setup Gemini Client & Call API
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const genAI = getGeminiClient();
     const modelName = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
     // Low temperature: speaker assignment + translation are factual tasks with a "correct answer",
     // not creative writing — keep sampling close to deterministic.

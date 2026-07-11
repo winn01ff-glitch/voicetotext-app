@@ -1,15 +1,10 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiClient } from "./geminiClient";
 
 const EMBEDDING_MODEL = "gemini-embedding-001";
 const EMBEDDING_DIM = 768; // Khớp với cột vector(768) đã tạo cho text-embedding-004 trước đây
 const CHUNK_MAX_CHARS = 4000; // Khoảng 1000 tokens (1 token ~ 4 chars)
-
-function getGeminiClient(): GoogleGenerativeAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY environment variable is not configured");
-  return new GoogleGenerativeAI(apiKey);
-}
 
 export async function generateEmbeddings(meetingId: string) {
   const supabase = await createServerSupabaseClient();

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiClient } from "@/lib/ai/geminiClient";
 
 export async function POST(request: Request) {
   try {
@@ -174,7 +175,7 @@ Return VALID JSON ONLY. No markdown, no explanation.
 `;
 
     // 5. Setup Gemini Client & Call API
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
+    const genAI = getGeminiClient();
     const modelName = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
     const model = genAI.getGenerativeModel({ 
       model: modelName,

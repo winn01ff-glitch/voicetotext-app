@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiClient, runWithGeminiClient } from "@/lib/ai/geminiClient";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { text, texts, sourceLang, targetLang } = body;
+    const { text, texts, sections, sourceLang, targetLang } = body;
 
-    if (!text && (!texts || !Array.isArray(texts))) {
-      return NextResponse.json({ error: "Missing text or texts array" }, { status: 400 });
+    if (!text && (!texts || !Array.isArray(texts)) && !sections) {
+      return NextResponse.json({ error: "Missing text, texts array, or sections object" }, { status: 400 });
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -15,11 +16,43 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "GEMINI_API_KEY environment variable is not configured" }, { status: 500 });
     }
 
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const translationModelName = process.env.AI_TRANSLATION_MODEL || "gemini-3.1-flash-lite";
-    const model = genAI.getGenerativeModel({
-      model: translationModelName,
-    });
+    const translationModelName = "gemini-3.1-flash-lite"; // Force gemini-3.1-flash-lite as requested
+
+    if (sections) {
+      const prompt = `
+You are a professional and natural translator.
+Task: Translate the following JSON object containing meeting summary sections ("summary", "decisions", "action_items") from "${sourceLang || "auto"}" to "${targetLang || "Vietnamese"}".
+
+Requirements:
+- Translate faithfully and naturally. Keep the tone appropriate.
+- Respond ONLY with a valid JSON object matching the exact structure and keys of the input.
+- Do not add explanations, notes, or markdown formatting (like \`\`\`json). Only return raw JSON.
+- If any string or text is already in the target language, keep it unchanged.
+
+JSON to translate:
+${JSON.stringify(sections)}
+`;
+
+      const rawText = await runWithGeminiClient(async (client) => {
+        const model = client.getGenerativeModel({ model: translationModelName });
+        const result = await model.generateContent(prompt);
+        return result.response.text().trim();
+      });
+
+      let rawResponse = rawText;
+      // Strip markdown code block if present
+      if (rawResponse.startsWith("```")) {
+        rawResponse = rawResponse.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/```$/, "").trim();
+      }
+      try {
+        const parsed = JSON.parse(rawResponse);
+        return NextResponse.json({ translatedSections: parsed });
+      } catch (e) {
+        console.error("Failed to parse batch sections translation response:", rawResponse, e);
+        // Fallback: return original sections
+        return NextResponse.json({ translatedSections: sections });
+      }
+    }
 
     if (texts && Array.isArray(texts)) {
       if (texts.length === 0) {
@@ -48,8 +81,13 @@ JSON to translate:
 ${JSON.stringify(chunk)}
 `;
 
-        const result = await model.generateContent(prompt);
-        let rawResponse = result.response.text().trim();
+        const rawText = await runWithGeminiClient(async (client) => {
+          const model = client.getGenerativeModel({ model: translationModelName });
+          const result = await model.generateContent(prompt);
+          return result.response.text().trim();
+        });
+
+        let rawResponse = rawText;
         // Strip markdown code block if present
         if (rawResponse.startsWith("```")) {
           rawResponse = rawResponse.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/```$/, "").trim();
@@ -83,8 +121,11 @@ Text to translate:
 "${text}"
 `;
 
-      const result = await model.generateContent(prompt);
-      const translatedText = result.response.text().trim().replace(/^"(.*)"$/, '$1');
+      const translatedText = await runWithGeminiClient(async (client) => {
+        const model = client.getGenerativeModel({ model: translationModelName });
+        const result = await model.generateContent(prompt);
+        return result.response.text().trim().replace(/^"(.*)"$/, '$1');
+      });
 
       return NextResponse.json({ translatedText });
     }

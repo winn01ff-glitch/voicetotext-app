@@ -7,6 +7,7 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { DeepgramClient } from "@deepgram/sdk";
+import { runWithGeminiClient } from "./geminiClient";
 
 // ================================================================
 // Types & Interfaces
@@ -131,8 +132,9 @@ const AI_FAST_MODEL = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
 const AI_QUALITY_MODEL = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
 const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 
-/** Số utterance tối đa mỗi batch gửi Gemini (tránh quá dài) */
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 30;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Retry config */
 const DEFAULT_MAX_RETRIES = 3;
@@ -168,12 +170,6 @@ const STATUS_LABEL: Record<PipelineStep, string> = {
 // Gemini Helper — tạo client, gọi model với fallback
 // ================================================================
 
-function getGeminiClient(): GoogleGenerativeAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY environment variable is not configured");
-  return new GoogleGenerativeAI(apiKey);
-}
-
 /**
  * Gọi Gemini với model chỉ định, tự fallback sang gemini-3.1-flash-lite nếu lỗi.
  * Trả về parsed JSON object.
@@ -182,45 +178,62 @@ async function callGemini<T = any>(
   prompt: string,
   modelName: string
 ): Promise<T> {
-  const genAI = getGeminiClient();
-
-  let result;
-  try {
-    const model = genAI.getGenerativeModel({
-      model: modelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
-    result = await model.generateContent(prompt);
-  } catch (err) {
-    console.warn(`Model ${modelName} failed, falling back to ${FALLBACK_MODEL}:`, err);
-    const fallbackModel = genAI.getGenerativeModel({
-      model: FALLBACK_MODEL,
-      generationConfig: { responseMimeType: "application/json" },
-    });
-    result = await fallbackModel.generateContent(prompt);
-  }
-
-  let responseText = result.response.text().trim();
-
-  // Robustly extract JSON — loại bỏ markdown wrappers nếu có
-  const startIdx = responseText.indexOf("{");
-  const endIdx = responseText.lastIndexOf("}");
-  // Cũng kiểm tra array response
-  const arrStartIdx = responseText.indexOf("[");
-  const arrEndIdx = responseText.lastIndexOf("]");
-
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    // Nếu array bắt đầu trước object, ưu tiên array
-    if (arrStartIdx !== -1 && arrStartIdx < startIdx) {
-      responseText = responseText.substring(arrStartIdx, arrEndIdx + 1);
-    } else {
-      responseText = responseText.substring(startIdx, endIdx + 1);
+  return runWithGeminiClient(async (genAI) => {
+    let result;
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: "application/json" },
+      });
+      result = await model.generateContent(prompt);
+    } catch (err) {
+      console.warn(`Model ${modelName} failed, falling back to ${FALLBACK_MODEL}:`, err);
+      const fallbackModel = genAI.getGenerativeModel({
+        model: FALLBACK_MODEL,
+        generationConfig: { responseMimeType: "application/json" },
+      });
+      result = await fallbackModel.generateContent(prompt);
     }
-  } else if (arrStartIdx !== -1 && arrEndIdx !== -1 && arrEndIdx > arrStartIdx) {
-    responseText = responseText.substring(arrStartIdx, arrEndIdx + 1);
-  }
+    return result;
+  }).then((result) => {
+    let responseText = result.response.text().trim();
+    // Robustly extract JSON — loại bỏ markdown wrappers nếu có
+    const startIdx = responseText.indexOf("{");
+    const endIdx = responseText.lastIndexOf("}");
+    const arrStartIdx = responseText.indexOf("[");
+    const arrEndIdx = responseText.lastIndexOf("]");
 
-  return JSON.parse(responseText) as T;
+    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+      if (arrStartIdx !== -1 && arrStartIdx < startIdx) {
+        responseText = responseText.substring(arrStartIdx, arrEndIdx + 1);
+      } else {
+        responseText = responseText.substring(startIdx, endIdx + 1);
+      }
+    } else if (arrStartIdx !== -1 && arrEndIdx !== -1 && arrEndIdx > arrStartIdx) {
+      responseText = responseText.substring(arrStartIdx, arrEndIdx + 1);
+    }
+    return robustParseJSON<T>(responseText);
+  });
+}
+
+// We can keep getGeminiClient for other uses, but updated to use key rotation
+import { getGeminiClient } from "./geminiClient";
+
+function robustParseJSON<T>(text: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch (err: any) {
+    const match = err.message.match(/at position (\d+)/i);
+    if (match) {
+      const pos = parseInt(match[1], 10);
+      try {
+        return JSON.parse(text.substring(0, pos)) as T;
+      } catch (innerErr) {
+        throw err;
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -400,9 +413,125 @@ export async function savePipelineStep(
 // STEP 1: correctSTT — Gemini sửa lỗi STT
 // ================================================================
 
+function getEditingModeInstructions(mode: string | null | undefined): string {
+  switch (mode) {
+    case "rephrase":
+      return `
+HƯỚNG DẪN (Viết lại rõ ràng):
+1. Viết lại mỗi câu cho RÕ RÀNG, mạch lạc hơn.
+2. Giữ nguyên ý nghĩa gốc, chỉ cải thiện cách diễn đạt.
+3. Loại bỏ từ thừa, câu lặp.
+4. Áp dụng glossary nếu có từ khớp.
+5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+6. KHÔNG gộp hoặc tách câu.`;
+
+    case "professional":
+      return `
+HƯỚNG DẪN (Chuyên nghiệp hóa):
+1. Chuyển giọng điệu sang TRANG TRỌNG, chuyên nghiệp.
+2. Thay thế ngôn ngữ thân mật bằng ngôn ngữ lịch sự.
+3. Loại bỏ filler words (えー, あの, umm, à, ờ, uh).
+4. Cải thiện cấu trúc ngữ pháp.
+5. Áp dụng glossary nếu có từ khớp.
+6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+7. KHÔNG gộp hoặc tách câu.`;
+
+    case "add_structure":
+      return `
+HƯỚNG DẪN (Thêm cấu trúc):
+1. Hãy định dạng, cấu trúc lại nội dung của từng lượt thoại (utterance) để tăng tính mạch lạc và dễ đọc.
+2. Sử dụng dấu xuống dòng (\\n) để chia các câu nói dài thành các đoạn văn nhỏ logic.
+3. Khi người nói liệt kê thông tin hoặc trình bày các ý chính, hãy tự động định dạng thành danh sách gạch đầu dòng (ví dụ sử dụng "- [Ý chính]..." hoặc "- [Mục tiêu]...") hoặc danh sách số (1, 2, 3...) ngay bên trong lượt thoại đó.
+4. Nếu lượt thoại mở đầu một chủ đề hoặc phần mới, hãy thêm tiêu đề mục dạng viết hoa hoặc đóng ngoặc vuông (ví dụ: "[CHỦ ĐỀ CHÍNH]", "[HƯỚNG DẪN CHI TIẾT]") để người đọc dễ theo dõi.
+5. Ngắt câu và thêm đầy đủ các dấu câu (chấm, phẩy, chấm hỏi, hai chấm) vào đúng vị trí logic.
+6. Áp dụng bảng thuật ngữ (glossary) nếu có từ tương ứng.
+7. Giữ NGUYÊN trật tự và số lượng các lượt thoại (utterances) — đầu ra phải là danh sách JSON có số lượng phần tử trùng khớp chính xác 100% với đầu vào, tuyệt đối KHÔNG gộp hay lược bỏ bất kỳ dòng nào.`;
+
+    case "make_shorter":
+      return `
+HƯỚNG DẪN (Rút gọn):
+1. RÚT NGẮN mỗi câu, giữ lại ý chính.
+2. Loại bỏ chi tiết thừa, lặp lại.
+3. Loại bỏ filler words hoàn toàn.
+4. Mỗi câu output phải ngắn hơn input.
+5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+6. KHÔNG gộp hoặc tách câu.`;
+
+    case "make_longer":
+      return `
+HƯỚNG DẪN (Mở rộng):
+1. MỞ RỘNG mỗi câu với chi tiết bổ sung hợp lý.
+2. Giải thích ngữ cảnh khi cần thiết.
+3. Thêm liên từ và chuyển tiếp cho mạch lạc.
+4. KHÔNG thêm thông tin sai — chỉ mở rộng dựa trên ngữ cảnh có.
+5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+6. KHÔNG gộp hoặc tách câu.`;
+
+    case "remove_fillers":
+      return `
+HƯỚNG DẪN (Bỏ từ lặp & filler):
+1. Loại bỏ TẤT CẢ filler words (えー, あの, umm, à, ờ, uh, um, well).
+2. Loại bỏ từ/cụm từ bị lặp lại liên tiếp.
+3. Loại bỏ backchannel không cần thiết (はい, vâng, yeah, okay khi chỉ là đệm).
+4. GIỮ NGUYÊN nội dung chính — chỉ bỏ phần thừa.
+5. Áp dụng glossary nếu có từ khớp.
+6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+7. KHÔNG gộp hoặc tách câu.`;
+
+    case "deep_clean":
+      return `
+HƯỚNG DẪN (Làm sạch toàn bộ):
+1. Sửa TẤT CẢ lỗi chính tả, ngữ pháp do ASR.
+2. Loại bỏ filler words và từ lặp.
+3. Cải thiện cấu trúc câu cho mạch lạc.
+4. Thêm dấu câu đúng vị trí.
+5. GIỮ NGUYÊN ý nghĩa gốc — chỉ cải thiện hình thức.
+6. Áp dụng glossary nếu có từ khớp.
+7. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+8. KHÔNG gộp hoặc tách câu.`;
+
+    case "minimal":
+      return `
+HƯỚNG DẪN (Giữ nguyên tối đa):
+1. CHỈ sửa những lỗi chính tả rõ ràng nhất (sai kanji hiển nhiên, thiếu dấu tiếng Việt rõ ràng).
+2. GIỮ NGUYÊN tất cả filler words, backchannel, từ lặp.
+3. GIỮ NGUYÊN phong cách nói tự nhiên của người nói.
+4. KHÔNG chỉnh sửa ngữ pháp hay cấu trúc câu.
+5. Mục tiêu: giữ bản ghi gần nhất với âm thanh gốc.
+6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+7. KHÔNG gộp hoặc tách câu.`;
+
+    case "aggressive":
+      return `
+HƯỚNG DẪN (Sửa mạnh — Khôi phục từ gốc):
+1. Tích cực sửa tất cả lỗi ASR — cố gắng khôi phục từ đúng mà người nói muốn nói.
+2. Sử dụng ngữ cảnh cuộc họp để suy luận từ đúng khi ASR nhận sai.
+3. Sửa homophones (từ đồng âm bị nhận sai).
+4. Loại bỏ filler words hoàn toàn.
+5. Áp dụng glossary nếu có từ khớp — ưu tiên cao.
+6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+7. KHÔNG gộp hoặc tách câu.
+8. KHÔNG thêm thông tin không có trong nguyên văn.`;
+
+    default:
+      // Default: standard STT correction
+      return `
+HƯỚNG DẪN:
+1. Sửa lỗi phiên âm rõ ràng:
+   - Sai chính tả do ASR (ví dụ: kanji sai, thiếu dấu tiếng Việt, homophones tiếng Anh)
+   - Áp dụng glossary nếu có từ khớp
+   - KHÔNG thêm/bớt/diễn giải lại nội dung
+   - Giữ nguyên filler words (えー, あの, umm, à, ờ, uh)
+   - Giữ nguyên backchannel (はい, vâng, yeah, okay)
+2. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
+3. KHÔNG gộp hoặc tách câu ở bước này.`;
+  }
+}
+
 export async function step1_correctSTT(
   utterances: RawUtterance[],
-  config: PipelineConfig
+  config: PipelineConfig,
+  mode?: string | null
 ): Promise<CorrectedTurn[]> {
   if (utterances.length === 0) return [];
 
@@ -443,18 +572,12 @@ DỮ LIỆU ĐẦU VÀO (Raw STT output)
 ${JSON.stringify(inputData)}
 
 ==================================================
-HƯỚNG DẪN
+QUY TẮC BẮT BUỘC:
+1. KHÔNG DỊCH NGHĨA SANG NGÔN NGỮ KHÁC. Giữ nguyên ngôn ngữ gốc của dữ liệu đầu vào. Nếu đầu vào là tiếng Nhật, kết quả bắt buộc phải là tiếng Nhật. Nếu đầu vào là tiếng Việt, kết quả phải là tiếng Việt.
+2. Giữ nguyên định dạng và số lượng phần tử đầu ra đúng bằng số lượng phần tử đầu vào (1-to-1).
 ==================================================
-1. Sửa lỗi phiên âm rõ ràng:
-   - Sai chính tả do ASR (ví dụ: kanji sai, thiếu dấu tiếng Việt, homophones tiếng Anh)
-   - Áp dụng glossary nếu có từ khớp
-   - KHÔNG thêm/bớt/diễn giải lại nội dung
-   - Giữ nguyên filler words (えー, あの, umm, à, ờ, uh)
-   - Giữ nguyên backchannel (はい, vâng, yeah, okay)
 
-2. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-
-3. KHÔNG gộp hoặc tách câu ở bước này.
+==================================================${getEditingModeInstructions(mode)}
 
 ==================================================
 OUTPUT FORMAT — Trả về JSON ONLY, không markdown
@@ -478,6 +601,7 @@ speaker_hint giữ nguyên giá trị speaker từ input.
     // pass is actually better than the live batch pass, not just "the same model run twice".
     const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_QUALITY_MODEL);
     const turns = result.corrected_turns || [];
+    await sleep(2500);
 
     // Fallback: nếu Gemini trả về ít hơn input, pad bằng input gốc
     for (let i = 0; i < batch.length; i++) {
@@ -501,10 +625,58 @@ speaker_hint giữ nguyên giá trị speaker từ input.
 // STEP 2: speakerMapping — Gemini phân tách người nói với confidence
 // ================================================================
 
+function getSpeakerModeInstructions(mode: string | null | undefined): string {
+  switch (mode) {
+    case "by_name":
+      return `
+HƯỚNG DẪN BỔ SUNG (Gán tên từ nội dung):
+- Tích cực tìm tên thật từ nội dung hội thoại: xưng hô, giới thiệu, gọi tên.
+- Ưu tiên gán tên thật thay vì "Speaker X".
+- Nếu tìm thấy tên trong hội thoại nhưng không khớp danh sách → tạo speaker mới với tên đó.
+- Sử dụng ngữ cảnh cuộc họp và register để verify tên.`;
+
+    case "by_role":
+      return `
+HƯỚNG DẪN BỔ SUNG (Gán theo vai trò):
+- Gán speaker_name theo VAI TRÒ thay vì tên: "Quản lý", "Nhân viên", "Khách hàng", "Phỏng vấn viên", "Ứng viên"...
+- Xác định vai trò từ: giọng điệu, nội dung phát biểu, quyền ra quyết định, cách xưng hô.
+- Nếu không rõ vai trò → dùng "Người tham gia 1", "Người tham gia 2"...`;
+
+    case "merge_speakers":
+      return `
+HƯỚNG DẪN BỔ SUNG (Gộp người nói trùng):
+- Tích cực gộp các speaker có thể là cùng 1 người (ASR tách nhầm do thay đổi giọng, micro).
+- So sánh: register, từ vựng, chủ đề phát biểu, cách xưng hô để xác định trùng lặp.
+- Nếu 2 speaker có cùng phong cách nói và không bao giờ nói cùng lúc → có thể là 1 người.
+- Ưu tiên gộp hơn tách khi không chắc chắn.`;
+
+    case "numbered":
+      return `
+HƯỚNG DẪN BỔ SUNG (Đánh số đơn giản):
+- KHÔNG cố gắng gán tên thật. Chỉ dùng "Speaker 1", "Speaker 2", "Speaker 3"...
+- Tập trung vào phân tách CHÍNH XÁC ai nói câu nào.
+- Dùng audio hint và ngữ cảnh hội thoại để phân biệt speakers.
+- speaker_name = "Speaker X" cho tất cả.`;
+
+    case "single_speaker_split":
+      return `
+HƯỚNG DẪN BỔ SUNG (Video độc thoại / 1 người nói):
+- Đây là video độc thoại hoặc chỉ có 1 người nói duy nhất xuyên suốt.
+- TUYỆT ĐỐI KHÔNG gộp các câu thoại liên tiếp thành một đoạn văn lớn.
+- Giữ nguyên việc phân tách các câu ngắn (hoặc từng cụm câu ngắn khoảng 15-20 từ) tương ứng với mốc thời gian từ dữ liệu đầu vào.
+- Tất cả các lượt nói gán chung tag "speaker_1" và tên hiển thị "Diễn giả".
+- Tập trung vào việc giữ cho bản dịch và bản ghi được chia nhỏ, dễ đọc theo tiến trình thời gian.`;
+
+    default:
+      return ``;
+  }
+}
+
 export async function step2_speakerMapping(
   correctedTurns: CorrectedTurn[],
   config: PipelineConfig,
-  prevContext?: MappedTurn[]
+  prevContext?: MappedTurn[],
+  mode?: string | null
 ): Promise<MappedTurn[]> {
   if (correctedTurns.length === 0) return [];
 
@@ -570,7 +742,7 @@ HƯỚNG DẪN
    - Phản hồi ngắn (はい, vâng, yeah, uh-huh) thuộc về LISTENER, không phải speaker đang nói.
    - Tách ra và gán cho người nghe.
 
-4. CONSECUTIVE GROUPING: Gộp các turns liên tiếp cùng speaker.
+4. CONSECUTIVE GROUPING: ${mode === "single_speaker_split" ? "TUYỆT ĐỐI KHÔNG gộp các turns liên tiếp cùng speaker. Giữ nguyên các mốc câu ngắn từ dữ liệu đầu vào để dễ đọc." : "Gộp các turns liên tiếp cùng speaker."}
 
 ==================================================
 OUTPUT FORMAT — JSON ONLY
@@ -588,6 +760,8 @@ OUTPUT FORMAT — JSON ONLY
   ]
 }
 
+${getSpeakerModeInstructions(mode)}
+
 RULES:
 - speaker_name lấy từ DANH SÁCH NGƯỜI NÓI nếu match. Nếu confidence < 0.7, dùng "Unknown Speaker".
 - Nếu phát hiện speaker mới (không có trong danh sách), gán tag tuần tự (speaker_3, speaker_4...) và name = "Speaker X".
@@ -597,6 +771,7 @@ RULES:
 
     const result = await callGemini<{ mapped_turns: MappedTurn[] }>(prompt, AI_QUALITY_MODEL);
     const turns = result.mapped_turns || [];
+    await sleep(2500);
 
     // Đảm bảo confidence < 0.7 → Unknown Speaker
     for (const turn of turns) {
@@ -719,9 +894,47 @@ OUTPUT FORMAT — JSON ONLY
 // STEP 4: translate — Gemini dịch sang ngôn ngữ đích
 // ================================================================
 
+function getTranslateModeInstructions(mode: string | null | undefined): string {
+  switch (mode) {
+    case "translate_clean":
+      return `
+HƯỚNG DẪN DỊCH (Dịch và Chỉnh sửa):
+1. Dịch MỖI turn sang ngôn ngữ đích.
+2. SỬA ngữ pháp, cải thiện tính mạch lạc và rõ ràng.
+3. Loại bỏ filler words (uh, um, えー, あの, à, ờ).
+4. Cải thiện cấu trúc câu cho dễ đọc.
+5. KHÔNG thay đổi ý nghĩa gốc.
+6. Áp dụng glossary nếu có từ khớp.
+7. KHÔNG dịch tên riêng người, địa danh.`;
+
+    case "translate_simplify":
+      return `
+HƯỚNG DẪN DỊCH (Dịch và Đơn giản hóa):
+1. Dịch MỖI turn sang ngôn ngữ đích.
+2. Sử dụng ngôn ngữ ĐƠN GIẢN, dễ hiểu.
+3. Thay thế thuật ngữ kỹ thuật bằng từ thông dụng khi có thể.
+4. Rút ngắn câu dài, chia thành câu ngắn hơn.
+5. Loại bỏ filler words hoàn toàn.
+6. KHÔNG thay đổi ý nghĩa cốt lõi.
+7. Áp dụng glossary nếu có từ khớp.`;
+
+    default:
+      // Default: translate as-is
+      return `
+HƯỚNG DẪN DỊCH:
+1. Dịch MỖI turn sang ngôn ngữ đích một cách tự nhiên, trung thành với nguyên văn.
+2. Nếu text gốc ĐÃ là ngôn ngữ đích → translated_text = text gốc (copy nguyên).
+3. KHÔNG dịch tên riêng người, địa danh — giữ nguyên.
+4. Áp dụng glossary nếu có từ khớp.
+5. Giữ nguyên register/tone (formal ↔ formal, casual ↔ casual).
+6. Filler words có thể lược bỏ hoặc giữ tùy ngữ cảnh tự nhiên.`;
+  }
+}
+
 export async function step4_translate(
   checkedTurns: CheckedTurn[],
-  config: PipelineConfig
+  config: PipelineConfig,
+  mode?: string | null
 ): Promise<TranslatedTurn[]> {
   if (checkedTurns.length === 0) return [];
 
@@ -765,15 +978,7 @@ DỮ LIỆU CẦN DỊCH
 ==================================================
 ${JSON.stringify(inputData)}
 
-==================================================
-HƯỚNG DẪN DỊCH
-==================================================
-1. Dịch MỖI turn sang "${config.targetLanguage}" một cách tự nhiên, trung thành với nguyên văn.
-2. Nếu text gốc ĐÃ là "${config.targetLanguage}" → translated_text = text gốc (copy nguyên).
-3. KHÔNG dịch tên riêng người, địa danh — giữ nguyên.
-4. Áp dụng glossary nếu có từ khớp.
-5. Giữ nguyên register/tone (formal ↔ formal, casual ↔ casual).
-6. Filler words có thể lược bỏ hoặc giữ tùy ngữ cảnh tự nhiên.
+==================================================${getTranslateModeInstructions(mode)}
 
 ==================================================
 OUTPUT FORMAT — JSON ONLY
@@ -795,6 +1000,7 @@ OUTPUT FORMAT — JSON ONLY
 
     const result = await callGemini<{ translated_turns: TranslatedTurn[] }>(prompt, AI_FAST_MODEL);
     const turns = result.translated_turns || [];
+    await sleep(2500);
 
     // Fallback: nếu thiếu, pad bằng input gốc
     for (let i = 0; i < batch.length; i++) {
@@ -821,9 +1027,104 @@ OUTPUT FORMAT — JSON ONLY
 // STEP 5: summarize — Gemini tóm tắt + decisions (AI_QUALITY_MODEL)
 // ================================================================
 
+function getSummaryModeInstructions(mode: string | null | undefined, targetLanguage: string): string {
+  switch (mode) {
+    case "detailed":
+      return `
+NHIỆM VỤ: Tạo TÓM TẮT CHI TIẾT — phân tích đầy đủ từng chủ đề được thảo luận.
+
+HƯỚNG DẪN:
+1. Chia nội dung thành các phần theo chủ đề (sections).
+2. Mỗi phần có tiêu đề rõ ràng và nội dung chi tiết.
+3. Bao gồm ý kiến của từng người tham gia nếu có.
+4. Liệt kê các quyết định đã được thông qua.
+5. Viết bằng ngôn ngữ "${targetLanguage}".
+6. Không hallucinate thông tin không có trong biên bản.
+
+OUTPUT FORMAT — JSON ONLY:
+{
+  "executive_summary": "Phân tích chi tiết với các phần được đánh dấu ## cho mỗi chủ đề...",
+  "decisions": ["Quyết định 1...", "Quyết định 2..."]
+}`;
+
+    case "bullets":
+      return `
+NHIỆM VỤ: Trích xuất CÁC ĐIỂM CHÍNH dưới dạng gạch đầu dòng (bullet points).
+
+HƯỚNG DẪN:
+1. Tổng hợp các điểm quan trọng nhất của cuộc họp.
+2. Mỗi điểm là một câu ngắn gọn, súc tích.
+3. Sắp xếp theo thứ tự quan trọng giảm dần.
+4. Tối đa 10-15 điểm chính.
+5. Viết bằng ngôn ngữ "${targetLanguage}".
+6. Không hallucinate thông tin không có trong biên bản.
+
+OUTPUT FORMAT — JSON ONLY:
+{
+  "executive_summary": "• Điểm chính 1\\n• Điểm chính 2\\n• Điểm chính 3...",
+  "decisions": ["Quyết định 1...", "Quyết định 2..."]
+}`;
+
+    case "meeting_minutes":
+      return `
+NHIỆM VỤ: Tạo BIÊN BẢN HỌP chuyên nghiệp, sẵn sàng gửi qua email.
+
+HƯỚNG DẪN:
+1. Viết biên bản với cấu trúc chuyên nghiệp gồm:
+   - Thông tin chung (ngày, chủ đề, người tham gia)
+   - Nội dung thảo luận chính
+   - Quyết định đã thông qua
+   - Công việc tiếp theo (nếu có)
+2. Giọng điệu trang trọng, chuyên nghiệp.
+3. Viết bằng ngôn ngữ "${targetLanguage}".
+4. Không hallucinate thông tin không có trong biên bản.
+
+OUTPUT FORMAT — JSON ONLY:
+{
+  "executive_summary": "BIÊN BẢN CUỘC HỌP\\n\\n1. THÔNG TIN CHUNG\\n...\\n\\n2. NỘI DUNG THẢO LUẬN\\n...\\n\\n3. QUYẾT ĐỊNH\\n...\\n\\n4. CÔNG VIỆC TIẾP THEO\\n...",
+  "decisions": ["Quyết định 1...", "Quyết định 2..."]
+}`;
+
+    case "action_items_only":
+      return `
+NHIỆM VỤ: CHỈ trích xuất CÔNG VIỆC CẦN LÀM (Action Items) từ cuộc họp.
+
+HƯỚNG DẪN:
+1. Tìm mọi công việc, cam kết, nhiệm vụ được nhắc đến.
+2. Tóm tắt ngắn gọn chỉ liên quan đến action items.
+3. Viết bằng ngôn ngữ "${targetLanguage}".
+4. Không hallucinate thông tin không có trong biên bản.
+
+OUTPUT FORMAT — JSON ONLY:
+{
+  "executive_summary": "Tóm tắt các công việc cần thực hiện sau cuộc họp...",
+  "decisions": ["Quyết định liên quan đến phân công 1...", "Quyết định 2..."]
+}`;
+
+    default:
+      // Default: standard summary
+      return `
+NHIỆM VỤ: Tạo BÁO CÁO TÓM TẮT chất lượng cao.
+
+HƯỚNG DẪN:
+1. Executive Summary: Đoạn văn ngắn gọn mô tả mục đích và kết quả chung.
+2. Key Decisions: Danh sách các quyết định/thỏa thuận quan trọng.
+3. Viết bằng ngôn ngữ "${targetLanguage}".
+4. Nếu không có quyết định rõ ràng, trả mảng rỗng.
+5. Không hallucinate thông tin không có trong biên bản.
+
+OUTPUT FORMAT — JSON ONLY:
+{
+  "executive_summary": "nội dung tóm tắt tổng quan cuộc họp...",
+  "decisions": ["Quyết định thứ nhất...", "Quyết định thứ hai..."]
+}`;
+  }
+}
+
 export async function step5_summarize(
   translatedTurns: TranslatedTurn[],
-  config: PipelineConfig
+  config: PipelineConfig,
+  mode?: string | null
 ): Promise<SummaryResult> {
   if (translatedTurns.length === 0) {
     return {
@@ -842,36 +1143,24 @@ export async function step5_summarize(
     })
     .join("\n");
 
+  // Build mode-specific instructions
+  const modeInstructions = getSummaryModeInstructions(mode, config.targetLanguage);
+
   const prompt = `
 Bạn là một thư ký cuộc họp chuyên nghiệp sử dụng mô hình trí tuệ nhân tạo chất lượng cao.
-Nhiệm vụ của bạn là đọc toàn bộ biên bản cuộc họp sau đây và trả về một báo cáo tóm tắt chất lượng cao dưới dạng JSON:
-1. Executive Summary (Tóm tắt tổng quan): Một đoạn văn ngắn gọn mô tả mục đích và kết quả chung của cuộc họp.
-2. Key Decisions (Quyết định cốt lõi): Danh sách các quyết định hoặc thỏa thuận quan trọng đã được thông qua.
 
 Thông tin cuộc họp:
 - Tiêu đề: ${config.title}
 - Ngữ cảnh: ${config.meetingContext || "General discussion"}
 - Ngôn ngữ gốc: ${getSourceLangLabel(config.sourceLanguage)}
-- Ngôn ngữ dịch: ${config.targetLanguage}
+- Ngôn ngữ đích: ${config.targetLanguage}
 
 Biên bản cuộc họp cần phân tích:
 ---
 ${transcriptLog}
 ---
 
-Hãy trả về một đối tượng JSON khớp chính xác với cấu trúc sau:
-{
-  "executive_summary": "nội dung tóm tắt tổng quan cuộc họp...",
-  "decisions": [
-    "Quyết định thứ nhất...",
-    "Quyết định thứ hai..."
-  ]
-}
-
-IMPORTANT:
-- Viết tóm tắt bằng ngôn ngữ "${config.targetLanguage}".
-- Nếu không có quyết định rõ ràng, trả mảng rỗng.
-- Không hallucinate thông tin không có trong biên bản.
+${modeInstructions}
 `;
 
   // Dùng AI_QUALITY_MODEL cho bước summary

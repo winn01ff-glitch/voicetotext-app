@@ -1,6 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+
 import { runAIJobsQueue } from "@/lib/ai/queueWorker";
 import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
 
@@ -13,10 +13,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing meeting_id" }, { status: 400 });
     }
 
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    if (!geminiApiKey) {
-      return NextResponse.json({ error: "GEMINI_API_KEY environment variable is not configured" }, { status: 500 });
-    }
 
     const supabase = await createServerSupabaseClient();
 
@@ -126,132 +122,20 @@ export async function POST(request: Request) {
       if (insertError) throw insertError;
     }
 
-    // Auto-enqueue background full-context polish (spellcheck/speaker/translation).
-    // "summary" is intentionally excluded here: executeSummaryJob inserts a new
-    // versioned ai_summaries row, while this route's own summary step below updates
-    // the single un-versioned row created at start-meeting — enqueuing both would
-    // leave two rows per meeting_id and break the .maybeSingle() read on history page.
+    // Auto-enqueue background AI pipeline (spellcheck → speaker → translation → summary).
+    // All AI processing is handled by the queue worker using the saved transcripts.
     if ((transcripts || []).length > 0) {
       try {
-        const enqueuedTypes = await enqueueAiJobs(meeting_id, ["spellcheck", "speaker", "translation"]);
+        const enqueuedTypes = await enqueueAiJobs(meeting_id, ["spellcheck", "speaker", "translation", "summary"]);
         if (enqueuedTypes.length > 0) {
           after(() => runAIJobsQueue(meeting_id).catch((err) => console.error("[QueueWorker] Background error:", err)));
         }
       } catch (err) {
-        // Non-fatal: live-corrected transcript is already saved: worst case the
-        // background polish simply doesn't run and the user can retry manually.
-        console.error("Failed to auto-enqueue AI polish jobs:", err);
+        console.error("Failed to auto-enqueue AI jobs:", err);
       }
     }
 
-    // 3. Format transcripts into a text log for summary generation
-    let transcriptLog = "";
-    if (transcripts && transcripts.length > 0) {
-      transcriptLog = transcripts
-        .map((t: any) => {
-          const speakerName = t.speakerName || "Unknown";
-          const timeStr = new Date(t.startMs).toISOString().substr(14, 5);
-          return `[${timeStr}] ${speakerName}: ${t.correctedText || t.text} (Dịch: ${t.translatedText || "N/A"})`;
-        })
-        .join("\n");
-    } else {
-      transcriptLog = "(Không có nội dung đối thoại nào được ghi nhận)";
-    }
-
-    // 4. Call Gemini Quality Model to generate summary
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-    const qualityModelName = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
-    const model = genAI.getGenerativeModel({
-      model: qualityModelName,
-      generationConfig: { responseMimeType: "application/json" },
-    });
-
-    const summaryPrompt = `
-Bạn là một thư ký cuộc họp chuyên nghiệp sử dụng mô hình trí tuệ nhân tạo chất lượng cao.
-Nhiệm vụ của bạn là đọc toàn bộ biên bản cuộc họp sau đây và trả về một báo cáo tóm tắt chất lượng cao dưới dạng JSON:
-1. Executive Summary (Tóm tắt tổng quan): Một đoạn văn ngắn gọn mô tả mục đích và kết quả chung của cuộc họp.
-2. Key Decisions (Quyết định cốt lõi): Danh sách các quyết định hoặc thỏa thuận quan trọng đã được thông qua.
-3. Action Items (Danh sách công việc): Danh sách các công việc cụ thể được phân công, bao gồm tên người chịu trách nhiệm (owner) và thời hạn hoàn thành (deadline) dạng ISO 8601 hoặc mô tả thời gian (ví dụ: "Ngày mai", "Thứ Sáu tới") hoặc null nếu không rõ ràng.
-
-Biên bản cuộc họp cần phân tích:
----
-${transcriptLog}
----
-
-Hãy trả về một đối tượng JSON khớp chính xác với cấu trúc sau:
-{
-  "executive_summary": "nội dung tóm tắt tổng quan cuộc họp...",
-  "decisions": [
-    "Quyết định thứ nhất...",
-    "Quyết định thứ hai..."
-  ],
-  "action_items": [
-    {
-      "description": "Nội dung công việc...",
-      "owner": "Tên người chịu trách nhiệm...",
-      "deadline": "Thời gian hoàn thành..."
-    }
-  ]
-}
-`;
-
-    let aiResponse;
-    try {
-      aiResponse = await model.generateContent(summaryPrompt);
-    } catch (err) {
-      console.warn(`Summary model ${qualityModelName} failed, falling back to gemini-3.1-flash-lite:`, err);
-      const fallbackModel = genAI.getGenerativeModel({
-        model: "gemini-3.1-flash-lite",
-        generationConfig: { responseMimeType: "application/json" },
-      });
-      aiResponse = await fallbackModel.generateContent(summaryPrompt);
-    }
-    const responseText = aiResponse.response.text();
-    const summaryResult = JSON.parse(responseText);
-
-    // 5. Save summary and decisions to ai_summaries table
-    const { error: saveSummaryError } = await supabase
-      .from("ai_summaries")
-      .update({
-        status: "Completed",
-        executive_summary: summaryResult.executive_summary,
-        decisions: summaryResult.decisions || [],
-      })
-      .eq("meeting_id", meeting_id)
-      .eq("is_active", true);
-
-    if (saveSummaryError) throw saveSummaryError;
-
-    // 6. Save Action Items to action_items table
-    if (summaryResult.action_items && summaryResult.action_items.length > 0) {
-      const actionItemsToInsert = summaryResult.action_items.map((item: any) => {
-        let parsedDeadline = null;
-        if (item.deadline) {
-          const d = new Date(item.deadline);
-          if (!isNaN(d.getTime())) {
-            parsedDeadline = d.toISOString();
-          }
-        }
-        return {
-          meeting_id,
-          description: item.description,
-          owner: item.owner || null,
-          deadline: parsedDeadline,
-          is_completed: false,
-        };
-      });
-
-      // Insert action items (ignore conflicts or simply insert them)
-      const { error: insertActionError } = await supabase
-        .from("action_items")
-        .insert(actionItemsToInsert);
-
-      if (insertActionError) {
-        console.error("Insert end-meeting action items error:", insertActionError);
-      }
-    }
-
-    // 7. Update meeting status to completed
+    // Update meeting status to completed
     const { error: updateMeetingCompletedError } = await supabase
       .from("meetings")
       .update({ status: "completed" })
@@ -261,9 +145,6 @@ Hãy trả về một đối tượng JSON khớp chính xác với cấu trúc 
 
     return NextResponse.json({
       status: "success",
-      summary: summaryResult.executive_summary,
-      decisions: summaryResult.decisions || [],
-      action_items: summaryResult.action_items || [],
     });
   } catch (error) {
     console.error("End meeting error:", error);

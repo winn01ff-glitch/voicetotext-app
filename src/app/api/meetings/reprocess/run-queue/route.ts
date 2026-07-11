@@ -5,7 +5,7 @@ import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
 
 export async function POST(req: Request) {
   try {
-    const { meetingId, jobTypes } = await req.json();
+    const { meetingId, jobTypes, mode } = await req.json();
 
     if (!meetingId || !jobTypes || !Array.isArray(jobTypes)) {
       return NextResponse.json({ error: "Thiếu tham số bắt buộc" }, { status: 400 });
@@ -20,7 +20,7 @@ export async function POST(req: Request) {
 
     // Skips job types that already have a queued/processing row for this meeting —
     // avoids two overlapping runs (e.g. auto-enqueue on end-meeting + manual click).
-    const enqueuedTypes = await enqueueAiJobs(meetingId, jobTypes);
+    const enqueuedTypes = await enqueueAiJobs(meetingId, jobTypes, mode || null);
 
     if (enqueuedTypes.length === 0) {
       return NextResponse.json({ success: true, message: "Các job này đã đang chạy hoặc đang chờ." });
