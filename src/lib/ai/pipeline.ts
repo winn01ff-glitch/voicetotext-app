@@ -1080,34 +1080,19 @@ export async function runPipeline(
 
 async function saveRawToTranscripts(meetingId: string, utterances: RawUtterance[]) {
   const supabase = await createServerSupabaseClient();
-  
+
   // Set existing to false (nếu re-upload)
   await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meetingId);
   await supabase.from("speakers").update({ is_active: false }).eq("meeting_id", meetingId);
-  
-  const insertRows = utterances.map((u) => ({
-    meeting_id: meetingId,
-    original_text: u.text,
-    corrected_text: u.text,
-    start_ms: Math.round(Number(u.start * 1000)),
-    end_ms: Math.round(Number(u.end * 1000)),
-    confidence: u.confidence || 1.0,
-    speaker_tag: `speaker_${u.speaker + 1}`,
-    speaker_name: `Speaker ${u.speaker + 1}`,
-    version_type: 'RAW',
-    version: 1,
-    is_active: true
-  }));
 
-  const insertBatches = chunkArray(insertRows, 100);
-  for (const batch of insertBatches) {
-    await supabase.from("transcripts").insert(batch);
-  }
-  
-  // Create basic speakers
-  const uniqueTags = Array.from(new Set(insertRows.map(r => r.speaker_tag)));
+  // Create basic speakers FIRST so transcript rows can link speaker_id (the FK the
+  // history page's join actually reads — speaker_tag/speaker_name on transcripts are
+  // denormalized text only, never joined against, so without speaker_id every row
+  // shows "Unknown" regardless of these columns being set).
+  const uniqueTags = Array.from(new Set(utterances.map((u) => `speaker_${u.speaker + 1}`)));
+  const tagToSpeakerId: Record<string, string> = {};
   for (const tag of uniqueTags) {
-     await supabase.from("speakers").insert({
+     const { data: newSpeaker } = await supabase.from("speakers").insert({
         meeting_id: meetingId,
         speaker_tag: tag,
         display_name: tag.replace("speaker_", "Speaker "),
@@ -1115,7 +1100,31 @@ async function saveRawToTranscripts(meetingId: string, utterances: RawUtterance[
         version_type: 'RAW',
         version: 1,
         is_active: true
-     });
+     }).select("id").single();
+     if (newSpeaker) tagToSpeakerId[tag] = newSpeaker.id;
+  }
+
+  const insertRows = utterances.map((u) => {
+    const speakerTag = `speaker_${u.speaker + 1}`;
+    return {
+      meeting_id: meetingId,
+      speaker_id: tagToSpeakerId[speakerTag] || null,
+      original_text: u.text,
+      corrected_text: u.text,
+      start_ms: Math.round(Number(u.start * 1000)),
+      end_ms: Math.round(Number(u.end * 1000)),
+      confidence: u.confidence || 1.0,
+      speaker_tag: speakerTag,
+      speaker_name: speakerTag.replace("speaker_", "Speaker "),
+      version_type: 'RAW',
+      version: 1,
+      is_active: true
+    };
+  });
+
+  const insertBatches = chunkArray(insertRows, 100);
+  for (const batch of insertBatches) {
+    await supabase.from("transcripts").insert(batch);
   }
   
   // Cập nhật raw_transcript vào meetings (text-only backup)
