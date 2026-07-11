@@ -106,6 +106,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
   const [activeSummaryMode, setActiveSummaryMode] = useState<string | null>(null);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [activeEditingMode, setActiveEditingMode] = useState<string | null>(null);
   const [isRewritingRaw, setIsRewritingRaw] = useState(false);
   const [rawLangMode, setRawLangMode] = useState<"original" | "translated">("original");
@@ -829,7 +830,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (jobs) {
         const summaryJob = jobs.find((j: any) => j.type === "summary");
         if (summaryJob) {
-          setActiveSummaryMode(summaryJob.mode);
+          if (summaryJob.status === "completed") {
+            setActiveSummaryMode(summaryJob.mode);
+            if (summaryJob.mode) {
+              localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
+            }
+          } else {
+            const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+            setActiveSummaryMode(cachedMode || null);
+          }
         }
       }
 
@@ -923,7 +932,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (jobs) {
         const summaryJob = jobs.find((j: any) => j.type === "summary");
         if (summaryJob) {
-          setActiveSummaryMode(summaryJob.mode);
+          if (summaryJob.status === "completed") {
+            setActiveSummaryMode(summaryJob.mode);
+            if (summaryJob.mode) {
+              localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
+            }
+          } else if (!isGeneratingSummary) {
+            const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+            setActiveSummaryMode(cachedMode || null);
+          }
         }
       }
     } catch (err) {
@@ -931,14 +948,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  // Auto-poll every 4s while any AI job is still queued/processing
+  // Auto-poll every 1.5s while any AI job is still queued/processing
   const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing");
   useEffect(() => {
-    if (!hasActiveJobs) return;
+    if (!hasActiveJobs) {
+      if (isGeneratingSummary) {
+        setIsGeneratingSummary(false);
+      }
+      return;
+    }
     const interval = setInterval(refreshMeetingDataSilently, 1500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasActiveJobs]);
+  }, [hasActiveJobs, isGeneratingSummary]);
 
   const prevHasActiveJobsRef = useRef(false);
   useEffect(() => {
@@ -2515,6 +2537,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <button
                           key={opt.label}
                           onClick={async () => {
+                            setIsGeneratingSummary(true);
                             setActiveSummaryMode(opt.mode);
                             const res = await fetch("/api/meetings/reprocess/run-queue", {
                               method: "POST",
@@ -2524,6 +2547,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             if (res.ok) {
                               refreshMeetingDataSilently();
                             } else {
+                              setIsGeneratingSummary(false);
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                             }
                           }}
@@ -2544,7 +2568,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     {renderGlobalTranslateDropdown()}
                   </div>
 
-                  {hasActiveJobs && (
+                  {(hasActiveJobs || isGeneratingSummary) && (
                     <div className="mt-3 p-3 rounded-lg text-xs border bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400 flex items-center gap-2.5 shadow-sm">
                       <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-indigo-500" />
                       <p className="leading-relaxed">
