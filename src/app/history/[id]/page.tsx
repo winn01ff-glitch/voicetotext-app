@@ -840,6 +840,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             setActiveSummaryMode(cachedMode || null);
           }
         }
+        const hasActive = jobs.some((j: any) => j.status === "queued" || j.status === "processing");
+        if (!hasActive) {
+          setIsGeneratingSummary(false);
+        }
       }
 
       const { data: chats } = await supabase
@@ -942,6 +946,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             setActiveSummaryMode(cachedMode || null);
           }
         }
+        const hasActive = jobs.some((j: any) => j.status === "queued" || j.status === "processing");
+        if (!hasActive) {
+          setIsGeneratingSummary(false);
+        }
       }
     } catch (err) {
       console.error("Silent refresh error:", err);
@@ -951,16 +959,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // Auto-poll every 1.5s while any AI job is still queued/processing
   const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing");
   useEffect(() => {
-    if (!hasActiveJobs) {
-      if (isGeneratingSummary) {
-        setIsGeneratingSummary(false);
-      }
-      return;
-    }
+    if (!hasActiveJobs) return;
     const interval = setInterval(refreshMeetingDataSilently, 1500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasActiveJobs, isGeneratingSummary]);
+  }, [hasActiveJobs]);
 
   const prevHasActiveJobsRef = useRef(false);
   useEffect(() => {
