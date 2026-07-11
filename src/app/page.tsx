@@ -244,7 +244,10 @@ export default function Dashboard() {
   // Polling for processing meetings
   useEffect(() => {
     const hasProcessing = meetings.some(
-      (m) => !["recording", "completed", "paused", "failed"].includes(m.status)
+      // "ready" is the YouTube/upload pipeline's terminal status (distinct from "completed",
+      // which is the live-meeting/record flow's terminal status) — without it here, a finished
+      // YouTube import polls forever.
+      (m) => !["recording", "completed", "ready", "paused", "failed"].includes(m.status)
     );
     if (!hasProcessing) return;
 
@@ -999,8 +1002,11 @@ export default function Dashboard() {
     if (activeTab === "favorite" && !m.is_favorite) return false;
     if (statusFilter !== "all") {
       if (statusFilter === "processing") {
-        const isPipelineProcessing = !["recording", "completed", "paused", "failed"].includes(m.status);
+        const isPipelineProcessing = !["recording", "completed", "ready", "paused", "failed"].includes(m.status);
         if (!isPipelineProcessing) return false;
+      } else if (statusFilter === "completed") {
+        // "ready" (YouTube/upload pipeline) counts as done, same as "completed" (live/record).
+        if (m.status !== "completed" && m.status !== "ready") return false;
       } else {
         if (m.status !== statusFilter) return false;
       }
@@ -1748,7 +1754,7 @@ export default function Dashboard() {
                                   className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wider border ${
                                     m.status === "recording"
                                       ? "bg-red-50 text-red-650 border-red-200/60 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/30 pulse"
-                                      : m.status === "completed"
+                                      : m.status === "completed" || m.status === "ready"
                                       ? "bg-blue-50 text-blue-700 border-blue-200/60 dark:bg-blue-950/40 dark:text-blue-450 dark:border-blue-900/30"
                                       : m.status === "paused"
                                       ? "bg-purple-50 text-purple-705 border-purple-200/60 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-900/30"
@@ -1759,7 +1765,8 @@ export default function Dashboard() {
                                 >
                                   {m.status === "recording"
                                     ? "ĐANG HỌP"
-                                    : m.status === "completed"
+                                    // "ready" = YouTube/upload pipeline's terminal status, same meaning as "completed".
+                                    : m.status === "completed" || m.status === "ready"
                                     ? "ĐÃ XONG"
                                     : m.status === "paused"
                                     ? "TẠM DỪNG"
@@ -1824,7 +1831,7 @@ export default function Dashboard() {
                                 </div>
                               </div>
 
-                              {m.status !== "completed" && m.status !== "recording" && m.status !== "paused" && (
+                              {m.status !== "completed" && m.status !== "ready" && m.status !== "recording" && m.status !== "paused" && (
                                 <div className="space-y-2 pt-1">
                                   <div className="flex justify-between items-center text-xs">
                                     <span className="font-medium text-slate-500 dark:text-slate-400 truncate max-w-[80%]">
@@ -1843,7 +1850,7 @@ export default function Dashboard() {
                                 </div>
                               )}
 
-                              {(m.status === "completed" || m.status === "recording" || m.status === "paused") && (
+                              {(m.status === "completed" || m.status === "ready" || m.status === "recording" || m.status === "paused") && (
                                 <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
                                   {m.status === "recording"
                                     ? "Cuộc họp đang diễn ra. Thông tin hội thoại và tóm tắt sẽ hiển thị sau khi kết thúc."

@@ -1063,8 +1063,13 @@ export async function runPipeline(
     // Save RAW transcripts
     await saveRawToTranscripts(meetingId, allUtterances);
 
-    // Set meeting status to ready
-    await supabase.from("meetings").update({ status: "ready" }).eq("id", meetingId);
+    // Set meeting status to ready. Also bump progress to 100% — otherwise it stays frozen
+    // at whatever the last updateProgress("transcribing") call left it at (10%), which the
+    // home page would display forever if anything ever reads progress instead of status.
+    await supabase.from("meetings").update({
+      status: "ready",
+      progress: { percent: 100, message: "Hoàn tất" },
+    }).eq("id", meetingId);
 
   } catch (err: any) {
     if (err?.message === "CANCELLED") return;
