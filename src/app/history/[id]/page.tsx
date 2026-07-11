@@ -1982,7 +1982,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-4 sm:p-5 rounded-xl shadow-sm space-y-4 mb-6">
             {/* Header chỉ hiện khi có job đang chạy hoặc ở view "Đã xử lý" — ở view Bản gốc,
                 tiêu đề nằm gọn cùng hàng với checklist bên dưới. */}
-            {(aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 || shownVer !== "raw") && (
+            {(aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 || (shownVer as string) !== "raw") && (
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2.5">
                   <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
@@ -2011,7 +2011,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     <X className="w-3.5 h-3.5" />
                     <span>Huỷ tiến trình</span>
                   </button>
-                ) : shownVer !== "raw" && (
+                ) : (shownVer as string) !== "raw" && (
                   <div className="relative">
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowReprocessMenu((v) => !v); }}
@@ -2331,7 +2331,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
 
               </div>
-            ) : shownVer === "raw" ? ( 
+            ) : (shownVer as string) === "raw" ? ( 
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-x-5 gap-y-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer select-none">

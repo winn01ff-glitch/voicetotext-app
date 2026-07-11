@@ -332,9 +332,10 @@ async function executeSpeakerJob(job: any, config: PipelineConfig) {
 // Job 3: Translation
 async function executeTranslationJob(job: any, config: PipelineConfig) {
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
+  const supabase = await createServerSupabaseClient();
   const activeTranscripts = await getActiveTranscripts(job.meeting_id);
 
-  const checkedTurns: CheckedTurn[] = activeTranscripts.map(r => ({
+  const checkedTurns: CheckedTurn[] = activeTranscripts.map((r: any) => ({
     text: r.corrected_text || r.original_text || "",
     start_ms: r.start_ms || 0,
     end_ms: r.end_ms || 0,
@@ -346,7 +347,7 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
   const translated = await step4_translate(checkedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
-  const newRows = activeTranscripts.map((r, i) => {
+  const newRows = activeTranscripts.map((r: any, i: number) => {
     // Preserve old data, just add translated_text
     const t = translated[i];
     return {
@@ -372,7 +373,7 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
     .order("start_ms", { ascending: true });
 
   if (rawTranscripts && rawTranscripts.length > 0) {
-    const rawTurns = rawTranscripts.map(r => ({
+    const rawTurns = rawTranscripts.map((r: any) => ({
       text: r.corrected_text || r.original_text || "",
       start_ms: r.start_ms || 0,
       end_ms: r.end_ms || 0,
@@ -382,7 +383,7 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
     }));
     const translatedRaw = await step4_translate(rawTurns, config, job.mode);
     if (!(await checkJobCancelled(job.id))) {
-      const updates = rawTranscripts.map((r, i) => {
+      const updates = rawTranscripts.map((r: any, i: number) => {
         const t = translatedRaw[i];
         return supabase
           .from("transcripts")
