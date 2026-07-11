@@ -756,10 +756,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       // 4. Fetch summary
+      // is_active=true is required: executeSummaryJob (queueWorker.ts) deactivates the
+      // old row and INSERTS a new versioned one instead of updating in place, so a meeting
+      // that has ever run the "summary" job has >1 row per meeting_id — .maybeSingle()
+      // without this filter throws "multiple rows" and silently blanks the summary.
       const { data: summ } = await supabase
         .from("ai_summaries")
         .select("*")
         .eq("meeting_id", meetingId)
+        .eq("is_active", true)
         .maybeSingle();
 
       setAiSummary(summ);
@@ -769,10 +774,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       // 5. Fetch action items
+      // Same versioning pattern as ai_summaries — executeSummaryJob deactivates old
+      // action_items rows and inserts a new versioned batch, so old rows must be excluded.
       const { data: acts } = await supabase
         .from("action_items")
         .select("*")
         .eq("meeting_id", meetingId)
+        .eq("is_active", true)
         .order("created_at", { ascending: true });
       
       if (acts) {
@@ -860,14 +868,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         setReprocessedTranscripts(activeTranscripts.filter((t: any) => t.versionType === "FINAL"));
       }
 
-      const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).maybeSingle();
+      const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).eq("is_active", true).maybeSingle();
       setAiSummary(summ);
       if (summ) {
         setEditedExecSummary(summ.executive_summary || "");
         setEditedDecisions(summ.decisions || []);
       }
 
-      const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
+      const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).eq("is_active", true).order("created_at", { ascending: true });
       if (acts) {
         setActionItems(acts);
       }
@@ -1017,7 +1025,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           executive_summary: finalExec,
           decisions: finalDec,
         })
-        .eq("meeting_id", meetingId);
+        .eq("meeting_id", meetingId)
+        .eq("is_active", true);
 
       if (error) throw error;
 

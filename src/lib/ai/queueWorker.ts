@@ -213,18 +213,27 @@ async function incrementTranscriptVersion(meetingId: string, newRows: any[], ver
     
   const nextVersion = (maxVerData?.version || 0) + 1;
 
-  if (await checkJobCancelled(newRows[0]?.jobId_for_cancel_check)) return; // Pass jobId temporarily if needed, but handled globally
+  if (await checkJobCancelled(newRows[0]?.jobId_for_cancel_check)) return;
+
+  // Look up existing speakers to map speaker_tag → speaker_id
+  const { data: speakers } = await supabase
+    .from("speakers")
+    .select("id, speaker_tag")
+    .eq("meeting_id", meetingId);
+  const tagToId: Record<string, string> = {};
+  (speakers || []).forEach((s: any) => { tagToId[s.speaker_tag] = s.id; });
 
   // Inactivate old
   await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meetingId);
 
-  // Insert new
+  // Insert new — link speaker_id so the foreign-key join works on the history page
   const insertRows = newRows.map(r => ({
     ...r,
     meeting_id: meetingId,
     version: nextVersion,
     version_type: versionType,
-    is_active: true
+    is_active: true,
+    speaker_id: tagToId[r.speaker_tag] || null,
   }));
 
   const batches = chunkArray(insertRows, 100);
@@ -251,13 +260,20 @@ async function executeSpellcheckJob(job: any, config: PipelineConfig) {
   const corrected = await step1_correctSTT(rawUtterances, config);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
-  const newRows = corrected.map(c => ({
+  // step1's prompt guarantees "same order and count — one output per input" (no merge/split
+  // at this step), so activeTranscripts[i] safely corresponds to corrected[i]. Carry forward
+  // translated_text/confidence — otherwise this version briefly wipes the translation that the
+  // live meeting already produced, and the history page (auto-polling every 4s) shows it blank
+  // until the translation job runs later in the same auto-enqueued batch.
+  const newRows = corrected.map((c, i) => ({
     original_text: c.text, // Sau khi sửa, coi bản sửa là gốc của version này
     corrected_text: c.text,
+    translated_text: activeTranscripts[i]?.translated_text ?? null,
     start_ms: c.start_ms,
     end_ms: c.end_ms,
     speaker_tag: `speaker_${c.speaker_hint + 1}`,
     speaker_name: `Speaker ${c.speaker_hint + 1}`,
+    confidence: activeTranscripts[i]?.confidence ?? null,
   }));
 
   await incrementTranscriptVersion(job.meeting_id, newRows, 'FINAL');
@@ -290,6 +306,11 @@ async function executeSpeakerJob(job: any, config: PipelineConfig) {
   const checked = await step3_consistencyCheck(mapped, config);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
+  // Unlike step1, step2/step3 can split or merge turns (multi-speaker utterances get split,
+  // consecutive same-speaker turns get grouped), so turn count isn't guaranteed to match
+  // activeTranscripts — there's no safe index to carry translated_text forward from. This
+  // version will show blank translations until the translation job runs next in the same
+  // auto-enqueued batch (known gap, see executeSpellcheckJob's carry-forward for the step1 case).
   const newRows = checked.map(c => ({
     original_text: c.text,
     corrected_text: c.text,

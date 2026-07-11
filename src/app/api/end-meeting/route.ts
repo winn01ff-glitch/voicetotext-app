@@ -47,7 +47,8 @@ export async function POST(request: Request) {
     await supabase
       .from("ai_summaries")
       .update({ status: "Generating" })
-      .eq("meeting_id", meeting_id);
+      .eq("meeting_id", meeting_id)
+      .eq("is_active", true);
 
     // 2. Fetch or create speakers and insert transcripts
     const { data: existingSpeakers } = await supabase
@@ -216,7 +217,8 @@ Hãy trả về một đối tượng JSON khớp chính xác với cấu trúc 
         executive_summary: summaryResult.executive_summary,
         decisions: summaryResult.decisions || [],
       })
-      .eq("meeting_id", meeting_id);
+      .eq("meeting_id", meeting_id)
+      .eq("is_active", true);
 
     if (saveSummaryError) throw saveSummaryError;
 
