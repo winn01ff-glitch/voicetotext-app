@@ -1938,20 +1938,70 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
 
             {aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 ? (
-              <div className="space-y-3 border border-slate-200 dark:border-slate-800 rounded-lg p-4 bg-slate-50 dark:bg-slate-950">
-                {aiJobs
-                  .filter((j) => j.status !== "idle" && j.status !== "cancelled")
-                  .map((job) => (
-                    <div key={job.id} className="flex flex-col space-y-1">
-                      <div className="flex items-center justify-between text-xs font-medium">
-                        <span className="text-slate-700 dark:text-slate-300 capitalize">{job.type}</span>
-                        <span className={job.status === "completed" ? "text-green-600" : job.status === "failed" ? "text-red-600" : "text-blue-600"}>{job.status}</span>
-                      </div>
-                      <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                        <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-300" style={{ width: `${job.progress || 0}%` }} />
-                      </div>
-                    </div>
-                  ))}
+              <div className="space-y-3 border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-5 bg-slate-50 dark:bg-slate-950">
+                {/* Horizontal stepper: numbered circles + connector lines. The circle of the
+                    step currently processing gets a spinning ring border. */}
+                <div className="flex items-center">
+                  {(() => {
+                    const STEP_ORDER = ["spellcheck", "speaker", "translation", "summary"];
+                    const STEP_LABEL: Record<string, string> = {
+                      spellcheck: "Sửa chính tả",
+                      speaker: "Phân vai",
+                      translation: "Dịch",
+                      summary: "Tóm tắt",
+                    };
+                    const visibleJobs = aiJobs
+                      .filter((j) => j.status !== "idle" && j.status !== "cancelled")
+                      .sort((a, b) => STEP_ORDER.indexOf(a.type) - STEP_ORDER.indexOf(b.type));
+                    return visibleJobs.map((job, idx) => {
+                      const isDone = job.status === "completed";
+                      const isProcessing = job.status === "processing";
+                      const isFailed = job.status === "failed";
+                      return (
+                        <Fragment key={job.id}>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="relative w-8 h-8 shrink-0">
+                              {isProcessing && (
+                                <div className="absolute -inset-1 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                              )}
+                              <div
+                                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-colors ${
+                                  isDone
+                                    ? "bg-blue-600 text-white"
+                                    : isProcessing
+                                    ? "bg-blue-600 text-white"
+                                    : isFailed
+                                    ? "bg-red-500 text-white"
+                                    : "bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400"
+                                }`}
+                              >
+                                {isDone ? <Check className="w-4 h-4 stroke-[3]" /> : idx + 1}
+                              </div>
+                            </div>
+                            <span
+                              className={`text-xs sm:text-sm font-semibold whitespace-nowrap ${
+                                isDone || isProcessing
+                                  ? "text-slate-800 dark:text-slate-200"
+                                  : isFailed
+                                  ? "text-red-600 dark:text-red-400"
+                                  : "text-slate-400 dark:text-slate-500"
+                              }`}
+                            >
+                              {STEP_LABEL[job.type] || job.type}
+                            </span>
+                          </div>
+                          {idx < visibleJobs.length - 1 && (
+                            <div
+                              className={`flex-1 h-px mx-3 min-w-6 ${
+                                isDone ? "bg-blue-400 dark:bg-blue-700" : "bg-slate-200 dark:bg-slate-800"
+                              }`}
+                            />
+                          )}
+                        </Fragment>
+                      );
+                    });
+                  })()}
+                </div>
                 {aiJobs.some((j) => j.status === "processing" || j.status === "queued") && (
                   <div className="flex justify-end pt-1">
                     <button

@@ -4,31 +4,51 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 // automatic post-meeting enqueue. Skips any job type that already has a
 // queued/processing row for this meeting, so the two triggers can't stack
 // duplicate/overlapping runs against the same transcript version.
+//
+// ai_jobs has UNIQUE(meeting_id, type), so a job type that already ran
+// (completed/failed/cancelled/idle) can't be re-inserted — those rows are
+// RESET back to queued instead. Only genuinely new types get an insert.
 export async function enqueueAiJobs(meetingId: string, jobTypes: string[]): Promise<string[]> {
   const supabase = await createServerSupabaseClient();
 
   const { data: existing } = await supabase
     .from("ai_jobs")
-    .select("type")
+    .select("type, status")
     .eq("meeting_id", meetingId)
-    .in("status", ["queued", "processing"]);
+    .in("type", jobTypes);
 
-  const alreadyPending = new Set((existing || []).map((j: { type: string }) => j.type));
-  const typesToEnqueue = jobTypes.filter((t) => !alreadyPending.has(t));
+  const existingByType = new Map((existing || []).map((j: { type: string; status: string }) => [j.type, j.status]));
 
-  if (typesToEnqueue.length === 0) return [];
+  const typesToReset: string[] = [];
+  const typesToInsert: string[] = [];
+  for (const type of jobTypes) {
+    const status = existingByType.get(type);
+    if (status === "queued" || status === "processing") continue; // already running — skip
+    if (status) typesToReset.push(type);
+    else typesToInsert.push(type);
+  }
 
-  const jobs = typesToEnqueue.map((type) => ({
-    meeting_id: meetingId,
-    type,
-    status: "queued",
-    progress: 0,
-    retry_count: 0,
-    max_retries: 3,
-  }));
+  if (typesToReset.length > 0) {
+    const { error } = await supabase
+      .from("ai_jobs")
+      .update({ status: "queued", progress: 0, retry_count: 0, next_retry_at: null, error: null, ended_at: null })
+      .eq("meeting_id", meetingId)
+      .in("type", typesToReset);
+    if (error) throw error;
+  }
 
-  const { error } = await supabase.from("ai_jobs").insert(jobs);
-  if (error) throw error;
+  if (typesToInsert.length > 0) {
+    const jobs = typesToInsert.map((type) => ({
+      meeting_id: meetingId,
+      type,
+      status: "queued",
+      progress: 0,
+      retry_count: 0,
+      max_retries: 3,
+    }));
+    const { error } = await supabase.from("ai_jobs").insert(jobs);
+    if (error) throw error;
+  }
 
-  return typesToEnqueue;
+  return [...typesToReset, ...typesToInsert];
 }
