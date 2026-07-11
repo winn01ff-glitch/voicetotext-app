@@ -2522,7 +2522,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               body: JSON.stringify({ meetingId, jobTypes: ["summary"], mode: opt.mode }),
                             });
                             if (res.ok) {
-                              addToast("Đã bắt đầu", `Đang tạo ${opt.label.toLowerCase()}...`, "success");
                               refreshMeetingDataSilently();
                             } else {
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
@@ -2544,6 +2543,18 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     {/* Global Translation Dropdown */}
                     {renderGlobalTranslateDropdown()}
                   </div>
+
+                  {hasActiveJobs && (
+                    <div className="mt-3 p-3 rounded-lg text-xs border bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400 flex items-center gap-2.5 shadow-sm">
+                      <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-indigo-500" />
+                      <p className="leading-relaxed">
+                        <span className="font-bold mr-1.5 shrink-0 inline-flex items-center gap-1">
+                          Đang xử lý:
+                        </span>
+                        Đang tạo lại tóm tắt cuộc họp bằng AI. Tiến trình này có thể mất ít giây, vòng xoay sẽ kết thúc sau khi cập nhật dữ liệu...
+                      </p>
+                    </div>
+                  )}
                 </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
