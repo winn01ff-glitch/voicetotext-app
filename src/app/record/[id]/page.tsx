@@ -265,7 +265,9 @@ export default function RecordPage({ params }: RecordPageProps) {
         })
         .eq("id", meetingId);
 
-      router.push(`/history/${meetingId}`);
+      // replace (not push): removes the now-dead /record/[id] URL from browser
+      // history so back/swipe-back doesn't land on a completed recording session.
+      router.replace(`/history/${meetingId}`);
     } catch (err) {
       console.error("Error ending recording:", err);
     }

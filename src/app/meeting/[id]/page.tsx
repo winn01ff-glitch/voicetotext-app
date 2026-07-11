@@ -1201,9 +1201,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
       localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
 
-      // Redirect to history details
+      // Redirect to history details. Uses replace (not push) so the now-dead
+      // live-recording URL is removed from browser history — otherwise the
+      // browser/mobile back button lands back on /meeting/[id] for a meeting
+      // that's already "completed", which the live room isn't built to handle.
       setTimeout(() => {
-        router.push(`/history/${meetingId}`);
+        router.replace(`/history/${meetingId}`);
       }, 500);
     } catch (err) {
       console.error(err);
