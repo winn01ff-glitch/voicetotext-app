@@ -835,6 +835,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             if (summaryJob.mode) {
               localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
             }
+          } else if (summaryJob.status === "queued" || summaryJob.status === "processing") {
+            setActiveSummaryMode(summaryJob.mode);
           } else {
             const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
             setActiveSummaryMode(cachedMode || null);
@@ -941,7 +943,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             if (summaryJob.mode) {
               localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
             }
-          } else if (!isGeneratingSummary) {
+          } else if (summaryJob.status === "queued" || summaryJob.status === "processing") {
+            setActiveSummaryMode(summaryJob.mode);
+          } else {
             const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
             setActiveSummaryMode(cachedMode || null);
           }
