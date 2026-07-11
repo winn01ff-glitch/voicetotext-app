@@ -935,7 +935,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing");
   useEffect(() => {
     if (!hasActiveJobs) return;
-    const interval = setInterval(refreshMeetingDataSilently, 4000);
+    const interval = setInterval(refreshMeetingDataSilently, 1500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveJobs]);
@@ -995,7 +995,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       });
       if (res.ok) {
         addToast("Đã bắt đầu", "AI đang xử lý theo lựa chọn của bạn.", "success");
-        setTimeout(refreshMeetingDataSilently, 1000);
+        refreshMeetingDataSilently();
       } else {
         addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
       }
@@ -2034,7 +2034,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               body: JSON.stringify({ meetingId, jobTypes: ["spellcheck", "speaker", "translation", "summary"], isFromReprocess: true }),
                             });
                             if (res.ok) {
-                              setTimeout(refreshMeetingDataSilently, 1000);
+                              refreshMeetingDataSilently();
                             } else {
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                             }
@@ -2092,7 +2092,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
                                 });
                                 if (res.ok) {
-                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                  refreshMeetingDataSilently();
                                 } else {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
@@ -2126,7 +2126,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
                                 });
                                 if (res.ok) {
-                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                  refreshMeetingDataSilently();
                                 } else {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
@@ -2157,7 +2157,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   body: JSON.stringify({ meetingId, jobTypes: opt.jobs, mode: opt.mode, isFromReprocess: true }),
                                 });
                                 if (res.ok) {
-                                  setTimeout(refreshMeetingDataSilently, 1000);
+                                  refreshMeetingDataSilently();
                                 } else {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
@@ -2523,7 +2523,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             });
                             if (res.ok) {
                               addToast("Đã bắt đầu", `Đang tạo ${opt.label.toLowerCase()}...`, "success");
-                              setTimeout(refreshMeetingDataSilently, 1000);
+                              refreshMeetingDataSilently();
                             } else {
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                             }
