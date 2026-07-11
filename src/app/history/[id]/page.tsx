@@ -178,6 +178,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [isSavingSummary, setIsSavingSummary] = useState(false);
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
 
+  // Selective AI-processing checklist (Transcript tab, "Bản gốc" view) — lets the user
+  // pick which of spellcheck/speaker/translation to run, instead of the old
+  // all-or-nothing "Phân tích toàn diện" trigger.
+  const [fixSpellcheck, setFixSpellcheck] = useState(true);
+  const [fixSpeaker, setFixSpeaker] = useState(true);
+  const [fixTranslate, setFixTranslate] = useState(true);
+  const [processTargetLang, setProcessTargetLangState] = useState("vi");
+  const processTargetLangInitRef = useRef(false);
+
   // Editing state for transcripts lines
   const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
   const [editingTextVal, setEditingTextVal] = useState("");
@@ -898,6 +907,48 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveJobs]);
+
+  // Default the translate-target dropdown to the meeting's current target_language once
+  // loaded (only once — don't fight the user's own dropdown choice after that).
+  useEffect(() => {
+    if (processTargetLangInitRef.current) return;
+    if (meeting?.target_language) {
+      processTargetLangInitRef.current = true;
+      setProcessTargetLangState(meeting.target_language);
+    }
+  }, [meeting?.target_language]);
+
+  const handleRunSelectedJobs = async () => {
+    const jobTypes: string[] = [];
+    if (fixSpellcheck) jobTypes.push("spellcheck");
+    if (fixSpeaker) jobTypes.push("speaker");
+    if (fixTranslate) jobTypes.push("translation");
+
+    if (jobTypes.length === 0) {
+      addToast("Chưa chọn gì", "Hãy tick ít nhất một lựa chọn xử lý.", "error");
+      return;
+    }
+
+    try {
+      if (fixTranslate) {
+        await supabase.from("meetings").update({ target_language: processTargetLang }).eq("id", meetingId);
+      }
+      const res = await fetch("/api/meetings/reprocess/run-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId, jobTypes }),
+      });
+      if (res.ok) {
+        addToast("Đã bắt đầu", "AI đang xử lý theo lựa chọn của bạn.", "success");
+        setTimeout(refreshMeetingDataSilently, 1000);
+      } else {
+        addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+      }
+    } catch (err) {
+      console.error("Run selected AI jobs error:", err);
+      addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+    }
+  };
 
   const handleTogglePin = async () => {
     try {
@@ -1872,8 +1923,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           </div>
         )}
 
-        {/* AI PIPELINE CONTROL PANEL (Transcript tab, "Đã xử lý" view) */}
-        {shownTab === "transcript" && shownVer === "ai" && (
+        {/* AI PIPELINE CONTROL PANEL — hiện ở cả 2 view (Bản gốc / Đã xử lý) của tab Transcript.
+            "Bản gốc": checklist cho chọn từng bước. "Đã xử lý (AI)": nút chạy toàn bộ như cũ. */}
+        {shownTab === "transcript" && (
           <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-5 rounded-xl shadow-sm space-y-4 mb-6">
             <div className="flex items-center space-x-2.5">
               <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center">
@@ -1919,6 +1971,55 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </button>
                   </div>
                 )}
+              </div>
+            ) : shownVer === "raw" ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={fixSpellcheck}
+                      onChange={(e) => setFixSpellcheck(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>Sửa lỗi chính tả</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={fixSpeaker}
+                      onChange={(e) => setFixSpeaker(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>Phân vai qua ngữ cảnh</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={fixTranslate}
+                      onChange={(e) => setFixTranslate(e.target.checked)}
+                      className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <span>Dịch sang</span>
+                  </label>
+                  <select
+                    value={processTargetLang}
+                    onChange={(e) => setProcessTargetLangState(e.target.value)}
+                    disabled={!fixTranslate}
+                    className="h-7 px-2 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-md focus:ring-1 focus:ring-blue-500 focus:outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed -mt-1"
+                  >
+                    <option value="en">Tiếng Anh</option>
+                    <option value="vi">Tiếng Việt</option>
+                    <option value="ja">Tiếng Nhật</option>
+                  </select>
+                </div>
+                <button
+                  onClick={handleRunSelectedJobs}
+                  className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:from-indigo-700 hover:to-blue-700 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Xử lý</span>
+                </button>
               </div>
             ) : (
               <button
