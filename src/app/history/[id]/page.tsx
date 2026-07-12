@@ -56,19 +56,50 @@ interface HistoryDetailProps {
   params: Promise<{ id: string }>;
 }
 
+// Biến toàn cục để theo dõi trạng thái Hydration của ứng dụng, tránh hydration mismatch
+let isAppHydrated = false;
+
 export default function HistoryDetail({ params }: HistoryDetailProps) {
   const { id: meetingId } = use(params);
   const router = useRouter();
   const supabase = createClient();
 
+  // Read cache synchronously on client side to avoid loading flash
+  const cachedData = typeof window !== "undefined" ? (() => {
+    try {
+      const cached = localStorage.getItem(`meeting_detail_${meetingId}`);
+      if (cached) {
+        const payload = JSON.parse(cached);
+        const now = Date.now();
+        const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+        if (payload && payload.timestamp && (now - payload.timestamp < sevenDaysMs)) {
+          const snap = payload.data;
+          if (snap && snap.meeting) {
+            return snap;
+          }
+        } else {
+          localStorage.removeItem(`meeting_detail_${meetingId}`);
+        }
+      }
+    } catch (e) {
+      console.warn("Lỗi đọc cache đồng bộ:", e);
+    }
+    return null;
+  })() : null;
+
   // Meeting states
-  const [meeting, setMeeting] = useState<any>(null);
-  const [speakers, setSpeakers] = useState<any[]>([]);
-  const [transcripts, setTranscripts] = useState<any[]>([]); // Contains live transcripts
-  const [reprocessedTranscripts, setReprocessedTranscripts] = useState<any[]>([]); // Contains reprocessed transcripts
-  const [aiSummary, setAiSummary] = useState<any>(null);
-  const [actionItems, setActionItems] = useState<any[]>([]); // Contains live action items
-  const [loading, setLoading] = useState(true);
+  const [meeting, setMeeting] = useState<any>(cachedData?.meeting || null);
+  const [speakers, setSpeakers] = useState<any[]>(cachedData?.speakers || []);
+  const [transcripts, setTranscripts] = useState<any[]>(cachedData?.transcripts || []); // Contains live transcripts
+  const [reprocessedTranscripts, setReprocessedTranscripts] = useState<any[]>(cachedData?.reprocessedTranscripts || []); // Contains reprocessed transcripts
+  const [aiSummary, setAiSummary] = useState<any>(cachedData?.aiSummary ?? null);
+  const [actionItems, setActionItems] = useState<any[]>(cachedData?.actionItems || []); // Contains live action items
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== "undefined" && isAppHydrated) {
+      return !cachedData;
+    }
+    return true;
+  });
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   const scrollToTop = () => {
@@ -89,9 +120,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // UI state
   // 3 tab: transcript (có công tắc Bản gốc/Đã xử lý) | summary | ask.
-  const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("summary");
+  const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("transcript");
   // Công tắc trong tab Transcript: "raw" = bản gốc STT, "ai" = bản đã xử lý (FINAL).
-  const [transcriptVer, setTranscriptVer] = useState<"raw" | "ai">("raw");
+  const [transcriptVer, setTranscriptVer] = useState<"raw" | "ai">("ai");
   const verInitRef = useRef(false);
   // useDeferredValue: nội dung 100+ dòng render nặng -> nút/công tắc phản hồi tức thì.
   const shownTab = useDeferredValue(activeTab);
@@ -105,31 +136,61 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   // + panel legacy); false = mọi trường hợp còn lại (Transcript+Bản gốc, hoặc tab Tóm tắt).
   const showFinalPanel = shownTab === "transcript" && shownVer === "ai";
   const subTabProcessed: "summary" | "transcript" = shownTab === "summary" ? "summary" : "transcript";
-  const [activeSummaryMode, setActiveSummaryMode] = useState<string | null>(null);
-  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [activeSummaryMode, setActiveSummaryMode] = useState<string | null>(cachedData?.activeSummaryMode ?? null);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(
+    cachedData ? (cachedData.aiJobs || []).some((j: any) => j.status === "queued" || j.status === "processing") : false
+  );
   const [activeEditingMode, setActiveEditingMode] = useState<string | null>(null);
   const [isRewritingRaw, setIsRewritingRaw] = useState(false);
   const [rawLangMode, setRawLangMode] = useState<"original" | "translated">("original");
 
+  const isGeneratingSummaryRef = useRef(isGeneratingSummary);
+  const activeSummaryModeRef = useRef(activeSummaryMode);
+
+  useEffect(() => {
+    isGeneratingSummaryRef.current = isGeneratingSummary;
+  }, [isGeneratingSummary]);
+
+  useEffect(() => {
+    activeSummaryModeRef.current = activeSummaryMode;
+  }, [activeSummaryMode]);
+
   // Simple markdown renderer for summary text (handles ## headings, **bold**, bullet lists)
   const renderMarkdownText = (text: string) => {
     if (!text) return null;
+    // Helper to parse inline **bold** within a string
+    const parseInline = (str: string): React.ReactNode[] => {
+      const parts: React.ReactNode[] = [];
+      const boldRegex = /\*\*([^*]+)\*\*/g;
+      let lastIdx = 0;
+      let match;
+      while ((match = boldRegex.exec(str)) !== null) {
+        if (match.index > lastIdx) parts.push(str.slice(lastIdx, match.index));
+        parts.push(<strong key={`b${match.index}`} className="font-semibold text-slate-800 dark:text-slate-200">{match[1]}</strong>);
+        lastIdx = match.index + match[0].length;
+      }
+      if (lastIdx < str.length) parts.push(str.slice(lastIdx));
+      return parts;
+    };
     const lines = text.split('\n');
     const elements: React.ReactNode[] = [];
     lines.forEach((line, i) => {
       const trimmed = line.trimStart();
       if (trimmed.startsWith('## ')) {
-        elements.push(<h3 key={i} className="font-bold text-base text-slate-800 dark:text-slate-200 mt-4 mb-1.5 first:mt-0">{trimmed.slice(3)}</h3>);
+        elements.push(<h3 key={i} className="font-bold text-base text-slate-800 dark:text-slate-200 mt-4 mb-1.5 first:mt-0">{parseInline(trimmed.slice(3))}</h3>);
       } else if (trimmed.startsWith('### ')) {
-        elements.push(<h4 key={i} className="font-semibold text-sm text-slate-700 dark:text-slate-300 mt-3 mb-1 first:mt-0">{trimmed.slice(4)}</h4>);
+        elements.push(<h4 key={i} className="font-semibold text-sm text-slate-700 dark:text-slate-300 mt-3 mb-1 first:mt-0">{parseInline(trimmed.slice(4))}</h4>);
       } else if (trimmed.startsWith('# ')) {
-        elements.push(<h2 key={i} className="font-bold text-lg text-slate-800 dark:text-slate-200 mt-4 mb-2 first:mt-0">{trimmed.slice(2)}</h2>);
-      } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        elements.push(<li key={i} className="text-sm text-slate-700 dark:text-slate-300 ml-4 list-disc leading-relaxed">{trimmed.slice(2)}</li>);
+        elements.push(<h2 key={i} className="font-bold text-lg text-slate-800 dark:text-slate-200 mt-4 mb-2 first:mt-0">{parseInline(trimmed.slice(2))}</h2>);
+      } else if (trimmed === '---' || trimmed === '***') {
+        elements.push(<hr key={i} className="my-3 border-slate-200 dark:border-slate-700" />);
+      } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
+        const content = trimmed.startsWith('• ') ? trimmed.slice(2) : trimmed.slice(2);
+        elements.push(<li key={i} className="text-sm text-slate-700 dark:text-slate-300 ml-4 list-disc leading-relaxed">{parseInline(content)}</li>);
       } else if (trimmed === '') {
         elements.push(<div key={i} className="h-2" />);
       } else {
-        elements.push(<p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{line}</p>);
+        elements.push(<p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{parseInline(line)}</p>);
       }
     });
     return <>{elements}</>;
@@ -144,13 +205,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   }, [transcripts.length, reprocessedTranscripts.length]);
   // AI jobs + Ask AI chat state
-  const [aiJobs, setAiJobs] = useState<any[]>([]);
+  const [aiJobs, setAiJobs] = useState<any[]>(cachedData?.aiJobs || []);
   const [showReprocessMenu, setShowReprocessMenu] = useState(false);
   const [reprocessTab, setReprocessTab] = useState<"spellcheck" | "speaker" | "translate" | "editing">("spellcheck");
-  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatMessages, setChatMessages] = useState<any[]>(cachedData?.chatMessages || []);
   const [chatInput, setChatInput] = useState("");
   const [isChatStreaming, setIsChatStreaming] = useState(false);
-  const [conversationId, setConversationId] = useState<string | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
   const reprocessMenuRef = useRef<HTMLDivElement>(null);
@@ -216,8 +276,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // Editing state for AI Summary (Live)
   const [isEditingSummary, setIsEditingSummary] = useState(false);
-  const [editedExecSummary, setEditedExecSummary] = useState("");
-  const [editedDecisions, setEditedDecisions] = useState<string[]>([]);
+  const [editedExecSummary, setEditedExecSummary] = useState(cachedData?.aiSummary?.executive_summary || "");
+  const [editedDecisions, setEditedDecisions] = useState<string[]>(cachedData?.aiSummary?.decisions || []);
 
 
   const [isSavingSummary, setIsSavingSummary] = useState(false);
@@ -565,7 +625,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         <button
           onClick={() => setActiveGlobalTranslateDropdown(!activeGlobalTranslateDropdown)}
           disabled={isAnyTranslating}
-          className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-650 hover:border-indigo-200 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 dark:hover:border-indigo-805 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
+          className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-650 hover:border-indigo-200 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 dark:hover:border-indigo-805 transition-all cursor-pointer disabled:opacity-50 shadow-sm ${
+            activeGlobalTranslateDropdown ? "relative z-30" : ""
+          }`}
         >
           <Languages className={`w-3.5 h-3.5 ${isAnyTranslating ? "animate-pulse text-indigo-600 dark:text-indigo-400" : "text-slate-400 dark:text-slate-500"}`} />
           <span>Ngôn ngữ: {langNames[globalLanguage]}</span>
@@ -603,14 +665,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   setGlobalLanguage("original");
                   translateAllSections("original");
                 }}
-                className={`w-full flex items-center justify-between px-3.5 py-2 hover:bg-rose-50/60 hover:text-rose-600 dark:hover:bg-rose-950/20 dark:hover:text-rose-455 font-medium cursor-pointer transition-colors border-t border-slate-100 dark:border-slate-800 ${
+                className={`w-full flex items-center justify-between px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-600 dark:hover:bg-slate-800 dark:hover:text-indigo-400 font-medium cursor-pointer transition-colors border-t border-slate-100 dark:border-slate-800 ${
                   globalLanguage === "original"
-                    ? "text-rose-600 dark:text-rose-450 bg-rose-50/20 dark:bg-rose-955/10"
-                    : "text-slate-400"
+                    ? "text-indigo-600 dark:text-indigo-400 bg-indigo-50/30 dark:bg-slate-850/50"
+                    : "text-slate-650 dark:text-slate-350"
                 }`}
               >
                 <span>{langNames["original"]}</span>
-                {globalLanguage === "original" && <Check className="w-3.5 h-3.5 text-rose-500 dark:text-rose-450" />}
+                {globalLanguage === "original" && <Check className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
               </button>
             </div>
           </>
@@ -683,10 +745,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
 
   useEffect(() => {
+    isAppHydrated = true;
     if (document.documentElement.classList.contains("dark")) {
       setIsDarkMode(true);
     }
-    fetchMeetingData();
+    if (cachedData) {
+      // Nếu load từ F5, loading ban đầu là true. Ta cần set nó thành false sau khi mount
+      setLoading(false);
+      // Đã hiển thị ngay từ cache — chỉ làm mới ngầm, không bật lại splash.
+      refreshMeetingDataSilently();
+    } else {
+      // Chưa có cache — hiển thị splash và fetch đồng thời.
+      fetchMeetingData();
+    }
 
     // Nạp audio đã cache (ghi âm/upload) từ IndexedDB. Cache sống qua reload và chỉ
     // bị xóa khi đóng trình duyệt. getAudioUrl tạo một object URL mới từ Blob đã lưu;
@@ -712,6 +783,34 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, []);
+
+  // Ghi cache chi tiết vào localStorage mỗi khi dữ liệu cốt lõi thay đổi (sau khi fetch,
+  // refresh ngầm, hoặc sau khi user chỉnh sửa). Bọc try/catch để nếu vượt quota thì bỏ qua
+  // — cache chỉ là tối ưu tốc độ mở lại, không bắt buộc phải thành công.
+  useEffect(() => {
+    if (loading || !meeting) return;
+    try {
+      localStorage.setItem(
+        `meeting_detail_${meetingId}`,
+        JSON.stringify({
+          timestamp: Date.now(),
+          data: {
+            meeting,
+            speakers,
+            transcripts,
+            reprocessedTranscripts,
+            aiSummary,
+            actionItems,
+            aiJobs,
+            chatMessages,
+            activeSummaryMode,
+          }
+        })
+      );
+    } catch {
+      // Bỏ qua (ví dụ vượt quota localStorage).
+    }
+  }, [loading, meeting, speakers, transcripts, reprocessedTranscripts, aiSummary, actionItems, aiJobs, chatMessages, activeSummaryMode, meetingId]);
 
   const fetchMeetingData = async () => {
     setLoading(true);
@@ -843,18 +942,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           }
         }
         const hasActive = jobs.some((j: any) => j.status === "queued" || j.status === "processing");
-        if (!hasActive) {
-          setIsGeneratingSummary(false);
-        }
+        setIsGeneratingSummary(hasActive);
       }
 
-      const { data: chats } = await supabase
-        .from("meeting_chats")
-        .select("*")
-        .eq("meeting_id", meetingId)
-        .order("created_at", { ascending: true });
-      setChatMessages(chats || []);
-      setConversationId(chats?.[0]?.conversation_id || crypto.randomUUID());
+      // Chat "Hỏi AI" KHÔNG lưu database — chỉ tồn tại ở cache trình duyệt (sessionStorage),
+      // nạp lại qua hydrate cache khi reload. Không tải chat từ DB nữa.
 
     } catch (err) {
       console.error(err);
@@ -939,29 +1031,40 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         const summaryJob = jobs.find((j: any) => j.type === "summary");
         if (summaryJob) {
           if (summaryJob.status === "completed") {
-            setActiveSummaryMode(summaryJob.mode);
-            if (summaryJob.mode) {
-              localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
+            if (!isGeneratingSummaryRef.current || summaryJob.mode === activeSummaryModeRef.current) {
+              setActiveSummaryMode(summaryJob.mode);
+              setIsGeneratingSummary(false);
+              if (summaryJob.mode) {
+                localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
+              }
             }
           } else if (summaryJob.status === "queued" || summaryJob.status === "processing") {
             setActiveSummaryMode(summaryJob.mode);
+            setIsGeneratingSummary(true);
           } else {
+            // failed, cancelled, etc.
+            if (!isGeneratingSummaryRef.current || summaryJob.mode === activeSummaryModeRef.current) {
+              const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+              setActiveSummaryMode(cachedMode || null);
+              setIsGeneratingSummary(false);
+            }
+          }
+        } else {
+          if (!isGeneratingSummaryRef.current) {
             const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
             setActiveSummaryMode(cachedMode || null);
+            setIsGeneratingSummary(false);
           }
         }
-        const hasActive = jobs.some((j: any) => j.status === "queued" || j.status === "processing");
-        if (!hasActive) {
-          setIsGeneratingSummary(false);
-        }
       }
+      // Chat "Hỏi AI" không đọc từ DB nữa — nó chỉ nằm ở cache trình duyệt.
     } catch (err) {
       console.error("Silent refresh error:", err);
     }
   };
 
-  // Auto-poll every 1.5s while any AI job is still queued/processing
-  const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing");
+  // Auto-poll every 1.5s while any AI job is still queued/processing or summary is generating
+  const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing") || isGeneratingSummary;
   useEffect(() => {
     if (!hasActiveJobs) return;
     const interval = setInterval(refreshMeetingDataSilently, 1500);
@@ -1071,6 +1174,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const { error } = await supabase.from("meetings").delete().eq("id", meetingId);
       if (error) throw error;
       deleteAudio(meetingId);
+      try { localStorage.removeItem(`meeting_detail_${meetingId}`); } catch {}
       sessionStorage.setItem("pending_toast", JSON.stringify({ title: "Thông báo", message: "Xóa cuộc họp thành công!", type: "success" }));
       // replace: the meeting record is gone from the DB — leaving /history/[id] in
       // history means pressing back tries to fetch a meeting that no longer exists.
@@ -1404,21 +1508,39 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const highlightText = (text: string, query: string) => {
     if (!text || !query.trim()) return text;
     const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
-    const normText = norm(text);
+    
+    // Build normalized text and map each normalized character back to its original index in `text`
+    const mapping: number[] = [];
+    let normalized = "";
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      const n = norm(char);
+      for (let j = 0; j < n.length; j++) {
+        mapping.push(i);
+      }
+      normalized += n;
+    }
+    mapping.push(text.length); // boundary mapping
+    
     const normQuery = norm(query);
     const parts: React.ReactNode[] = [];
     let lastIndex = 0;
+    
     while (true) {
-      const index = normText.indexOf(normQuery, lastIndex);
+      const index = normalized.indexOf(normQuery, lastIndex);
       if (index === -1) {
-        parts.push(text.substring(lastIndex));
+        const origLastIndex = mapping[lastIndex];
+        parts.push(text.substring(origLastIndex));
         break;
       }
+      const origLastIndex = mapping[lastIndex];
+      const origStartIndex = mapping[index];
       if (index > lastIndex) {
-        parts.push(text.substring(lastIndex, index));
+        parts.push(text.substring(origLastIndex, origStartIndex));
       }
       const matchEnd = index + normQuery.length;
-      const matchedString = text.substring(index, matchEnd);
+      const origEndIndex = mapping[matchEnd];
+      const matchedString = text.substring(origStartIndex, origEndIndex);
       parts.push(
         <mark key={index} className="bg-yellow-200 dark:bg-yellow-700/60 dark:text-white px-0.5 rounded">
           {matchedString}
@@ -1444,6 +1566,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     setPlayingAllType(null);
     setActiveSpeech(null);
     playlistRef.current = null;
+  }, []);
+
+  // Listen for global force-stop from FloatingStopAudio component
+  useEffect(() => {
+    const handleForceStop = () => {
+      setPlayingAllType(null);
+      setActiveSpeech(null);
+      playlistRef.current = null;
+    };
+    window.addEventListener("tts-force-stop", handleForceStop);
+    return () => window.removeEventListener("tts-force-stop", handleForceStop);
   }, []);
 
   const playPlaylistItem = useCallback((index: number) => {
@@ -1585,6 +1718,67 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return txt.includes(query) || trans.includes(query);
   });
 
+  // Group raw transcripts into paragraphs by speaker to avoid random line breaks
+  const groupedParagraphs = useMemo(() => {
+    if (filteredTranscripts.length === 0) return [];
+    
+    const paragraphs: {
+      speakerTag: string;
+      speakerName: string;
+      speakerColor: string;
+      segments: any[];
+    }[] = [];
+    
+    let currentParagraph: typeof paragraphs[number] | null = null;
+    
+    filteredTranscripts.forEach((t) => {
+      const speakerTag = t.speakers?.speaker_tag || "unknown";
+      const speakerName = t.speakers?.display_name || `Người nói ${speakerTag.replace("speaker_", "")}`;
+      const speakerColor = t.speakers?.color_hex || "#64748b";
+      
+      if (!currentParagraph || currentParagraph.speakerTag !== speakerTag) {
+        currentParagraph = {
+          speakerTag,
+          speakerName,
+          speakerColor,
+          segments: [],
+        };
+        paragraphs.push(currentParagraph);
+      }
+      currentParagraph.segments.push(t);
+    });
+    
+    return paragraphs;
+  }, [filteredTranscripts]);
+
+  // Check if any transcript has translated text
+  const hasTranslation = useMemo(() => {
+    return transcripts.some((t) => t.translatedText && t.translatedText.trim());
+  }, [transcripts]);
+
+  const [isTranslatingRaw, setIsTranslatingRaw] = useState(false);
+
+  const handleQuickTranslate = async () => {
+    setIsTranslatingRaw(true);
+    addToast("Đã bắt đầu", "Đang bắt đầu dịch nhanh bản ghi gốc...", "success");
+    try {
+      const res = await fetch("/api/meetings/reprocess/run-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId, jobTypes: ["translation"], isFromReprocess: true }),
+      });
+      if (res.ok) {
+        refreshMeetingDataSilently();
+      } else {
+        addToast("Lỗi", "Không thể bắt đầu dịch.", "error");
+      }
+    } catch (e) {
+      addToast("Lỗi", "Đã xảy ra lỗi khi kết nối.", "error");
+    } finally {
+      setIsTranslatingRaw(false);
+    }
+  };
+
   const filteredReprocessedTranscripts = reprocessedTranscripts.filter((t) => {
     if (!searchQuery.trim()) return true;
     const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
@@ -1626,160 +1820,27 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
-        {/* Header (Static rendering while loading) */}
-        <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
-          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center justify-between gap-3">
-            {/* Left: Back + Title Skeleton */}
-            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
-              <button
-                onClick={() => router.push("/")}
-                className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
-                title="Quay lại danh sách"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div className="w-48 sm:w-64 h-5 sm:h-6 bg-slate-200 dark:bg-slate-800 animate-pulse rounded" />
-            </div>
-
-            {/* Right: Action Buttons skeleton */}
-            <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
-              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-              </div>
-              <div className="p-1.5 sm:p-2 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-              </div>
-              <div className="p-1.5 sm:p-2 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
-                <div className="w-3.5 h-3.5 sm:w-4 sm:h-4 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-              </div>
-
-              <div className="w-px h-5 sm:h-6 bg-slate-200 dark:bg-slate-800" />
-
-              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
-                <div className="w-4 h-4 sm:w-[18px] sm:h-[18px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                <div className="hidden sm:block h-2.5 w-[60px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-              </div>
-              <div className="flex items-center justify-center space-x-1.5 p-1.5 sm:px-3 sm:h-8 border border-slate-200 dark:border-slate-800 rounded-md bg-slate-50 dark:bg-slate-900/50">
-                <div className="w-4 h-4 sm:w-[18px] sm:h-[18px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                <div className="hidden sm:block h-2.5 w-[54px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-              </div>
-            </div>
-          </div>
-        </header>
-        
-        {/* Core container skeleton */}
-        <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4">
-          <div className="space-y-6">
-            
-            {/* TOP BAR skeleton */}
-            <div className="flex flex-col xl:flex-row xl:items-end justify-between border-b border-slate-200 dark:border-slate-800 gap-4 pb-0">
-              
-              {/* Unified 3-Tab Switcher skeleton (khớp layout switcher thật) */}
-              <div className="relative grid grid-cols-3 xl:flex w-full xl:w-[600px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap border-r border-r-slate-200 dark:border-r-slate-800">
-                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                  <div className="h-4 sm:h-5 w-24 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-                </div>
-
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap border-r border-r-slate-200 dark:border-r-slate-800">
-                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                  <div className="h-4 sm:h-5 w-16 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-                </div>
-
-                <div className="relative flex-1 flex items-center justify-center space-x-1.5 px-2 pt-2.5 pb-2 xl:pt-3 xl:pb-1.5 whitespace-nowrap">
-                  <div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" />
-                  <div className="h-4 sm:h-5 w-14 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-                </div>
-              </div>
-
-              {/* Skeleton Info Bar */}
-              <div className="grid grid-cols-4 xl:flex w-full xl:w-auto order-1 xl:order-2 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 xl:mb-[5.5px] bg-slate-50 dark:bg-slate-900/60 shadow-sm divide-x divide-slate-200 dark:divide-slate-800">
-                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[65px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
-                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[40px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
-                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[45px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
-                <div className="h-[28px] w-full xl:w-auto flex items-center justify-center xl:justify-start px-3 space-x-1.5"><div className="w-3.5 h-3.5 bg-slate-200 dark:bg-slate-800 rounded animate-pulse shrink-0" /><div className="h-2.5 w-[50px] bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /></div>
-              </div>
-            </div>
-
-            {/* MAIN CONTENT AREA skeleton */}
-            <div className="w-full space-y-6 text-left">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-                
-                {/* Left/Middle Column (Summary & Decisions) */}
-                <div className="lg:col-span-2 space-y-6">
-                  {/* Executive Summary */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                        <div className="w-32 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                    </div>
-                    <div className="p-5 space-y-3">
-                      <div className="w-full h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-full h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-[90%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      <div className="w-[95%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                    </div>
-                  </div>
-                  
-                  {/* Decisions */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                        <div className="w-40 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                    </div>
-                    <div className="p-5 space-y-4">
-                      <div className="flex items-start space-x-3">
-                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
-                        <div className="w-[85%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                      <div className="flex items-start space-x-3">
-                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
-                        <div className="w-[75%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                      <div className="flex items-start space-x-3">
-                        <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse shrink-0" />
-                        <div className="w-[80%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right Column (Action Items Checklist) */}
-                <div className="space-y-6">
-                  {/* Action Items Skeleton */}
-                  <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm">
-                    <div className="px-5 py-3 border-b border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                        <div className="w-36 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                      </div>
-                    </div>
-                    <div className="p-5 space-y-4">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="flex items-start space-x-3 py-1 border-b border-slate-100 dark:border-slate-800/50 last:border-0">
-                          <div className="w-5 h-5 rounded bg-slate-200 dark:bg-slate-800 animate-pulse mt-0.5 shrink-0" />
-                          <div className="flex-1 space-y-2.5">
-                            <div className="w-[90%] h-4 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                            <div className="flex items-center space-x-2">
-                              <div className="w-20 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                              <div className="w-24 h-3 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                
-              </div>
-            </div>
-          </div>
-        </main>
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
+        <style>{`
+          @keyframes splash-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+          @keyframes splash-bounce { 0% { opacity: .3; transform: translateY(0); } 100% { opacity: 1; transform: translateY(-4px); } }
+        `}</style>
+        <div
+          className="w-14 h-14 rounded-full flex items-center justify-center"
+          style={{
+            background: "linear-gradient(135deg, #2563eb 0%, #06b6d4 100%)",
+            boxShadow: "0 4px 20px rgba(37, 99, 235, .25)",
+            animation: "splash-pulse 1.2s ease-in-out infinite",
+          }}
+        >
+          <Sparkles className="w-7 h-7 text-white" />
+        </div>
+        <div className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-slate-100">Đang tải cuộc họp</div>
+        <div className="flex gap-1.5 mt-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400" style={{ animation: "splash-bounce .6s ease-in-out infinite alternate" }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400" style={{ animation: "splash-bounce .6s ease-in-out infinite alternate", animationDelay: ".15s" }} />
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600 dark:bg-blue-400" style={{ animation: "splash-bounce .6s ease-in-out infinite alternate", animationDelay: ".3s" }} />
+        </div>
       </div>
     );
   }
@@ -1853,7 +1914,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   return (
     <>
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans">
+    <style>{`
+      @keyframes detail-enter { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+    `}</style>
+    <div
+      className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans"
+      style={{ animation: "detail-enter .45s ease-out" }}
+    >
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
         <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center justify-between gap-3">
@@ -1937,8 +2004,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* Unified 4-Tab Switcher (Underline style, responsive layout) */}
             <div className="relative grid grid-cols-4 xl:flex w-full xl:w-[760px] select-none shrink-0 order-2 xl:order-1 gap-y-0">
               {(() => {
-                const activeIndex = activeTab === "summary" ? 0
-                  : (activeTab === "transcript" && transcriptVer === "ai") ? 1
+                const activeIndex = (activeTab === "transcript" && transcriptVer === "ai") ? 0
+                  : activeTab === "summary" ? 1
                   : activeTab === "ask" ? 2
                   : 3;
 
@@ -1947,20 +2014,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     idx < 3 ? "border-r border-r-slate-200 dark:border-r-slate-800" : ""
                   } ${
                     activeIndex === idx
-                      ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5 shadow-[inset_0_-2px_0_0_#2563eb] dark:shadow-[inset_0_-2px_0_0_#60a5fa]"
+                      ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
                       : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
                   }`;
 
                 return (
                   <>
-                    <button onClick={() => setActiveTab("summary")} className={btnClass(0)}>
-                      <List className="w-3.5 h-3.5 shrink-0" />
-                      <span>Tóm tắt</span>
-                    </button>
-                    <button onClick={() => { setActiveTab("transcript"); setTranscriptVer("ai"); }} className={btnClass(1)}>
+                    <button onClick={() => { setActiveTab("transcript"); setTranscriptVer("ai"); }} className={btnClass(0)}>
                       <Sparkles className="w-3.5 h-3.5 shrink-0" />
                       <span>Hội thoại</span>
                       <span className="text-[11px] opacity-60">({filteredReprocessedTranscripts.length})</span>
+                    </button>
+                    <button onClick={() => setActiveTab("summary")} className={btnClass(1)}>
+                      <List className="w-3.5 h-3.5 shrink-0" />
+                      <span>Tóm tắt</span>
                     </button>
                     <button onClick={() => setActiveTab("ask")} className={btnClass(2)}>
                       <MessageSquare className="w-3.5 h-3.5 shrink-0" />
@@ -1970,6 +2037,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       <FileText className="w-3.5 h-3.5 shrink-0" />
                       <span>Bản gốc</span>
                     </button>
+
+                    {/* Sliding Underline Indicator */}
+                    <div
+                      className="absolute bottom-0 h-[2px] bg-blue-600 dark:bg-blue-400 transition-all duration-300 ease-in-out"
+                      style={{
+                        width: "25%",
+                        left: `${activeIndex * 25}%`
+                      }}
+                    />
                   </>
                 );
               })()}
@@ -2008,7 +2084,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         {/* AI PIPELINE CONTROL PANEL — hiện ở cả 2 view (Bản gốc / Đã xử lý) của tab Transcript.
             "Bản gốc": checklist cho chọn từng bước. "Đã xử lý (AI)": nút chạy toàn bộ như cũ. */}
         {shownTab === "transcript" && shownVer === "ai" && (
-          <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-4 sm:p-5 rounded-xl shadow-sm space-y-4 mb-6">
+          <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-4 sm:p-[18px] rounded-xl shadow-sm space-y-2.5 mb-6">
             {/* Header chỉ hiện khi có job đang chạy hoặc ở view "Đã xử lý" — ở view Bản gốc,
                 tiêu đề nằm gọn cùng hàng với checklist bên dưới. */}
             {(aiJobs.filter((j) => j.status !== "idle" && j.status !== "cancelled").length > 0 || (shownVer as string) !== "raw") && (
@@ -2044,11 +2120,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <div className="relative">
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowReprocessMenu((v) => !v); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 dark:hover:bg-indigo-950/60 rounded-lg transition-colors cursor-pointer border border-indigo-200 dark:border-indigo-800/50"
+                      className="flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-650 hover:border-indigo-200 dark:hover:bg-indigo-950/20 dark:hover:text-indigo-400 dark:hover:border-indigo-805 transition-all cursor-pointer disabled:opacity-50 shadow-sm"
                     >
-                      <Sparkles className="w-3.5 h-3.5" />
+                      <Sparkles className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
                       <span>Tùy chỉnh AI</span>
-                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showReprocessMenu ? "rotate-180" : ""}`} />
+                      <ChevronDown className={`w-3 h-3 text-slate-400 dark:text-slate-500 transition-transform ${showReprocessMenu ? "rotate-180" : ""}`} />
                     </button>
                     {showReprocessMenu && (
                       <div ref={reprocessMenuRef} className="absolute right-0 top-full mt-1.5 w-72 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -2068,7 +2144,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                             }
                           }}
-                          className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors flex items-center gap-3 cursor-pointer border-b border-slate-100 dark:border-slate-800"
+                          className="w-full text-left px-4 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors flex items-center gap-3 cursor-pointer border-b border-slate-100 dark:border-slate-800"
                         >
                           <div className="w-8 h-8 rounded-lg bg-indigo-100 dark:bg-indigo-950/50 flex items-center justify-center shrink-0">
                             <RefreshCw className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
@@ -2102,7 +2178,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </div>
 
                         {/* Tab content */}
-                        <div className="py-1 max-h-64 overflow-y-auto">
+                        <div className="pt-1 pb-0 max-h-[30rem] overflow-y-auto">
                           {reprocessTab === "spellcheck" && ([
                             { label: "Mặc định", icon: RotateCcw, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
                             { label: "Bỏ từ lặp & filler", icon: Eraser, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "remove_fillers", desc: "Bỏ uh, um, えー, từ lặp" },
@@ -2126,7 +2202,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
                               }}
-                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                              className="w-full text-left px-4 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
                             >
                               <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
                               <div className="min-w-0">
@@ -2160,7 +2236,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
                               }}
-                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                              className="w-full text-left px-4 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
                             >
                               <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
                               <div className="min-w-0">
@@ -2191,7 +2267,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                                 }
                               }}
-                              className="w-full text-left px-4 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
+                              className="w-full text-left px-4 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors flex items-center gap-3 cursor-pointer"
                             >
                               <opt.icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
                               <div className="min-w-0">
@@ -2418,33 +2494,151 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           <div className="space-y-6 text-left">
             <div className="flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-[600px] xl:h-[800px]">
               <div className="bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 px-5 py-4 border-b border-blue-100/60 dark:border-slate-800">
-                <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center">
-                    <MessageSquare className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center">
+                      <MessageSquare className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-200">Trợ lý AI</h3>
                   </div>
-                  <h3 className="font-semibold text-slate-800 dark:text-slate-200">Trợ lý AI</h3>
+                  {chatMessages.length > 0 && (
+                    <button
+                      onClick={() => {
+                        // Chat chỉ ở cache trình duyệt — "đoạn chat mới" = xoá lịch sử hiện tại.
+                        setChatMessages([]);
+                        setChatInput("");
+                        setTimeout(() => chatInputRef.current?.focus(), 50);
+                      }}
+                      disabled={isChatStreaming}
+                      className="flex items-center gap-1.5 px-4 py-2 text-xs sm:text-[13px] font-medium rounded-xl border border-blue-200 dark:border-blue-800/60 text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-700 dark:hover:text-blue-300 transition-all shadow-sm hover:shadow cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Plus className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                      Đoạn chat mới
+                    </button>
+                  )}
                 </div>
               </div>
               <div ref={chatScrollRef} className="flex-1 p-5 overflow-y-auto space-y-4 bg-slate-50 dark:bg-slate-950">
                 {chatMessages.length === 0 && (
-                  <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-3">
-                    <Sparkles className="w-10 h-10 opacity-50" />
-                    <p className="text-sm">Hãy đặt câu hỏi về nội dung cuộc họp</p>
+                  <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-6">
+                    <div className="space-y-2 text-center">
+                      <Sparkles className="w-10 h-10 opacity-50 mx-auto" />
+                      <p className="text-sm">Hãy đặt câu hỏi về nội dung cuộc họp</p>
+                    </div>
+                    <div className="flex flex-col gap-2.5 w-full max-w-md">
+                      {[
+                        "Cuộc họp này nói về nội dung gì?",
+                        "Tóm tắt các điểm chính của cuộc họp",
+                        "Những ai tham gia và họ nói gì?",
+                        "Có quyết định hay kế hoạch nào được đưa ra không?",
+                      ].map((q, qi) => (
+                        <button
+                          key={qi}
+                          onClick={() => {
+                            setChatInput(q);
+                            setTimeout(() => {
+                              chatInputRef.current?.form?.requestSubmit();
+                            }, 50);
+                          }}
+                          className="group w-full text-left text-[13px] px-4 py-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:border-blue-300 dark:hover:border-blue-700 hover:bg-blue-50/50 dark:hover:bg-blue-950/20 transition-all duration-200 flex items-center justify-between gap-3"
+                        >
+                          <span>{q}</span>
+                          <span className="text-blue-400 dark:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">›</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
-                {chatMessages.map((msg, i) => (
-                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                 {chatMessages.map((msg, i) => (
+                  <Fragment key={i}>
+                  <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.role === 'user' ? (
                       <div className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap bg-blue-600 text-white shadow-md">
                         {msg.content}
                       </div>
                     ) : (
-                      <div
-                        className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 shadow-sm space-y-1.5 leading-relaxed"
-                        dangerouslySetInnerHTML={{ __html: mdToHtml(msg.content || "") }}
-                      />
+                      <div className="max-w-[85%] flex flex-col gap-1 items-start">
+                        <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 ml-2">Trợ lý AI</span>
+                        <div className="rounded-2xl px-4 py-2.5 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 shadow-sm leading-relaxed">
+                          {msg.content ? (() => {
+                            let displayContent = msg.content;
+                            // Cắt bỏ phần gợi ý câu hỏi (bao gồm cả tag [SUGGESTIONS] và phần phía sau)
+                            // khỏi khung chat chính ở mọi thời điểm (cả khi đang stream và khi hoàn thành)
+                            if (displayContent.includes("[SUGGESTIONS]")) {
+                              displayContent = displayContent.split("[SUGGESTIONS]")[0].trimEnd();
+                            } else if (msg.role === 'assistant' && i === chatMessages.length - 1 && !isChatStreaming) {
+                              // Fallback cũ để lọc nếu AI dùng định dạng cũ hoặc đang stream dở dang chưa tới tag
+                              displayContent = displayContent
+                                .split('\n')
+                                .filter((line: string) => {
+                                  const trimmed = line.trim();
+                                  // Remove lines that contain a bold question as suggestion
+                                  // Matches: "**q?**", "- **q?**", "* **q?**", "• **q?**", "1. **q?**"
+                                  if (/^(?:[-*•]|\d+[.)]\s*)?\s*\*\*[^*]+[?？]\*\*\s*$/.test(trimmed)) return false;
+                                  // Remove intro lines before suggestions (e.g. "Mình gợi ý..." or "Bạn có thể hỏi thêm:")
+                                  if (/^(mình gợi ý|bạn có thể hỏi|gợi ý|dưới đây là|bạn có muốn|bạn thử hỏi)/i.test(trimmed) && /[:\.]?\s*$/.test(trimmed)) return false;
+                                  return true;
+                                })
+                                .join('\n')
+                                .replace(/\n{3,}/g, '\n\n')
+                                .trimEnd();
+                            }
+                            return <div className="space-y-1.5" dangerouslySetInnerHTML={{ __html: mdToHtml(displayContent) }} />;
+                          })() : (
+                            <div className="flex items-center gap-1.5 py-1 px-1">
+                              <span className="w-2 h-2 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce [animation-delay:-0.3s]" style={{ animationDuration: '1s' }} />
+                              <span className="w-2 h-2 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce [animation-delay:-0.15s]" style={{ animationDuration: '1s' }} />
+                              <span className="w-2 h-2 bg-slate-400 dark:bg-slate-500 rounded-full animate-bounce" style={{ animationDuration: '1s' }} />
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
+                  {/* Suggestion buttons: right-aligned, stacked vertically */}
+                  {msg.role === 'assistant' && msg.content && !isChatStreaming && i === chatMessages.length - 1 && (() => {
+                    const boldRegex = new RegExp('\\*\\*([^*]+)\\*\\*[?？]?', 'g');
+                    const suggestions: string[] = [];
+                    let m;
+                    while ((m = boldRegex.exec(msg.content)) !== null) {
+                      let text = m[1].trim();
+                      const hasQ = /[?？]/.test(text) || m[0].endsWith('?') || m[0].endsWith('？');
+                      const afterIdx = (m.index ?? 0) + m[0].length;
+                      const charAfter = msg.content[afterIdx];
+                      const qAfter = charAfter === '?' || charAfter === '？';
+                      if ((hasQ || qAfter) && text.length >= 8 && text.length <= 150) {
+                        if (!/[?？]$/.test(text)) text += '?';
+                        suggestions.push(text);
+                      }
+                    }
+                    if (suggestions.length === 0) return null;
+                    const limited = suggestions.slice(0, 2);
+                    // Auto-scroll to show suggestions
+                    setTimeout(() => {
+                      const el = chatScrollRef.current;
+                      if (el) el.scrollTop = el.scrollHeight;
+                    }, 50);
+                    return (
+                      <div className="flex flex-col gap-2 items-end">
+                        {limited.map((suggestion: string, si: number) => (
+                          <button
+                            key={si}
+                            onClick={() => {
+                              setChatInput(suggestion);
+                              setTimeout(() => {
+                                chatInputRef.current?.form?.requestSubmit();
+                              }, 50);
+                            }}
+                            className="group text-[13px] px-4 py-2.5 rounded-2xl rounded-br-md text-blue-700 dark:text-blue-300 bg-blue-50/90 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all duration-200 text-left leading-snug max-w-[85%] flex items-center gap-2"
+                          >
+                            <span>{suggestion}</span>
+                            <span className="text-blue-400 dark:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">›</span>
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  </Fragment>
                 ))}
               </div>
               <div className="p-4 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
@@ -2453,21 +2647,28 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     e.preventDefault();
                     if (!chatInput.trim() || isChatStreaming) return;
                     const userMsg = chatInput.trim();
+                    // Lịch sử trước câu hỏi mới — gửi lên API để giữ ngữ cảnh (chat chỉ ở cache,
+                    // không còn lưu DB nên server không tự lấy được history).
+                    const priorHistory = chatMessages.map((m) => ({ role: m.role, content: m.content }));
                     setChatInput("");
                     if (chatInputRef.current) chatInputRef.current.style.height = "auto";
-                    setChatMessages((prev) => [...prev, { role: "user", content: userMsg }]);
+                    chatInputRef.current?.focus();
+                    setChatMessages((prev) => [
+                      ...prev,
+                      { role: "user", content: userMsg },
+                      { role: "assistant", content: "" }
+                    ]);
                     setIsChatStreaming(true);
                     try {
                       const res = await fetch("/api/meetings/ask-ai", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ meetingId, question: userMsg, conversationId }),
+                        body: JSON.stringify({ meetingId, question: userMsg, history: priorHistory }),
                       });
                       if (!res.ok || !res.body) throw new Error("Lỗi gọi API");
                       const reader = res.body.getReader();
                       const decoder = new TextDecoder();
                       let aiResponse = "";
-                      setChatMessages((prev) => [...prev, { role: "assistant", content: "" }]);
                       while (true) {
                         const { done, value } = await reader.read();
                         if (done) break;
@@ -2481,6 +2682,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     } catch (err) {
                       console.error(err);
                       addToast("Lỗi", "Không thể lấy câu trả lời từ AI.", "error");
+                      setChatMessages((prev) => prev.slice(0, -1));
                     } finally {
                       setIsChatStreaming(false);
                     }
@@ -2504,17 +2706,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         e.currentTarget.form?.requestSubmit();
                       }
                     }}
-                    disabled={isChatStreaming}
                     rows={1}
                     placeholder="Hỏi AI về cuộc họp..."
-                    className="flex-1 resize-none max-h-32 border border-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+                    className="flex-1 resize-none max-h-32 border border-slate-200 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-blue-200 focus:border-blue-300 dark:focus:ring-blue-800/40 dark:focus:border-blue-700/50 shadow-sm transition-colors"
                   />
                   <button
                     type="submit"
                     disabled={isChatStreaming}
-                    className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 shadow-md transition-all flex items-center justify-center"
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 shadow-md transition-all flex items-center justify-center min-w-[76px] h-[46px]"
                   >
-                    {isChatStreaming ? <RefreshCw className="w-4 h-4 animate-spin" /> : "Gửi"}
+                    Gửi
                   </button>
                 </form>
               </div>
@@ -2546,6 +2747,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           onClick={async () => {
                             setIsGeneratingSummary(true);
                             setActiveSummaryMode(opt.mode);
+                            isGeneratingSummaryRef.current = true;
+                            activeSummaryModeRef.current = opt.mode;
                             const res = await fetch("/api/meetings/reprocess/run-queue", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -2555,6 +2758,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               refreshMeetingDataSilently();
                             } else {
                               setIsGeneratingSummary(false);
+                              const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+                              setActiveSummaryMode(cachedMode || null);
+                              isGeneratingSummaryRef.current = false;
+                              activeSummaryModeRef.current = cachedMode || null;
                               addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
                             }
                           }}
@@ -2940,10 +3147,23 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                 <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 p-5 sm:p-6 rounded-xl shadow-sm">
                   {/* Card title */}
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
-                    <FileText className="w-4.5 h-4.5 text-indigo-500" />
-                    <span>Bản ghi gốc từ Deepgram</span>
-                    <span className="text-xs font-normal opacity-60">({filteredTranscripts.length} đoạn)</span>
+                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      <FileText className="w-4.5 h-4.5 text-indigo-500" />
+                      <span>Bản ghi gốc từ Deepgram</span>
+                      <span className="text-xs font-normal opacity-60">({filteredTranscripts.length} đoạn)</span>
+                    </div>
+                    
+                    {!hasTranslation && (
+                      <button
+                        onClick={handleQuickTranslate}
+                        disabled={isTranslatingRaw}
+                        className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:border-indigo-300 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                      >
+                        <Languages className={`w-3.5 h-3.5 ${isTranslatingRaw ? "animate-spin" : ""}`} />
+                        {isTranslatingRaw ? "Đang dịch..." : "Dịch nhanh"}
+                      </button>
+                    )}
                   </div>
 
                   {/* Search & Language pill control bar */}
@@ -2955,7 +3175,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         placeholder="Tìm kiếm từ khóa trong bản ghi gốc..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-8 h-9 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                        className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
                       />
                       {searchQuery && (
                         <button
@@ -2969,10 +3189,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </div>
 
                     <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
-                      <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-lg border border-slate-200/50 dark:border-slate-700/50 shadow-inner">
+                      <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 shadow-inner">
                         <button
                           onClick={() => setRawLangMode("original")}
-                          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer ${
                             rawLangMode === "original"
                               ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
                               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
@@ -2982,7 +3202,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </button>
                         <button
                           onClick={() => setRawLangMode("translated")}
-                          className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer ${
                             rawLangMode === "translated"
                               ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
                               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
@@ -2994,16 +3214,49 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </div>
                   </div>
 
-                  <div className="space-y-0 divide-y divide-slate-50 dark:divide-slate-800/50">
-                    {filteredTranscripts.length > 0 ? filteredTranscripts.map((t: any) => (
-                      <div key={t.id} className="py-2.5 first:pt-0 last:pb-0">
-                        <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-line">
-                          {rawLangMode === "translated"
-                            ? (t.translatedText || <span className="text-slate-400 dark:text-slate-500 italic text-xs">(Chưa có bản dịch cho câu này. Hãy chạy lại pipeline dịch ở Hội thoại)</span>)
-                            : (t.correctedText || t.originalText)}
-                        </p>
-                      </div>
-                    )) : (
+                  <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
+                    {groupedParagraphs.length > 0 ? groupedParagraphs.map((p, pIdx) => {
+                      const isRawOriginal = rawLangMode === "original";
+                      const isJapaneseOriginal = meeting?.original_language?.toLowerCase().startsWith("ja") || meeting?.target_language?.toLowerCase().startsWith("ja");
+                      const shouldAddSpace = !(isRawOriginal && isJapaneseOriginal);
+                      const isUnknownSpeaker = p.speakerTag === "unknown" || 
+                                               p.speakerName.toLowerCase().includes("unknown") || 
+                                               p.speakerName.toLowerCase() === "unknown";
+                      
+                      return (
+                        <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
+                          {!isUnknownSpeaker && (
+                            <span 
+                              style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
+                              className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
+                            >
+                              {p.speakerName}
+                            </span>
+                          )}
+                          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1">
+                            {p.segments.map((t) => {
+                              const text = rawLangMode === "translated" 
+                                ? (t.translatedText || "") 
+                                : (t.correctedText || t.originalText || "");
+                              
+                              if (rawLangMode === "translated" && !t.translatedText) {
+                                return (
+                                  <span key={t.id} className="text-slate-400 dark:text-slate-500 italic text-xs block mt-1">
+                                    (Chưa có bản dịch cho câu này. Hãy chạy lại pipeline dịch ở Hội thoại)
+                                  </span>
+                                );
+                              }
+                              
+                              return (
+                                <span key={t.id} className={shouldAddSpace ? "mr-1" : ""}>
+                                  {highlightText(text, searchQuery)}
+                                </span>
+                              );
+                            })}
+                          </p>
+                        </div>
+                      );
+                    }) : (
                       <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
                     )}
                   </div>
@@ -3018,11 +3271,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-8 rounded-xl shadow-sm text-center space-y-2">
                 <Sparkles className="w-6 h-6 text-slate-300 dark:text-slate-600 mx-auto" />
                 <p className="text-xs text-slate-400 italic max-w-md mx-auto">
-                  Chưa có dữ liệu phân tích. Bấm <strong>"Phân tích toàn diện (Generate All)"</strong> ở trên để AI xử lý toàn bộ cuộc họp.
+                  Chưa có dữ liệu phân tích. Hãy bấm vào nút <strong>"Tùy chỉnh AI"</strong> ở phía trên để bắt đầu xử lý cuộc họp.
                 </p>
               </div>
             ) : (
               <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
+                {/* Card title */}
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 pb-2 border-b border-slate-100 dark:border-slate-800">
+                  <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
+                  <span>Hội thoại đã xử lý</span>
+                  <span className="text-xs font-normal opacity-60">({filteredReprocessedTranscripts.length} đoạn)</span>
+                </div>
                 {/* Internal Search & Voice selector */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="relative w-full sm:max-w-xs md:max-w-md">
@@ -3032,7 +3291,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       placeholder="Lọc từ khóa trong cuộc hội thoại..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
                     />
                     {searchQuery && (
                       <button

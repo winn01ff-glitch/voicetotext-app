@@ -128,8 +128,11 @@ export type PipelineStep =
 // Constants
 // ================================================================
 
+// Flash-lite là model mặc định cho TOÀN pipeline (nhanh + rẻ, đủ cho các tác vụ này).
+// AI_QUALITY_MODEL vẫn giữ để có thể nâng riêng các bước "nặng" (summary/speaker) qua
+// biến môi trường nếu sau này thấy cần chất lượng cao hơn — mặc định vẫn là flash-lite.
 const AI_FAST_MODEL = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
-const AI_QUALITY_MODEL = process.env.AI_QUALITY_MODEL || "gemini-2.5-pro";
+const AI_QUALITY_MODEL = process.env.AI_QUALITY_MODEL || "gemini-3.1-flash-lite";
 const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 
 const BATCH_SIZE = 30;
@@ -176,21 +179,27 @@ const STATUS_LABEL: Record<PipelineStep, string> = {
  */
 async function callGemini<T = any>(
   prompt: string,
-  modelName: string
+  modelName: string,
+  options?: { temperature?: number }
 ): Promise<T> {
+  // temperature thấp (0) cho các pass "trung thành" (sửa lỗi, dịch): giảm việc model tự
+  // diễn giải/viết lại → giữ ngữ nghĩa và cho kết quả ổn định hơn. Bỏ qua nếu không truyền.
+  const generationConfig: Record<string, unknown> = { responseMimeType: "application/json" };
+  if (options?.temperature !== undefined) generationConfig.temperature = options.temperature;
+
   return runWithGeminiClient(async (genAI) => {
     let result;
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,
-        generationConfig: { responseMimeType: "application/json" },
+        generationConfig,
       });
       result = await model.generateContent(prompt);
     } catch (err) {
       console.warn(`Model ${modelName} failed, falling back to ${FALLBACK_MODEL}:`, err);
       const fallbackModel = genAI.getGenerativeModel({
         model: FALLBACK_MODEL,
-        generationConfig: { responseMimeType: "application/json" },
+        generationConfig,
       });
       result = await fallbackModel.generateContent(prompt);
     }
@@ -538,7 +547,101 @@ export async function step1_correctSTT(
   const batches = chunkArray(utterances, BATCH_SIZE);
   const allCorrected: CorrectedTurn[] = [];
 
+  const glossaryStr = config.glossary.length > 0
+    ? JSON.stringify(config.glossary.map((g) => ({ source: g.source, target: g.target })))
+    : "(không có)";
+  const sourceLangLabel = getSourceLangLabel(config.sourceLanguage);
+
+  // Mode "trung thành" (mặc định + minimal): chỉ sửa lỗi ASR rõ ràng, không diễn giải.
+  // Các mode còn lại là "biên tập" (viết lại/rút gọn/mở rộng...) — cố ý đổi hình thức nên
+  // giữ đường full-rewrite. Chỉ nhánh trung thành dùng edit-only + cổng confidence + bỏ gọi.
+  const isFaithfulMode = !mode || mode === "minimal";
+
+  // Chỉ pass-through nguyên văn (không gọi LLM) cho batch có ĐỦ dữ liệu confidence và tất cả
+  // đều cao — bản ghi đã sạch thì không cần model đụng vào.
+  const HIGH_CONF = 0.92;
+  const pushPassthrough = (u: RawUtterance) => {
+    allCorrected.push({
+      text: u.text,
+      start_ms: Math.round(u.start * 1000),
+      end_ms: Math.round(u.end * 1000),
+      speaker_hint: u.speaker,
+    });
+  };
+
   for (const batch of batches) {
+    // ---- Nhánh TRUNG THÀNH: edit-only + cổng confidence + bỏ gọi ----
+    if (isFaithfulMode) {
+      const hasConfData = batch.every((u) => typeof u.confidence === "number");
+      if (hasConfData && batch.every((u) => (u.confidence ?? 0) >= HIGH_CONF)) {
+        // Batch sạch → bỏ qua LLM hoàn toàn (không tốn call, không sleep).
+        batch.forEach(pushPassthrough);
+        continue;
+      }
+
+      const inputData = batch.map((u, i) => ({
+        index: i + 1,
+        text: u.text,
+        confidence: typeof u.confidence === "number" ? Number(u.confidence.toFixed(2)) : null,
+      }));
+
+      const prompt = `
+Bạn là chuyên gia chỉnh sửa văn bản phiên âm (STT post-correction). Nhiệm vụ: SỬA LỖI, KHÔNG viết lại.
+
+==================================================
+THÔNG TIN CUỘC HỌP
+==================================================
+Tiêu đề: ${config.title}
+Ngôn ngữ gốc: ${sourceLangLabel}
+Ngữ cảnh: ${config.meetingContext || "General discussion"}
+
+BẢNG THUẬT NGỮ (Glossary):
+${glossaryStr}
+
+==================================================
+DỮ LIỆU ĐẦU VÀO — mỗi dòng có "confidence" (0..1) từ hệ nhận dạng; càng thấp càng dễ sai
+==================================================
+${JSON.stringify(inputData)}
+
+==================================================
+QUY TẮC BẮT BUỘC:
+1. KHÔNG DỊCH sang ngôn ngữ khác — giữ nguyên ngôn ngữ gốc.
+2. GIỮ NGUYÊN CHÍNH XÁC: số, ngày/giờ, đơn vị, tiền tệ, phần trăm, tên riêng. TUYỆT ĐỐI không đổi (ví dụ không 15↔50, 30 tuổi↔13 tuổi).
+3. KHÔNG CHẮC một từ có sai hay không → GIỮ NGUYÊN. Ưu tiên xét sửa dòng "confidence" thấp; dòng confidence cao gần như luôn giữ nguyên.
+4. KHÔNG gộp/tách câu, không đổi thứ tự, không thêm/bớt ý, không đổi filler/backchannel.${getEditingModeInstructions(mode)}
+
+==================================================
+OUTPUT — JSON ONLY, không markdown
+==================================================
+CHỈ trả về những dòng bạn THỰC SỰ sửa. Đa số dòng nên GIỮ NGUYÊN và KHÔNG xuất hiện trong output.
+{ "edits": [ { "index": 3, "text": "văn bản đã sửa của dòng có index = 3" } ] }
+Nếu không có gì cần sửa: { "edits": [] }
+`;
+
+      const result = await callGemini<{ edits: { index: number; text: string }[] }>(prompt, AI_FAST_MODEL, { temperature: 0 });
+      const editsMap = new Map<number, string>();
+      (result.edits || []).forEach((e) => {
+        if (e && typeof e.index === "number" && typeof e.text === "string") {
+          editsMap.set(e.index, e.text);
+        }
+      });
+      await sleep(2500);
+
+      // Dựng lại toàn bộ dòng từ input; chỉ thay text ở dòng model có sửa (giữ 1-to-1 tuyệt đối,
+      // timestamp/speaker không bao giờ do model đụng vào).
+      batch.forEach((u, i) => {
+        const edited = editsMap.get(i + 1);
+        allCorrected.push({
+          text: typeof edited === "string" && edited.trim().length > 0 ? edited : u.text,
+          start_ms: Math.round(u.start * 1000),
+          end_ms: Math.round(u.end * 1000),
+          speaker_hint: u.speaker,
+        });
+      });
+      continue;
+    }
+
+    // ---- Nhánh BIÊN TẬP (rephrase/professional/deep_clean/...): full-rewrite như cũ ----
     const inputData = batch.map((u, i) => ({
       index: i + 1,
       text: u.text,
@@ -546,12 +649,6 @@ export async function step1_correctSTT(
       start: u.start,
       end: u.end,
     }));
-
-    const glossaryStr = config.glossary.length > 0
-      ? JSON.stringify(config.glossary.map((g) => ({ source: g.source, target: g.target })))
-      : "(không có)";
-
-    const sourceLangLabel = getSourceLangLabel(config.sourceLanguage);
 
     const prompt = `
 Bạn là chuyên gia chỉnh sửa văn bản phiên âm (STT post-correction).
@@ -575,6 +672,8 @@ ${JSON.stringify(inputData)}
 QUY TẮC BẮT BUỘC:
 1. KHÔNG DỊCH NGHĨA SANG NGÔN NGỮ KHÁC. Giữ nguyên ngôn ngữ gốc của dữ liệu đầu vào. Nếu đầu vào là tiếng Nhật, kết quả bắt buộc phải là tiếng Nhật. Nếu đầu vào là tiếng Việt, kết quả phải là tiếng Việt.
 2. Giữ nguyên định dạng và số lượng phần tử đầu ra đúng bằng số lượng phần tử đầu vào (1-to-1).
+3. GIỮ NGUYÊN CHÍNH XÁC: số, ngày/giờ, đơn vị, tiền tệ, phần trăm, và tên riêng (người/công ty/địa danh). TUYỆT ĐỐI không "sửa" hay đổi các giá trị này (ví dụ không đổi 15↔50, 30 tuổi↔13 tuổi).
+4. KHI KHÔNG CHẮC CHẮN một từ có sai hay không → GIỮ NGUYÊN VERBATIM. Chỉ thay đổi khi đó là lỗi ASR rõ ràng. Không diễn giải lại, không thêm/bớt ý.
 ==================================================
 
 ==================================================${getEditingModeInstructions(mode)}
@@ -597,9 +696,7 @@ Chú ý: start_ms và end_ms tính bằng milliseconds (nhân start/end với 10
 speaker_hint giữ nguyên giá trị speaker từ input.
 `;
 
-    // No live-latency pressure here — use the quality tier so this background/full-context
-    // pass is actually better than the live batch pass, not just "the same model run twice".
-    const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_QUALITY_MODEL);
+    const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_FAST_MODEL, { temperature: 0 });
     const turns = result.corrected_turns || [];
     await sleep(2500);
 
@@ -764,7 +861,14 @@ ${getSpeakerModeInstructions(mode)}
 
 RULES:
 - speaker_name lấy từ DANH SÁCH NGƯỜI NÓI nếu match. Nếu confidence < 0.7, dùng "Unknown Speaker".
-- Nếu phát hiện speaker mới (không có trong danh sách), gán tag tuần tự (speaker_3, speaker_4...) và name = "Speaker X".
+- Nếu phát hiện speaker mới (không có trong danh sách):
+  ${
+    mode === "by_name"
+      ? 'tích cực phân tích nội dung để xác định tên thật của họ và gán vào "speaker_name". Chỉ dùng "Speaker X" (ví dụ: Speaker 2, Speaker 3...) nếu hoàn toàn không thể tìm thấy tên thật từ nội dung.'
+      : mode === "by_role"
+      ? 'phân tích nội dung để gán "speaker_name" theo vai trò (ví dụ: "Quản lý", "Nhân viên", "Khách hàng", v.v.). Chỉ dùng "Speaker X" nếu hoàn toàn không xác định được vai trò.'
+      : 'gán tag tuần tự (speaker_3, speaker_4...) và gán "speaker_name" = "Speaker X" (ví dụ: Speaker 2, Speaker 3...).'
+  }
 - Giữ nguyên thứ tự thời gian.
 - Không hallucinate nội dung.
 `;
@@ -1067,21 +1171,27 @@ OUTPUT FORMAT — JSON ONLY:
 
     case "meeting_minutes":
       return `
-NHIỆM VỤ: Tạo BIÊN BẢN HỌP chuyên nghiệp, sẵn sàng gửi qua email.
+NHIỆM VỤ: Tạo BIÊN BẢN HỌP chuyên nghiệp, sẵn sàng gửi qua email, trình bày bằng Markdown.
 
 HƯỚNG DẪN:
-1. Viết biên bản với cấu trúc chuyên nghiệp gồm:
+1. Viết biên bản với cấu trúc chuyên nghiệp, sử dụng Markdown formatting:
+   - Dùng ## cho tiêu đề lớn (BIÊN BẢN CUỘC HỌP)
+   - Dùng ### cho tiêu đề mục (1. THÔNG TIN CHUNG, 2. NỘI DUNG THẢO LUẬN...)
+   - Dùng **in đậm** cho nhãn quan trọng (Ngày:, Chủ đề:, Người tham gia:...)
+   - Dùng bullet points (- hoặc •) cho danh sách
+   - Dùng --- để phân cách giữa các mục lớn
+2. Cấu trúc bao gồm:
    - Thông tin chung (ngày, chủ đề, người tham gia)
    - Nội dung thảo luận chính
    - Quyết định đã thông qua
    - Công việc tiếp theo (nếu có)
-2. Giọng điệu trang trọng, chuyên nghiệp.
-3. Viết bằng ngôn ngữ "${targetLanguage}".
-4. Không hallucinate thông tin không có trong biên bản.
+3. Giọng điệu trang trọng, chuyên nghiệp.
+4. Viết bằng ngôn ngữ "${targetLanguage}".
+5. Không hallucinate thông tin không có trong biên bản.
 
 OUTPUT FORMAT — JSON ONLY:
 {
-  "executive_summary": "BIÊN BẢN CUỘC HỌP\\n\\n1. THÔNG TIN CHUNG\\n...\\n\\n2. NỘI DUNG THẢO LUẬN\\n...\\n\\n3. QUYẾT ĐỊNH\\n...\\n\\n4. CÔNG VIỆC TIẾP THEO\\n...",
+  "executive_summary": "## BIÊN BẢN CUỘC HỌP\\n\\n### 1. THÔNG TIN CHUNG\\n- **Ngày:** ...\\n- **Chủ đề:** ...\\n- **Người tham gia:** ...\\n\\n---\\n\\n### 2. NỘI DUNG THẢO LUẬN\\n...\\n\\n---\\n\\n### 3. QUYẾT ĐỊNH\\n...\\n\\n---\\n\\n### 4. CÔNG VIỆC TIẾP THEO\\n...",
   "decisions": ["Quyết định 1...", "Quyết định 2..."]
 }`;
 

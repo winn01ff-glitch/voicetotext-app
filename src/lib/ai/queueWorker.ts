@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   PipelineConfig,
@@ -15,6 +16,78 @@ import {
   chunkArray
 } from "./pipeline";
 import { generateEmbeddings } from "./rag";
+
+// Hash nội dung một đoạn text để làm khoá translation-memory (chuẩn hoá trim trước khi hash
+// để tối đa tỉ lệ trùng).
+function hashText(t: string): string {
+  return createHash("sha256").update((t || "").trim()).digest("hex");
+}
+
+/**
+ * Dịch với translation-memory: chỉ gọi AI cho các đoạn text CHƯA có bản dịch trong cache
+ * (cùng meeting + ngôn ngữ đích + mode). Đây là chỗ tiết kiệm quota lớn nhất khi reprocess —
+ * ví dụ phân vai lại chỉ đổi nhãn/ranh giới, đa số text giữ nguyên nên hầu hết là cache hit.
+ * Trả về mảng translated_text căn đúng thứ tự input (null nếu không dịch được).
+ */
+async function translateTurnsWithCache(
+  meetingId: string,
+  turns: CheckedTurn[],
+  config: PipelineConfig,
+  mode: string | null | undefined
+): Promise<(string | null)[]> {
+  if (turns.length === 0) return [];
+  const supabase = await createServerSupabaseClient();
+  const targetLang = config.targetLanguage || "vi";
+  const modeKey = mode || ""; // chuẩn hoá null → "" cho unique key (Postgres coi NULL là khác nhau)
+
+  const hashes = turns.map((t) => hashText(t.text));
+  const uniqueHashes = Array.from(new Set(hashes));
+
+  // 1. Lấy các bản dịch đã có trong cache
+  const cacheMap = new Map<string, string>();
+  for (const chunk of chunkArray(uniqueHashes, 100)) {
+    const { data } = await supabase
+      .from("translation_cache")
+      .select("text_hash, translated_text")
+      .eq("meeting_id", meetingId)
+      .eq("target_lang", targetLang)
+      .eq("mode", modeKey)
+      .in("text_hash", chunk);
+    (data || []).forEach((r: any) => cacheMap.set(r.text_hash, r.translated_text));
+  }
+
+  // 2. Xác định các đoạn cần dịch (miss), mỗi hash chỉ dịch 1 lần
+  const missIndices: number[] = [];
+  const seenMiss = new Set<string>();
+  turns.forEach((t, i) => {
+    const h = hashes[i];
+    if (!cacheMap.has(h) && !seenMiss.has(h)) {
+      seenMiss.add(h);
+      missIndices.push(i);
+    }
+  });
+
+  // 3. Gọi AI chỉ cho phần miss, rồi ghi vào cache
+  if (missIndices.length > 0) {
+    const missTurns = missIndices.map((i) => turns[i]);
+    const translated = await step4_translate(missTurns, config, mode);
+    const rowsToUpsert: any[] = [];
+    translated.forEach((tt, k) => {
+      const h = hashes[missIndices[k]];
+      const text = tt?.translated_text ?? null;
+      if (text !== null && !cacheMap.has(h)) {
+        cacheMap.set(h, text);
+        rowsToUpsert.push({ meeting_id: meetingId, text_hash: h, target_lang: targetLang, mode: modeKey, translated_text: text });
+      }
+    });
+    for (const batch of chunkArray(rowsToUpsert, 100)) {
+      await supabase.from("translation_cache").upsert(batch, { onConflict: "meeting_id,text_hash,target_lang,mode" });
+    }
+  }
+
+  // 4. Trả kết quả theo đúng thứ tự input
+  return hashes.map((h) => cacheMap.get(h) ?? null);
+}
 
 /**
  * Hàm đọc config của cuộc họp.
@@ -218,10 +291,78 @@ async function incrementTranscriptVersion(meetingId: string, newRows: any[], ver
   // Look up existing speakers to map speaker_tag → speaker_id
   const { data: speakers } = await supabase
     .from("speakers")
-    .select("id, speaker_tag")
+    .select("id, speaker_tag, display_name")
     .eq("meeting_id", meetingId);
   const tagToId: Record<string, string> = {};
-  (speakers || []).forEach((s: any) => { tagToId[s.speaker_tag] = s.id; });
+  const tagToCurrentName: Record<string, string> = {};
+  (speakers || []).forEach((s: any) => { 
+    tagToId[s.speaker_tag] = s.id; 
+    tagToCurrentName[s.speaker_tag] = s.display_name;
+  });
+
+  // Ensure all speaker tags in newRows exist in the speakers table
+  const uniqueTags = Array.from(new Set(newRows.map(r => r.speaker_tag).filter(Boolean)));
+  for (const tag of uniqueTags) {
+    if (!tagToId[tag]) {
+      const defaultName = tag.replace("speaker_", "Speaker ");
+      const { data: newSpeaker } = await supabase
+        .from("speakers")
+        .insert({
+          meeting_id: meetingId,
+          speaker_tag: tag,
+          display_name: defaultName,
+          color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
+          version_type: versionType,
+          version: nextVersion,
+          is_active: true
+        })
+        .select("id")
+        .single();
+      
+      if (newSpeaker) {
+        tagToId[tag] = newSpeaker.id;
+        tagToCurrentName[tag] = defaultName;
+      }
+    }
+  }
+
+  // Aggregate speaker names from newRows
+  const tagToNames: Record<string, Record<string, number>> = {};
+  newRows.forEach((r) => {
+    if (r.speaker_tag && r.speaker_name) {
+      const name = r.speaker_name.trim();
+      // Skip generic placeholder names unless there's nothing else
+      if (name && name !== "Unknown Speaker" && !/^Speaker\s+\d+$/i.test(name)) {
+        if (!tagToNames[r.speaker_tag]) {
+          tagToNames[r.speaker_tag] = {};
+        }
+        tagToNames[r.speaker_tag][name] = (tagToNames[r.speaker_tag][name] || 0) + 1;
+      }
+    }
+  });
+
+  // Update display_name in speakers table for tags that have a new name
+  for (const tag of Object.keys(tagToNames)) {
+    const nameMap = tagToNames[tag];
+    let bestName = "";
+    let maxCount = 0;
+    for (const name of Object.keys(nameMap)) {
+      if (nameMap[name] > maxCount) {
+        maxCount = nameMap[name];
+        bestName = name;
+      }
+    }
+
+    if (bestName && tagToId[tag]) {
+      const currentName = tagToCurrentName[tag];
+      if (currentName !== bestName) {
+        await supabase
+          .from("speakers")
+          .update({ display_name: bestName })
+          .eq("id", tagToId[tag]);
+      }
+    }
+  }
 
   // Inactivate old
   await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meetingId);
@@ -344,27 +485,27 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
     confidence: r.confidence || 1.0
   }));
 
-  const translated = await step4_translate(checkedTurns, config, job.mode);
+  // Dịch qua translation-memory: chỉ gọi AI cho đoạn text chưa có bản dịch trong cache.
+  // Khi phân vai lại chỉ đổi nhãn/ranh giới (text không đổi) → hầu hết cache hit → gần như 0 lượt gọi.
+  const finalTranslations = await translateTurnsWithCache(job.meeting_id, checkedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
-  const newRows = activeTranscripts.map((r: any, i: number) => {
+  const newRows = activeTranscripts.map((r: any, i: number) => ({
     // Preserve old data, just add translated_text
-    const t = translated[i];
-    return {
-      original_text: r.original_text,
-      corrected_text: r.corrected_text,
-      translated_text: t ? t.translated_text : null,
-      start_ms: r.start_ms,
-      end_ms: r.end_ms,
-      speaker_tag: r.speaker_tag,
-      speaker_name: r.speaker_name,
-      confidence: r.confidence
-    };
-  });
+    original_text: r.original_text,
+    corrected_text: r.corrected_text,
+    translated_text: finalTranslations[i] ?? null,
+    start_ms: r.start_ms,
+    end_ms: r.end_ms,
+    speaker_tag: r.speaker_tag,
+    speaker_name: r.speaker_name,
+    confidence: r.confidence
+  }));
 
   await incrementTranscriptVersion(job.meeting_id, newRows, 'FINAL');
 
-  // Translate RAW transcripts for the "Bản gốc" tab
+  // Dịch RAW cho tab "Bản gốc" — text RAW KHÔNG đổi sau STT, nên chỉ dịch những dòng còn THIẾU
+  // bản dịch (dịch một lần). Trước đây dịch lại toàn bộ RAW mỗi lần reprocess là lãng phí ~50%.
   const { data: rawTranscripts } = await supabase
     .from("transcripts")
     .select("*")
@@ -372,8 +513,12 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
     .or("version_type.eq.RAW,version_type.eq.raw")
     .order("start_ms", { ascending: true });
 
-  if (rawTranscripts && rawTranscripts.length > 0) {
-    const rawTurns = rawTranscripts.map((r: any) => ({
+  const rawToTranslate = (rawTranscripts || []).filter(
+    (r: any) => !r.translated_text || String(r.translated_text).trim() === ""
+  );
+
+  if (rawToTranslate.length > 0) {
+    const rawTurns: CheckedTurn[] = rawToTranslate.map((r: any) => ({
       text: r.corrected_text || r.original_text || "",
       start_ms: r.start_ms || 0,
       end_ms: r.end_ms || 0,
@@ -381,15 +526,11 @@ async function executeTranslationJob(job: any, config: PipelineConfig) {
       speaker_name: r.speaker_name || "",
       confidence: r.confidence || 1.0
     }));
-    const translatedRaw = await step4_translate(rawTurns, config, job.mode);
+    const rawTranslations = await translateTurnsWithCache(job.meeting_id, rawTurns, config, job.mode);
     if (!(await checkJobCancelled(job.id))) {
-      const updates = rawTranscripts.map((r: any, i: number) => {
-        const t = translatedRaw[i];
-        return supabase
-          .from("transcripts")
-          .update({ translated_text: t ? t.translated_text : null })
-          .eq("id", r.id);
-      });
+      const updates = rawToTranslate.map((r: any, i: number) =>
+        supabase.from("transcripts").update({ translated_text: rawTranslations[i] ?? null }).eq("id", r.id)
+      );
       await Promise.all(updates);
     }
   }
@@ -410,14 +551,35 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
     confidence: r.confidence || 1.0
   }));
 
+  const supabase = await createServerSupabaseClient();
+
+  // Dirty-check: tóm tắt phụ thuộc NỘI DUNG (bản dịch) + mode, KHÔNG phụ thuộc nhãn người nói.
+  // Nếu nội dung không đổi so với bản tóm tắt đang active (vd cascade sau khi chỉ đổi nhãn) →
+  // bỏ qua tạo lại, tiết kiệm 2 lượt gọi AI (summarize + extract actions).
+  const contentForHash = translatedTurns
+    .map(t => (t.translated_text || t.original_text || "").trim())
+    .join("\n");
+  const summaryHash = hashText(`${job.mode || ""}::${contentForHash}`);
+
+  const { data: currentSummary } = await supabase
+    .from("ai_summaries")
+    .select("id, source_hash")
+    .eq("meeting_id", job.meeting_id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (currentSummary && currentSummary.source_hash && currentSummary.source_hash === summaryHash) {
+    // Nội dung không đổi → giữ nguyên bản tóm tắt hiện có (run-queue có thể đã set status "Draft").
+    await supabase.from("ai_summaries").update({ status: "Completed" }).eq("id", currentSummary.id);
+    return;
+  }
+
   const summary = await step5_summarize(translatedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
-  
+
   const actions = await step6_extractActions(translatedTurns, summary, config);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
-  const supabase = await createServerSupabaseClient();
-  
   // Find max version for summary
   const { data: maxSumVer } = await supabase.from("ai_summaries").select("version").eq("meeting_id", job.meeting_id).order("version", { ascending: false }).limit(1).single();
   const nextVer = (maxSumVer?.version || 0) + 1;
@@ -429,7 +591,8 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
     decisions: summary.decisions || [],
     version: nextVer,
     is_active: true,
-    status: "Completed"
+    status: "Completed",
+    source_hash: summaryHash
   });
 
   await supabase.from("action_items").update({ is_active: false }).eq("meeting_id", job.meeting_id);

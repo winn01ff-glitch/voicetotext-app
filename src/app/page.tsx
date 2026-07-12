@@ -218,7 +218,15 @@ export default function Dashboard() {
     const savedMeetings = localStorage.getItem("cached_meetings");
     if (savedMeetings !== null) {
       try {
-        setMeetings(JSON.parse(savedMeetings));
+        const parsed = JSON.parse(savedMeetings);
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const filteredCache = parsed.filter((m: any) => {
+          if (m.is_pinned || m.is_favorite) return true;
+          if (!m.created_at) return false;
+          return new Date(m.created_at) >= sevenDaysAgo;
+        });
+        setMeetings(filteredCache);
         setLoading(false);
       } catch (e) {
         console.error("Failed to parse cached meetings", e);
@@ -399,8 +407,9 @@ export default function Dashboard() {
   };
 
   const fetchMeetings = async () => {
-    // Only show loading spinner if we don't have any meetings in memory
-    if (meetings.length === 0) {
+    // Only show loading spinner if we don't have any meetings in memory and no cache exists
+    const hasCache = typeof window !== "undefined" && localStorage.getItem("cached_meetings") !== null;
+    if (meetings.length === 0 && !hasCache) {
       setLoading(true);
     }
     try {
@@ -414,7 +423,18 @@ export default function Dashboard() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setMeetings(data || []);
+
+      // Filter meetings: keep only those created within the last 7 days OR pinned/favorite meetings
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const filtered = (data || []).filter((m: any) => {
+        if (m.is_pinned || m.is_favorite) return true;
+        if (!m.created_at) return false;
+        return new Date(m.created_at) >= sevenDaysAgo;
+      });
+
+      setMeetings(filtered);
     } catch (err) {
       console.error("Fetch meetings error:", err);
     } finally {
@@ -1088,6 +1108,26 @@ export default function Dashboard() {
     }
   };
 
+  const stripMarkdown = (md: string): string => {
+    if (!md) return "";
+    return md
+      // Remove headers (e.g. ## Header -> Header)
+      .replace(/^#+\s+/gm, "")
+      .replace(/#+\s+/g, "")
+      // Remove bold/italic (e.g. **text** -> text)
+      .replace(/\*{1,3}([^*]+?)\*{1,3}/g, "$1")
+      .replace(/_{1,3}([^_]+?)_{1,3}/g, "$1")
+      // Remove inline code (e.g. `code` -> code)
+      .replace(/`([^`]+?)`/g, "$1")
+      // Remove list markers (e.g. - item -> item)
+      .replace(/^[-*+]\s+/gm, "")
+      // Remove numbered lists (e.g. 1. item -> item)
+      .replace(/^\d+\.\s+/gm, "")
+      // Replace multiple newlines/whitespace with a single space
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
   const highlightText = (text: string, query: string) => {
     if (!query || !text) return text;
 
@@ -1158,7 +1198,7 @@ export default function Dashboard() {
     return <>{result}</>;
   };
   return (
-    <div className={`min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans`}>
+    <div className={`min-h-screen flex flex-col bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans`}>
       {/* HEADER */}
       <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
         <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-3 sm:px-4 h-14 sm:h-16 flex items-center justify-between">
@@ -1193,7 +1233,7 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-8 space-y-8">
+      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-8 space-y-8 bg-slate-50 dark:bg-slate-900/20 sm:border-x border-slate-200/80 dark:border-slate-800/60 shadow-[0_-1px_50px_rgba(15,23,42,0.05)] dark:shadow-none">
         {/* RECOVERY POPUP */}
         {recoveryMeeting && (
           <div className="border border-amber-200 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20 p-4 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
@@ -1677,15 +1717,15 @@ export default function Dashboard() {
                       </div>
                     </div>
                     {/* Body skeleton */}
-                    <div className="px-5 py-5 flex-1 flex flex-col justify-between space-y-3.5">
-                      <div className="space-y-2">
+                    <div className="px-5 pb-[21.5px] pt-4 flex-1 space-y-3">
+                      <div className="space-y-1.5">
                         <div className="h-5 bg-slate-300 dark:bg-slate-850 rounded w-2/3" />
                         <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
-                        <div className="space-y-2 pt-2">
-                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-full" />
-                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-11/12" />
-                          <div className="h-3 bg-slate-200/60 dark:bg-slate-800/60 rounded w-4/5" />
-                        </div>
+                      </div>
+                      <div className="space-y-2 pt-[13.5px]">
+                        <div className="h-3.5 bg-slate-200/60 dark:bg-slate-800/60 rounded w-full" />
+                        <div className="h-3.5 bg-slate-200/60 dark:bg-slate-800/60 rounded w-11/12" />
+                        <div className="h-3.5 bg-slate-200/60 dark:bg-slate-800/60 rounded w-4/5" />
                       </div>
                     </div>
                   </div>
@@ -1795,21 +1835,27 @@ export default function Dashboard() {
                                 >
                                   <Star className="w-4 h-4 fill-current" />
                                 </button>
-                                <button
-                                  onClick={() => deleteMeeting(m.id)}
-                                  className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                                <div className={`pl-1.5 flex items-center justify-center pointer-events-none text-slate-800 dark:text-white transition-all ${isSelectionMode ? "flex" : "hidden"}`}>
-                                  <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all ${
-                                    selectedMeetingIds.includes(m.id)
-                                      ? "bg-blue-600 border-blue-600 text-white"
-                                      : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
-                                  }`}>
-                                    {selectedMeetingIds.includes(m.id) && <Check className="w-3 h-3 stroke-[3]" />}
-                                  </div>
-                                </div>
+                                {isSelectionMode ? (
+                                  <button
+                                    onClick={() => toggleSelectMeeting(m.id)}
+                                    className="rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors cursor-pointer flex items-center justify-center w-7 h-7"
+                                  >
+                                    <div className={`w-4.5 h-4.5 rounded-md border flex items-center justify-center transition-all ${
+                                      selectedMeetingIds.includes(m.id)
+                                        ? "bg-blue-600 border-blue-600 text-white"
+                                        : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900"
+                                    }`}>
+                                      {selectedMeetingIds.includes(m.id) && <Check className="w-3 h-3 stroke-[3]" />}
+                                    </div>
+                                  </button>
+                                ) : (
+                                  <button
+                                    onClick={() => deleteMeeting(m.id)}
+                                    className="p-1.5 rounded-lg hover:bg-slate-200/50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-500 transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
                               </div>
                             </div>
 
@@ -1854,7 +1900,7 @@ export default function Dashboard() {
                                 <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3 leading-relaxed">
                                   {m.status === "recording"
                                     ? "Cuộc họp đang diễn ra. Thông tin hội thoại và tóm tắt sẽ hiển thị sau khi kết thúc."
-                                    : (() => { const s = Array.isArray(m.ai_summaries) ? m.ai_summaries.find((s: any) => s.is_active)?.executive_summary || m.ai_summaries[0]?.executive_summary : m.ai_summaries?.executive_summary; return s ? highlightText(s, searchQuery) : "(Cuộc họp chưa được tóm tắt)"; })()}
+                                    : (() => { const s = Array.isArray(m.ai_summaries) ? m.ai_summaries.find((s: any) => s.is_active)?.executive_summary || m.ai_summaries[0]?.executive_summary : m.ai_summaries?.executive_summary; return s ? highlightText(stripMarkdown(s), searchQuery) : "(Cuộc họp chưa được tóm tắt)"; })()}
                                 </p>
                               )}
                             </div>
