@@ -4,14 +4,12 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export async function POST(req: Request) {
   try {
     const { jobId } = await req.json();
-
     if (!jobId) {
       return NextResponse.json({ error: "Thiếu jobId" }, { status: 400 });
     }
 
     const supabase = await createServerSupabaseClient();
-    
-    // 1. Find the job to get the meeting_id
+
     const { data: job, error: fetchError } = await supabase
       .from("ai_jobs")
       .select("meeting_id")
@@ -23,14 +21,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Không tìm thấy tác vụ" }, { status: 404 });
     }
 
-    // 2. Mark all queued and processing jobs for this meeting as cancelled
+    // Model 2-bản: huỷ = đánh dấu mọi job queued/processing của meeting là "cancelled".
+    // Worker kiểm checkJobCancelled ở từng batch → tự dừng. Job "process" chỉ ghi transcripts
+    // khi chạy XONG toàn bộ, nên huỷ giữa chừng không đụng dữ liệu đang hiển thị (không cần rollback).
     const { error } = await supabase
       .from("ai_jobs")
-      .update({ 
-        status: "cancelled", 
-        progress: 0,
-        ended_at: new Date().toISOString()
-      })
+      .update({ status: "cancelled", progress: 0, ended_at: new Date().toISOString() })
       .eq("meeting_id", job.meeting_id)
       .in("status", ["queued", "processing"]);
 

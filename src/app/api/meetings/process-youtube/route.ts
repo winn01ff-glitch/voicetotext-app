@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { runPipeline, PipelineConfig } from "@/lib/ai/pipeline";
+import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
+import { runAIJobsQueue } from "@/lib/ai/queueWorker";
 
 /**
  * Xử lý YouTube URL
@@ -194,8 +196,10 @@ export async function POST(request: Request) {
           .update({ file_size_bytes: audioBuffer.length })
           .eq("meeting_id", meetingId);
 
-        // Chạy pipeline
+        // Bóc băng → RAW blob, rồi xử lý AI hợp nhất + tóm tắt.
         await runPipeline(meetingId, audioBuffer, pipelineConfig);
+        await enqueueAiJobs(meetingId, ["process", "summary"]);
+        await runAIJobsQueue(meetingId);
       } catch (error: any) {
         console.error(`[YouTube Pipeline Error] Meeting ${meetingId}:`, error);
         

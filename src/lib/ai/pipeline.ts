@@ -5,7 +5,7 @@
 // ================================================================
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { DeepgramClient } from "@deepgram/sdk";
 import { runWithGeminiClient } from "./geminiClient";
 
@@ -137,6 +137,11 @@ const FALLBACK_MODEL = "gemini-3.1-flash-lite";
 
 const BATCH_SIZE = 30;
 
+// Khoảng nghỉ giữa các batch gọi Gemini (chống rate-limit). Mặc định 1000ms (nhanh ~2.5× so
+// với 2500ms trước đây) — an toàn với flash-lite (RPM cao) vì callGemini đã có fallback + retry
+// backoff nếu lỡ gặp 429. Có thể chỉnh qua env AI_BATCH_DELAY_MS (vd nâng lên 2500 nếu gói thấp).
+const BATCH_DELAY_MS = Number(process.env.AI_BATCH_DELAY_MS) || 1000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Retry config */
@@ -177,15 +182,20 @@ const STATUS_LABEL: Record<PipelineStep, string> = {
  * Gọi Gemini với model chỉ định, tự fallback sang gemini-3.1-flash-lite nếu lỗi.
  * Trả về parsed JSON object.
  */
-async function callGemini<T = any>(
+export async function callGemini<T = any>(
   prompt: string,
   modelName: string,
-  options?: { temperature?: number }
+  options?: { temperature?: number; responseSchema?: any; maxOutputTokens?: number }
 ): Promise<T> {
   // temperature thấp (0) cho các pass "trung thành" (sửa lỗi, dịch): giảm việc model tự
   // diễn giải/viết lại → giữ ngữ nghĩa và cho kết quả ổn định hơn. Bỏ qua nếu không truyền.
   const generationConfig: Record<string, unknown> = { responseMimeType: "application/json" };
   if (options?.temperature !== undefined) generationConfig.temperature = options.temperature;
+  // responseSchema: ép Gemini trả JSON đúng cấu trúc + escape chuẩn → tránh JSON hỏng
+  // ("Expected ',' or '}'") vốn hay xảy ra khi text chứa dấu ngoặc kép / xuống dòng.
+  if (options?.responseSchema !== undefined) generationConfig.responseSchema = options.responseSchema;
+  // maxOutputTokens cao để output dài (nhiều dòng + bản dịch) không bị cắt ngang giữa JSON.
+  if (options?.maxOutputTokens !== undefined) generationConfig.maxOutputTokens = options.maxOutputTokens;
 
   return runWithGeminiClient(async (genAI) => {
     let result;
@@ -419,715 +429,6 @@ export async function savePipelineStep(
 }
 
 // ================================================================
-// STEP 1: correctSTT — Gemini sửa lỗi STT
-// ================================================================
-
-function getEditingModeInstructions(mode: string | null | undefined): string {
-  switch (mode) {
-    case "rephrase":
-      return `
-HƯỚNG DẪN (Viết lại rõ ràng):
-1. Viết lại mỗi câu cho RÕ RÀNG, mạch lạc hơn.
-2. Giữ nguyên ý nghĩa gốc, chỉ cải thiện cách diễn đạt.
-3. Loại bỏ từ thừa, câu lặp.
-4. Áp dụng glossary nếu có từ khớp.
-5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-6. KHÔNG gộp hoặc tách câu.`;
-
-    case "professional":
-      return `
-HƯỚNG DẪN (Chuyên nghiệp hóa):
-1. Chuyển giọng điệu sang TRANG TRỌNG, chuyên nghiệp.
-2. Thay thế ngôn ngữ thân mật bằng ngôn ngữ lịch sự.
-3. Loại bỏ filler words (えー, あの, umm, à, ờ, uh).
-4. Cải thiện cấu trúc ngữ pháp.
-5. Áp dụng glossary nếu có từ khớp.
-6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-7. KHÔNG gộp hoặc tách câu.`;
-
-    case "add_structure":
-      return `
-HƯỚNG DẪN (Thêm cấu trúc):
-1. Hãy định dạng, cấu trúc lại nội dung của từng lượt thoại (utterance) để tăng tính mạch lạc và dễ đọc.
-2. Sử dụng dấu xuống dòng (\\n) để chia các câu nói dài thành các đoạn văn nhỏ logic.
-3. Khi người nói liệt kê thông tin hoặc trình bày các ý chính, hãy tự động định dạng thành danh sách gạch đầu dòng (ví dụ sử dụng "- [Ý chính]..." hoặc "- [Mục tiêu]...") hoặc danh sách số (1, 2, 3...) ngay bên trong lượt thoại đó.
-4. Nếu lượt thoại mở đầu một chủ đề hoặc phần mới, hãy thêm tiêu đề mục dạng viết hoa hoặc đóng ngoặc vuông (ví dụ: "[CHỦ ĐỀ CHÍNH]", "[HƯỚNG DẪN CHI TIẾT]") để người đọc dễ theo dõi.
-5. Ngắt câu và thêm đầy đủ các dấu câu (chấm, phẩy, chấm hỏi, hai chấm) vào đúng vị trí logic.
-6. Áp dụng bảng thuật ngữ (glossary) nếu có từ tương ứng.
-7. Giữ NGUYÊN trật tự và số lượng các lượt thoại (utterances) — đầu ra phải là danh sách JSON có số lượng phần tử trùng khớp chính xác 100% với đầu vào, tuyệt đối KHÔNG gộp hay lược bỏ bất kỳ dòng nào.`;
-
-    case "make_shorter":
-      return `
-HƯỚNG DẪN (Rút gọn):
-1. RÚT NGẮN mỗi câu, giữ lại ý chính.
-2. Loại bỏ chi tiết thừa, lặp lại.
-3. Loại bỏ filler words hoàn toàn.
-4. Mỗi câu output phải ngắn hơn input.
-5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-6. KHÔNG gộp hoặc tách câu.`;
-
-    case "make_longer":
-      return `
-HƯỚNG DẪN (Mở rộng):
-1. MỞ RỘNG mỗi câu với chi tiết bổ sung hợp lý.
-2. Giải thích ngữ cảnh khi cần thiết.
-3. Thêm liên từ và chuyển tiếp cho mạch lạc.
-4. KHÔNG thêm thông tin sai — chỉ mở rộng dựa trên ngữ cảnh có.
-5. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-6. KHÔNG gộp hoặc tách câu.`;
-
-    case "remove_fillers":
-      return `
-HƯỚNG DẪN (Bỏ từ lặp & filler):
-1. Loại bỏ TẤT CẢ filler words (えー, あの, umm, à, ờ, uh, um, well).
-2. Loại bỏ từ/cụm từ bị lặp lại liên tiếp.
-3. Loại bỏ backchannel không cần thiết (はい, vâng, yeah, okay khi chỉ là đệm).
-4. GIỮ NGUYÊN nội dung chính — chỉ bỏ phần thừa.
-5. Áp dụng glossary nếu có từ khớp.
-6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-7. KHÔNG gộp hoặc tách câu.`;
-
-    case "deep_clean":
-      return `
-HƯỚNG DẪN (Làm sạch toàn bộ):
-1. Sửa TẤT CẢ lỗi chính tả, ngữ pháp do ASR.
-2. Loại bỏ filler words và từ lặp.
-3. Cải thiện cấu trúc câu cho mạch lạc.
-4. Thêm dấu câu đúng vị trí.
-5. GIỮ NGUYÊN ý nghĩa gốc — chỉ cải thiện hình thức.
-6. Áp dụng glossary nếu có từ khớp.
-7. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-8. KHÔNG gộp hoặc tách câu.`;
-
-    case "minimal":
-      return `
-HƯỚNG DẪN (Giữ nguyên tối đa):
-1. CHỈ sửa những lỗi chính tả rõ ràng nhất (sai kanji hiển nhiên, thiếu dấu tiếng Việt rõ ràng).
-2. GIỮ NGUYÊN tất cả filler words, backchannel, từ lặp.
-3. GIỮ NGUYÊN phong cách nói tự nhiên của người nói.
-4. KHÔNG chỉnh sửa ngữ pháp hay cấu trúc câu.
-5. Mục tiêu: giữ bản ghi gần nhất với âm thanh gốc.
-6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-7. KHÔNG gộp hoặc tách câu.`;
-
-    case "aggressive":
-      return `
-HƯỚNG DẪN (Sửa mạnh — Khôi phục từ gốc):
-1. Tích cực sửa tất cả lỗi ASR — cố gắng khôi phục từ đúng mà người nói muốn nói.
-2. Sử dụng ngữ cảnh cuộc họp để suy luận từ đúng khi ASR nhận sai.
-3. Sửa homophones (từ đồng âm bị nhận sai).
-4. Loại bỏ filler words hoàn toàn.
-5. Áp dụng glossary nếu có từ khớp — ưu tiên cao.
-6. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-7. KHÔNG gộp hoặc tách câu.
-8. KHÔNG thêm thông tin không có trong nguyên văn.`;
-
-    default:
-      // Default: standard STT correction
-      return `
-HƯỚNG DẪN:
-1. Sửa lỗi phiên âm rõ ràng:
-   - Sai chính tả do ASR (ví dụ: kanji sai, thiếu dấu tiếng Việt, homophones tiếng Anh)
-   - Áp dụng glossary nếu có từ khớp
-   - KHÔNG thêm/bớt/diễn giải lại nội dung
-   - Giữ nguyên filler words (えー, あの, umm, à, ờ, uh)
-   - Giữ nguyên backchannel (はい, vâng, yeah, okay)
-2. Giữ NGUYÊN trật tự và số lượng utterances — mỗi input tạo đúng 1 output.
-3. KHÔNG gộp hoặc tách câu ở bước này.`;
-  }
-}
-
-export async function step1_correctSTT(
-  utterances: RawUtterance[],
-  config: PipelineConfig,
-  mode?: string | null
-): Promise<CorrectedTurn[]> {
-  if (utterances.length === 0) return [];
-
-  const batches = chunkArray(utterances, BATCH_SIZE);
-  const allCorrected: CorrectedTurn[] = [];
-
-  const glossaryStr = config.glossary.length > 0
-    ? JSON.stringify(config.glossary.map((g) => ({ source: g.source, target: g.target })))
-    : "(không có)";
-  const sourceLangLabel = getSourceLangLabel(config.sourceLanguage);
-
-  // Mode "trung thành" (mặc định + minimal): chỉ sửa lỗi ASR rõ ràng, không diễn giải.
-  // Các mode còn lại là "biên tập" (viết lại/rút gọn/mở rộng...) — cố ý đổi hình thức nên
-  // giữ đường full-rewrite. Chỉ nhánh trung thành dùng edit-only + cổng confidence + bỏ gọi.
-  const isFaithfulMode = !mode || mode === "minimal";
-
-  // Chỉ pass-through nguyên văn (không gọi LLM) cho batch có ĐỦ dữ liệu confidence và tất cả
-  // đều cao — bản ghi đã sạch thì không cần model đụng vào.
-  const HIGH_CONF = 0.92;
-  const pushPassthrough = (u: RawUtterance) => {
-    allCorrected.push({
-      text: u.text,
-      start_ms: Math.round(u.start * 1000),
-      end_ms: Math.round(u.end * 1000),
-      speaker_hint: u.speaker,
-    });
-  };
-
-  for (const batch of batches) {
-    // ---- Nhánh TRUNG THÀNH: edit-only + cổng confidence + bỏ gọi ----
-    if (isFaithfulMode) {
-      const hasConfData = batch.every((u) => typeof u.confidence === "number");
-      if (hasConfData && batch.every((u) => (u.confidence ?? 0) >= HIGH_CONF)) {
-        // Batch sạch → bỏ qua LLM hoàn toàn (không tốn call, không sleep).
-        batch.forEach(pushPassthrough);
-        continue;
-      }
-
-      const inputData = batch.map((u, i) => ({
-        index: i + 1,
-        text: u.text,
-        confidence: typeof u.confidence === "number" ? Number(u.confidence.toFixed(2)) : null,
-      }));
-
-      const prompt = `
-Bạn là chuyên gia chỉnh sửa văn bản phiên âm (STT post-correction). Nhiệm vụ: SỬA LỖI, KHÔNG viết lại.
-
-==================================================
-THÔNG TIN CUỘC HỌP
-==================================================
-Tiêu đề: ${config.title}
-Ngôn ngữ gốc: ${sourceLangLabel}
-Ngữ cảnh: ${config.meetingContext || "General discussion"}
-
-BẢNG THUẬT NGỮ (Glossary):
-${glossaryStr}
-
-==================================================
-DỮ LIỆU ĐẦU VÀO — mỗi dòng có "confidence" (0..1) từ hệ nhận dạng; càng thấp càng dễ sai
-==================================================
-${JSON.stringify(inputData)}
-
-==================================================
-QUY TẮC BẮT BUỘC:
-1. KHÔNG DỊCH sang ngôn ngữ khác — giữ nguyên ngôn ngữ gốc.
-2. GIỮ NGUYÊN CHÍNH XÁC: số, ngày/giờ, đơn vị, tiền tệ, phần trăm, tên riêng. TUYỆT ĐỐI không đổi (ví dụ không 15↔50, 30 tuổi↔13 tuổi).
-3. KHÔNG CHẮC một từ có sai hay không → GIỮ NGUYÊN. Ưu tiên xét sửa dòng "confidence" thấp; dòng confidence cao gần như luôn giữ nguyên.
-4. KHÔNG gộp/tách câu, không đổi thứ tự, không thêm/bớt ý, không đổi filler/backchannel.${getEditingModeInstructions(mode)}
-
-==================================================
-OUTPUT — JSON ONLY, không markdown
-==================================================
-CHỈ trả về những dòng bạn THỰC SỰ sửa. Đa số dòng nên GIỮ NGUYÊN và KHÔNG xuất hiện trong output.
-{ "edits": [ { "index": 3, "text": "văn bản đã sửa của dòng có index = 3" } ] }
-Nếu không có gì cần sửa: { "edits": [] }
-`;
-
-      const result = await callGemini<{ edits: { index: number; text: string }[] }>(prompt, AI_FAST_MODEL, { temperature: 0 });
-      const editsMap = new Map<number, string>();
-      (result.edits || []).forEach((e) => {
-        if (e && typeof e.index === "number" && typeof e.text === "string") {
-          editsMap.set(e.index, e.text);
-        }
-      });
-      await sleep(2500);
-
-      // Dựng lại toàn bộ dòng từ input; chỉ thay text ở dòng model có sửa (giữ 1-to-1 tuyệt đối,
-      // timestamp/speaker không bao giờ do model đụng vào).
-      batch.forEach((u, i) => {
-        const edited = editsMap.get(i + 1);
-        allCorrected.push({
-          text: typeof edited === "string" && edited.trim().length > 0 ? edited : u.text,
-          start_ms: Math.round(u.start * 1000),
-          end_ms: Math.round(u.end * 1000),
-          speaker_hint: u.speaker,
-        });
-      });
-      continue;
-    }
-
-    // ---- Nhánh BIÊN TẬP (rephrase/professional/deep_clean/...): full-rewrite như cũ ----
-    const inputData = batch.map((u, i) => ({
-      index: i + 1,
-      text: u.text,
-      speaker: u.speaker,
-      start: u.start,
-      end: u.end,
-    }));
-
-    const prompt = `
-Bạn là chuyên gia chỉnh sửa văn bản phiên âm (STT post-correction).
-
-==================================================
-THÔNG TIN CUỘC HỌP
-==================================================
-Tiêu đề: ${config.title}
-Ngôn ngữ gốc: ${sourceLangLabel}
-Ngữ cảnh: ${config.meetingContext || "General discussion"}
-
-BẢNG THUẬT NGỮ (Glossary):
-${glossaryStr}
-
-==================================================
-DỮ LIỆU ĐẦU VÀO (Raw STT output)
-==================================================
-${JSON.stringify(inputData)}
-
-==================================================
-QUY TẮC BẮT BUỘC:
-1. KHÔNG DỊCH NGHĨA SANG NGÔN NGỮ KHÁC. Giữ nguyên ngôn ngữ gốc của dữ liệu đầu vào. Nếu đầu vào là tiếng Nhật, kết quả bắt buộc phải là tiếng Nhật. Nếu đầu vào là tiếng Việt, kết quả phải là tiếng Việt.
-2. Giữ nguyên định dạng và số lượng phần tử đầu ra đúng bằng số lượng phần tử đầu vào (1-to-1).
-3. GIỮ NGUYÊN CHÍNH XÁC: số, ngày/giờ, đơn vị, tiền tệ, phần trăm, và tên riêng (người/công ty/địa danh). TUYỆT ĐỐI không "sửa" hay đổi các giá trị này (ví dụ không đổi 15↔50, 30 tuổi↔13 tuổi).
-4. KHI KHÔNG CHẮC CHẮN một từ có sai hay không → GIỮ NGUYÊN VERBATIM. Chỉ thay đổi khi đó là lỗi ASR rõ ràng. Không diễn giải lại, không thêm/bớt ý.
-==================================================
-
-==================================================${getEditingModeInstructions(mode)}
-
-==================================================
-OUTPUT FORMAT — Trả về JSON ONLY, không markdown
-==================================================
-{
-  "corrected_turns": [
-    {
-      "text": "văn bản đã sửa",
-      "start_ms": 12340,
-      "end_ms": 15670,
-      "speaker_hint": 0
-    }
-  ]
-}
-
-Chú ý: start_ms và end_ms tính bằng milliseconds (nhân start/end với 1000).
-speaker_hint giữ nguyên giá trị speaker từ input.
-`;
-
-    const result = await callGemini<{ corrected_turns: CorrectedTurn[] }>(prompt, AI_FAST_MODEL, { temperature: 0 });
-    const turns = result.corrected_turns || [];
-    await sleep(2500);
-
-    // Fallback: nếu Gemini trả về ít hơn input, pad bằng input gốc
-    for (let i = 0; i < batch.length; i++) {
-      if (turns[i]) {
-        allCorrected.push(turns[i]);
-      } else {
-        allCorrected.push({
-          text: batch[i].text,
-          start_ms: Math.round(batch[i].start * 1000),
-          end_ms: Math.round(batch[i].end * 1000),
-          speaker_hint: batch[i].speaker,
-        });
-      }
-    }
-  }
-
-  return allCorrected;
-}
-
-// ================================================================
-// STEP 2: speakerMapping — Gemini phân tách người nói với confidence
-// ================================================================
-
-function getSpeakerModeInstructions(mode: string | null | undefined): string {
-  switch (mode) {
-    case "by_name":
-      return `
-HƯỚNG DẪN BỔ SUNG (Gán tên từ nội dung):
-- Tích cực tìm tên thật từ nội dung hội thoại: xưng hô, giới thiệu, gọi tên.
-- Ưu tiên gán tên thật thay vì "Speaker X".
-- Nếu tìm thấy tên trong hội thoại nhưng không khớp danh sách → tạo speaker mới với tên đó.
-- Sử dụng ngữ cảnh cuộc họp và register để verify tên.`;
-
-    case "by_role":
-      return `
-HƯỚNG DẪN BỔ SUNG (Gán theo vai trò):
-- Gán speaker_name theo VAI TRÒ thay vì tên: "Quản lý", "Nhân viên", "Khách hàng", "Phỏng vấn viên", "Ứng viên"...
-- Xác định vai trò từ: giọng điệu, nội dung phát biểu, quyền ra quyết định, cách xưng hô.
-- Nếu không rõ vai trò → dùng "Người tham gia 1", "Người tham gia 2"...`;
-
-    case "merge_speakers":
-      return `
-HƯỚNG DẪN BỔ SUNG (Gộp người nói trùng):
-- Tích cực gộp các speaker có thể là cùng 1 người (ASR tách nhầm do thay đổi giọng, micro).
-- So sánh: register, từ vựng, chủ đề phát biểu, cách xưng hô để xác định trùng lặp.
-- Nếu 2 speaker có cùng phong cách nói và không bao giờ nói cùng lúc → có thể là 1 người.
-- Ưu tiên gộp hơn tách khi không chắc chắn.`;
-
-    case "numbered":
-      return `
-HƯỚNG DẪN BỔ SUNG (Đánh số đơn giản):
-- KHÔNG cố gắng gán tên thật. Chỉ dùng "Speaker 1", "Speaker 2", "Speaker 3"...
-- Tập trung vào phân tách CHÍNH XÁC ai nói câu nào.
-- Dùng audio hint và ngữ cảnh hội thoại để phân biệt speakers.
-- speaker_name = "Speaker X" cho tất cả.`;
-
-    case "single_speaker_split":
-      return `
-HƯỚNG DẪN BỔ SUNG (Video độc thoại / 1 người nói):
-- Đây là video độc thoại hoặc chỉ có 1 người nói duy nhất xuyên suốt.
-- TUYỆT ĐỐI KHÔNG gộp các câu thoại liên tiếp thành một đoạn văn lớn.
-- Giữ nguyên việc phân tách các câu ngắn (hoặc từng cụm câu ngắn khoảng 15-20 từ) tương ứng với mốc thời gian từ dữ liệu đầu vào.
-- Tất cả các lượt nói gán chung tag "speaker_1" và tên hiển thị "Diễn giả".
-- Tập trung vào việc giữ cho bản dịch và bản ghi được chia nhỏ, dễ đọc theo tiến trình thời gian.`;
-
-    default:
-      return ``;
-  }
-}
-
-export async function step2_speakerMapping(
-  correctedTurns: CorrectedTurn[],
-  config: PipelineConfig,
-  prevContext?: MappedTurn[],
-  mode?: string | null
-): Promise<MappedTurn[]> {
-  if (correctedTurns.length === 0) return [];
-
-  const batches = chunkArray(correctedTurns, BATCH_SIZE);
-  const allMapped: MappedTurn[] = [];
-
-  for (const batch of batches) {
-    const inputData = batch.map((t, i) => ({
-      index: i + 1,
-      text: t.text,
-      start_ms: t.start_ms,
-      end_ms: t.end_ms,
-      speaker_hint: t.speaker_hint,
-    }));
-
-    const speakersStr = config.speakers.length > 0
-      ? JSON.stringify(config.speakers)
-      : "[{\"speaker_tag\": \"speaker_1\", \"display_name\": \"Speaker 1\"}]";
-
-    const prevContextStr = prevContext && prevContext.length > 0
-      ? JSON.stringify(prevContext.slice(-10)) // Chỉ gửi 10 turns cuối làm context
-      : "(không có — đây là chunk đầu tiên)";
-
-    const sourceLangInstruction = getSourceLangInstruction(config.sourceLanguage);
-
-    const prompt = `
-Bạn là chuyên gia diarization (phân tách người nói) cho cuộc họp.
-
-==================================================
-THÔNG TIN CUỘC HỌP
-==================================================
-Tiêu đề: ${config.title}
-Ngữ cảnh: ${config.meetingContext || "General discussion"}
-${sourceLangInstruction}
-
-DANH SÁCH NGƯỜI NÓI ĐÃ ĐĂNG KÝ:
-${speakersStr}
-
-CONTEXT TỪ CHUNK TRƯỚC (10 turns cuối):
-${prevContextStr}
-
-==================================================
-DỮ LIỆU ĐẦU VÀO (đã sửa lỗi STT)
-==================================================
-${JSON.stringify(inputData)}
-
-==================================================
-HƯỚNG DẪN
-==================================================
-1. SPEAKER ASSIGNMENT:
-   - "speaker_hint" là gợi ý từ Deepgram audio analysis (0-indexed).
-   - Map speaker_hint thành speaker_tag: hint 0 → "speaker_1", hint 1 → "speaker_2", v.v.
-   - VERIFY bằng nội dung: đại từ, register, ngữ cảnh hội thoại.
-   - Nếu hint đúng → giữ. Nếu sai logic → sửa lại.
-   - Nếu 1 utterance chứa nhiều người nói → TÁCH thành nhiều turns.
-
-2. CONFIDENCE SCORING (0.0 → 1.0):
-   - 0.9–1.0: Rõ ràng (xưng hô, tên riêng, context khớp)
-   - 0.7–0.89: Khá chắc (register khớp, logic hội thoại đúng)
-   - < 0.7: Không chắc chắn → speaker_name = "Unknown Speaker"
-
-3. BACKCHANNEL DETECTION:
-   - Phản hồi ngắn (はい, vâng, yeah, uh-huh) thuộc về LISTENER, không phải speaker đang nói.
-   - Tách ra và gán cho người nghe.
-
-4. CONSECUTIVE GROUPING: ${mode === "single_speaker_split" ? "TUYỆT ĐỐI KHÔNG gộp các turns liên tiếp cùng speaker. Giữ nguyên các mốc câu ngắn từ dữ liệu đầu vào để dễ đọc." : "Gộp các turns liên tiếp cùng speaker."}
-
-==================================================
-OUTPUT FORMAT — JSON ONLY
-==================================================
-{
-  "mapped_turns": [
-    {
-      "text": "nội dung",
-      "start_ms": 12340,
-      "end_ms": 15670,
-      "speaker_tag": "speaker_1",
-      "speaker_name": "Tên người nói",
-      "confidence": 0.92
-    }
-  ]
-}
-
-${getSpeakerModeInstructions(mode)}
-
-RULES:
-- speaker_name lấy từ DANH SÁCH NGƯỜI NÓI nếu match. Nếu confidence < 0.7, dùng "Unknown Speaker".
-- Nếu phát hiện speaker mới (không có trong danh sách):
-  ${
-    mode === "by_name"
-      ? 'tích cực phân tích nội dung để xác định tên thật của họ và gán vào "speaker_name". Chỉ dùng "Speaker X" (ví dụ: Speaker 2, Speaker 3...) nếu hoàn toàn không thể tìm thấy tên thật từ nội dung.'
-      : mode === "by_role"
-      ? 'phân tích nội dung để gán "speaker_name" theo vai trò (ví dụ: "Quản lý", "Nhân viên", "Khách hàng", v.v.). Chỉ dùng "Speaker X" nếu hoàn toàn không xác định được vai trò.'
-      : 'gán tag tuần tự (speaker_3, speaker_4...) và gán "speaker_name" = "Speaker X" (ví dụ: Speaker 2, Speaker 3...).'
-  }
-- Giữ nguyên thứ tự thời gian.
-- Không hallucinate nội dung.
-`;
-
-    const result = await callGemini<{ mapped_turns: MappedTurn[] }>(prompt, AI_QUALITY_MODEL);
-    const turns = result.mapped_turns || [];
-    await sleep(2500);
-
-    // Đảm bảo confidence < 0.7 → Unknown Speaker
-    for (const turn of turns) {
-      if (turn.confidence < 0.7) {
-        turn.speaker_name = "Unknown Speaker";
-      }
-      allMapped.push(turn);
-    }
-  }
-
-  return allMapped;
-}
-
-// ================================================================
-// STEP 3: consistencyCheck — Gemini QA toàn bộ transcript
-// ================================================================
-
-export async function step3_consistencyCheck(
-  mergedTurns: MappedTurn[],
-  config: PipelineConfig
-): Promise<CheckedTurn[]> {
-  if (mergedTurns.length === 0) return [];
-
-  // Bước 3 chạy trên toàn bộ transcript, nhưng vẫn cần batching nếu quá dài
-  const batches = chunkArray(mergedTurns, BATCH_SIZE * 2); // 40 turns per batch cho consistency check
-  const allChecked: CheckedTurn[] = [];
-
-  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
-    const batch = batches[batchIdx];
-    const inputData = batch.map((t, i) => ({
-      index: i + 1,
-      text: t.text,
-      start_ms: t.start_ms,
-      end_ms: t.end_ms,
-      speaker_tag: t.speaker_tag,
-      speaker_name: t.speaker_name,
-      confidence: t.confidence,
-    }));
-
-    // Context từ batch trước (nếu có)
-    const prevBatchContext = batchIdx > 0
-      ? JSON.stringify(allChecked.slice(-5))
-      : "(batch đầu tiên)";
-
-    const prompt = `
-Bạn là chuyên gia QA (Quality Assurance) cho biên bản cuộc họp.
-
-==================================================
-THÔNG TIN CUỘC HỌP
-==================================================
-Tiêu đề: ${config.title}
-Ngữ cảnh: ${config.meetingContext || "General discussion"}
-Ngôn ngữ gốc: ${getSourceLangLabel(config.sourceLanguage)}
-Tổng số turns toàn transcript: ${mergedTurns.length}
-Batch hiện tại: ${batchIdx + 1}/${batches.length}
-
-DANH SÁCH NGƯỜI NÓI:
-${JSON.stringify(config.speakers)}
-
-BẢNG THUẬT NGỮ:
-${JSON.stringify(config.glossary.map((g) => ({ source: g.source, target: g.target })))}
-
-CONTEXT TỪ BATCH TRƯỚC:
-${prevBatchContext}
-
-==================================================
-DỮ LIỆU CẦN KIỂM TRA
-==================================================
-${JSON.stringify(inputData)}
-
-==================================================
-NHIỆM VỤ KIỂM TRA
-==================================================
-1. THỐNG NHẤT TÊN RIÊNG:
-   - Đảm bảo cùng một người/tổ chức/sản phẩm dùng cùng cách viết xuyên suốt.
-   - Ví dụ: "Tanaka" vs "Tanaka-san" → thống nhất theo pattern chung.
-
-2. SỬA LỖI CÒN SÓT:
-   - Lỗi chính tả, ngữ pháp, ASR artifacts mà bước trước chưa bắt.
-   - KHÔNG thêm/bớt nội dung.
-
-3. MERGE TURNS BẤT HỢP LÝ:
-   - Nếu 2 turns liên tiếp cùng speaker và khoảng cách < 2 giây → gộp thành 1.
-   - start_ms = min, end_ms = max, text = nối.
-
-4. SPLIT TURNS CÓ VẤN ĐỀ:
-   - Nếu 1 turn rõ ràng chứa 2 người nói khác nhau → tách ra.
-
-5. VALIDATE DATA:
-   - Kiểm tra không mất dữ liệu (số turns output ≈ input, cho phép ±20% do merge/split).
-   - Kiểm tra JSON hợp lệ.
-   - Kiểm tra thứ tự thời gian (start_ms tăng dần).
-
-==================================================
-OUTPUT FORMAT — JSON ONLY
-==================================================
-{
-  "checked_turns": [
-    {
-      "text": "nội dung đã kiểm tra",
-      "start_ms": 12340,
-      "end_ms": 15670,
-      "speaker_tag": "speaker_1",
-      "speaker_name": "Tên người nói",
-      "confidence": 0.92
-    }
-  ]
-}
-`;
-
-    const result = await callGemini<{ checked_turns: CheckedTurn[] }>(prompt, AI_QUALITY_MODEL);
-    const turns = result.checked_turns || [];
-    allChecked.push(...turns);
-  }
-
-  return allChecked;
-}
-
-// ================================================================
-// STEP 4: translate — Gemini dịch sang ngôn ngữ đích
-// ================================================================
-
-function getTranslateModeInstructions(mode: string | null | undefined): string {
-  switch (mode) {
-    case "translate_clean":
-      return `
-HƯỚNG DẪN DỊCH (Dịch và Chỉnh sửa):
-1. Dịch MỖI turn sang ngôn ngữ đích.
-2. SỬA ngữ pháp, cải thiện tính mạch lạc và rõ ràng.
-3. Loại bỏ filler words (uh, um, えー, あの, à, ờ).
-4. Cải thiện cấu trúc câu cho dễ đọc.
-5. KHÔNG thay đổi ý nghĩa gốc.
-6. Áp dụng glossary nếu có từ khớp.
-7. KHÔNG dịch tên riêng người, địa danh.`;
-
-    case "translate_simplify":
-      return `
-HƯỚNG DẪN DỊCH (Dịch và Đơn giản hóa):
-1. Dịch MỖI turn sang ngôn ngữ đích.
-2. Sử dụng ngôn ngữ ĐƠN GIẢN, dễ hiểu.
-3. Thay thế thuật ngữ kỹ thuật bằng từ thông dụng khi có thể.
-4. Rút ngắn câu dài, chia thành câu ngắn hơn.
-5. Loại bỏ filler words hoàn toàn.
-6. KHÔNG thay đổi ý nghĩa cốt lõi.
-7. Áp dụng glossary nếu có từ khớp.`;
-
-    default:
-      // Default: translate as-is
-      return `
-HƯỚNG DẪN DỊCH:
-1. Dịch MỖI turn sang ngôn ngữ đích một cách tự nhiên, trung thành với nguyên văn.
-2. Nếu text gốc ĐÃ là ngôn ngữ đích → translated_text = text gốc (copy nguyên).
-3. KHÔNG dịch tên riêng người, địa danh — giữ nguyên.
-4. Áp dụng glossary nếu có từ khớp.
-5. Giữ nguyên register/tone (formal ↔ formal, casual ↔ casual).
-6. Filler words có thể lược bỏ hoặc giữ tùy ngữ cảnh tự nhiên.`;
-  }
-}
-
-export async function step4_translate(
-  checkedTurns: CheckedTurn[],
-  config: PipelineConfig,
-  mode?: string | null
-): Promise<TranslatedTurn[]> {
-  if (checkedTurns.length === 0) return [];
-
-  const batches = chunkArray(checkedTurns, BATCH_SIZE);
-  const allTranslated: TranslatedTurn[] = [];
-
-  for (const batch of batches) {
-    const inputData = batch.map((t, i) => ({
-      index: i + 1,
-      text: t.text,
-      start_ms: t.start_ms,
-      end_ms: t.end_ms,
-      speaker_tag: t.speaker_tag,
-      speaker_name: t.speaker_name,
-    }));
-
-    const glossaryStr = config.glossary.length > 0
-      ? JSON.stringify(config.glossary.map((g) => ({
-          source: g.source,
-          target: g.target,
-          source_lang: g.source_language,
-          target_lang: g.target_language,
-        })))
-      : "(không có)";
-
-    const prompt = `
-Bạn là phiên dịch viên chuyên nghiệp cho cuộc họp đa ngôn ngữ.
-
-==================================================
-CẤU HÌNH DỊCH
-==================================================
-Ngôn ngữ gốc: ${getSourceLangLabel(config.sourceLanguage)}
-Ngôn ngữ đích: ${config.targetLanguage}
-Tiêu đề cuộc họp: ${config.title}
-
-BẢNG THUẬT NGỮ (ưu tiên dùng bản dịch này khi gặp từ khớp):
-${glossaryStr}
-
-==================================================
-DỮ LIỆU CẦN DỊCH
-==================================================
-${JSON.stringify(inputData)}
-
-==================================================${getTranslateModeInstructions(mode)}
-
-==================================================
-OUTPUT FORMAT — JSON ONLY
-==================================================
-{
-  "translated_turns": [
-    {
-      "original_text": "text gốc",
-      "translated_text": "bản dịch",
-      "start_ms": 12340,
-      "end_ms": 15670,
-      "speaker_tag": "speaker_1",
-      "speaker_name": "Tên",
-      "confidence": 0.92
-    }
-  ]
-}
-`;
-
-    const result = await callGemini<{ translated_turns: TranslatedTurn[] }>(prompt, AI_FAST_MODEL);
-    const turns = result.translated_turns || [];
-    await sleep(2500);
-
-    // Fallback: nếu thiếu, pad bằng input gốc
-    for (let i = 0; i < batch.length; i++) {
-      if (turns[i]) {
-        allTranslated.push(turns[i]);
-      } else {
-        allTranslated.push({
-          original_text: batch[i].text,
-          translated_text: batch[i].text, // Không dịch được → giữ nguyên
-          start_ms: batch[i].start_ms,
-          end_ms: batch[i].end_ms,
-          speaker_tag: batch[i].speaker_tag,
-          speaker_name: batch[i].speaker_name,
-          confidence: batch[i].confidence,
-        });
-      }
-    }
-  }
-
-  return allTranslated;
-}
-
-// ================================================================
 // STEP 5: summarize — Gemini tóm tắt + decisions (AI_QUALITY_MODEL)
 // ================================================================
 
@@ -1231,6 +532,36 @@ OUTPUT FORMAT — JSON ONLY:
   }
 }
 
+// Structured-output schema cho tóm tắt + action items → ép JSON hợp lệ, tránh lỗi
+// "Expected ',' or '}'" khi output dài (biên bản dài, nhiều quyết định/công việc).
+const SUMMARY_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    executive_summary: { type: SchemaType.STRING },
+    decisions: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+  },
+  required: ["executive_summary", "decisions"],
+};
+
+const ACTIONS_SCHEMA = {
+  type: SchemaType.OBJECT,
+  properties: {
+    action_items: {
+      type: SchemaType.ARRAY,
+      items: {
+        type: SchemaType.OBJECT,
+        properties: {
+          description: { type: SchemaType.STRING },
+          owner: { type: SchemaType.STRING, nullable: true },
+          deadline: { type: SchemaType.STRING, nullable: true },
+        },
+        required: ["description"],
+      },
+    },
+  },
+  required: ["action_items"],
+};
+
 export async function step5_summarize(
   translatedTurns: TranslatedTurn[],
   config: PipelineConfig,
@@ -1273,8 +604,11 @@ ${transcriptLog}
 ${modeInstructions}
 `;
 
-  // Dùng AI_QUALITY_MODEL cho bước summary
-  return await callGemini<SummaryResult>(prompt, AI_QUALITY_MODEL);
+  // Dùng AI_QUALITY_MODEL cho bước summary; structured output tránh JSON hỏng khi biên bản dài.
+  return await callGemini<SummaryResult>(prompt, AI_QUALITY_MODEL, {
+    responseSchema: SUMMARY_SCHEMA,
+    maxOutputTokens: 8192,
+  });
 }
 
 // ================================================================
@@ -1343,83 +677,12 @@ OUTPUT FORMAT — JSON ONLY
 }
 `;
 
-  // Dùng AI_QUALITY_MODEL cho bước extract actions
-  const result = await callGemini<{ action_items: ActionItem[] }>(prompt, AI_QUALITY_MODEL);
+  // Dùng AI_QUALITY_MODEL cho bước extract actions; structured output tránh JSON hỏng.
+  const result = await callGemini<{ action_items: ActionItem[] }>(prompt, AI_QUALITY_MODEL, {
+    responseSchema: ACTIONS_SCHEMA,
+    maxOutputTokens: 8192,
+  });
   return result.action_items || [];
-}
-
-// ================================================================
-// mergeChunks — gộp kết quả từ nhiều chunks, xử lý timestamp offset
-// ================================================================
-
-export function mergeChunks(
-  allMappedChunks: MappedTurn[][],
-  deepgramResults: DeepgramChunkResult[]
-): MappedTurn[] {
-  if (allMappedChunks.length === 0) return [];
-  if (allMappedChunks.length === 1) return allMappedChunks[0];
-
-  const merged: MappedTurn[] = [];
-
-  for (let chunkIdx = 0; chunkIdx < allMappedChunks.length; chunkIdx++) {
-    const chunk = allMappedChunks[chunkIdx];
-    const offset = deepgramResults[chunkIdx]?.offset_ms || 0;
-
-    for (const turn of chunk) {
-      // Cộng offset vào timestamps
-      const adjustedTurn: MappedTurn = {
-        ...turn,
-        start_ms: turn.start_ms + offset,
-        end_ms: turn.end_ms + offset,
-      };
-
-      // Tại boundary giữa chunks: gộp nếu cùng speaker và khoảng cách < 5 giây
-      const prev = merged[merged.length - 1];
-      if (
-        prev &&
-        prev.speaker_tag === adjustedTurn.speaker_tag &&
-        adjustedTurn.start_ms - prev.end_ms < 5000
-      ) {
-        // Merge vào turn trước
-        prev.text = (prev.text + " " + adjustedTurn.text).trim();
-        prev.end_ms = adjustedTurn.end_ms;
-        prev.confidence = Math.min(prev.confidence, adjustedTurn.confidence);
-      } else {
-        merged.push(adjustedTurn);
-      }
-    }
-  }
-
-  return merged;
-}
-
-// ================================================================
-// determineCheckpoint — xác định bước resume từ pipeline_results đã lưu
-// ================================================================
-
-export function determineCheckpoint(
-  pipelineResults: Record<string, any> | null,
-  rawDeepgram: any | null
-): PipelineStep {
-  if (!pipelineResults) {
-    // Nếu chưa có pipeline_results nhưng có raw_deepgram → đã transcribe xong
-    if (rawDeepgram) return "correcting";
-    return "transcribing";
-  }
-
-  const pr = pipelineResults;
-
-  // Kiểm tra ngược từ bước cuối → đầu
-  if (pr.action_items) return "saving"; // Đã extract xong, chỉ cần save
-  if (pr.summary) return "extracting"; // Đã summarize, cần extract actions
-  if (pr.translated_turns) return "summarizing"; // Đã translate, cần summarize
-  if (pr.consistency_result) return "translating"; // Đã check, cần translate
-  if (pr.merged_turns) return "checking"; // Đã merge, cần consistency check
-  if (pr.speaker_mapping) return "checking"; // Đã map speakers, cần merge + check
-  if (pr.corrected_turns) return "diarizing"; // Đã correct, cần diarize
-  if (rawDeepgram) return "correcting"; // Đã transcribe, cần correct
-
-  return "transcribing";
 }
 
 // ================================================================
@@ -1456,18 +719,17 @@ export async function runPipeline(
     const supabase = await createServerSupabaseClient();
     await supabase.from("meetings").update({ raw_deepgram_result: dgResult }).eq("id", meetingId);
 
-    const allUtterances = extractUtterancesFromDeepgram(dgResult);
     await saveDeepgramMetadata(meetingId, dgResult, audioBuffer, config);
 
-    // Save RAW transcripts
-    await saveRawToTranscripts(meetingId, allUtterances);
+    // Model 2-bản: RAW chỉ là 1 blob text (meetings.raw_transcript) + JSON word-level
+    // (raw_deepgram_result). KHÔNG tạo dòng trong transcripts — các dòng đã-xử-lý sẽ do
+    // job "process" sinh ra sau.
+    await saveRawBlob(meetingId, dgResult);
 
-    // Set meeting status to ready. Also bump progress to 100% — otherwise it stays frozen
-    // at whatever the last updateProgress("transcribing") call left it at (10%), which the
-    // home page would display forever if anything ever reads progress instead of status.
+    // RAW xong → chuyển sang giai đoạn xử lý AI. Worker (job process/summary) sẽ set "completed".
     await supabase.from("meetings").update({
-      status: "ready",
-      progress: { percent: 100, message: "Hoàn tất" },
+      status: "processing",
+      progress: { percent: 40, message: "Đã bóc băng, đang xử lý AI..." },
     }).eq("id", meetingId);
 
   } catch (err: any) {
@@ -1482,132 +744,24 @@ export async function runPipeline(
   }
 }
 
-async function saveRawToTranscripts(meetingId: string, utterances: RawUtterance[]) {
+// Lưu BẢN THÔ (RAW) dạng blob: text thô của Deepgram + duration. KHÔNG tạo dòng transcripts,
+// KHÔNG tạo speakers — đó là việc của job "process". raw_deepgram_result (word-level JSON) đã
+// được lưu trước đó và là nguồn timestamp cho bước xử lý.
+async function saveRawBlob(meetingId: string, dgResult: any) {
   const supabase = await createServerSupabaseClient();
 
-  // Set existing to false (nếu re-upload)
-  await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meetingId);
-  await supabase.from("speakers").update({ is_active: false }).eq("meeting_id", meetingId);
-
-  // Create basic speakers FIRST so transcript rows can link speaker_id (the FK the
-  // history page's join actually reads — speaker_tag/speaker_name on transcripts are
-  // denormalized text only, never joined against, so without speaker_id every row
-  // shows "Unknown" regardless of these columns being set).
-  const uniqueTags = Array.from(new Set(utterances.map((u) => `speaker_${u.speaker + 1}`)));
-  const tagToSpeakerId: Record<string, string> = {};
-  for (const tag of uniqueTags) {
-     const { data: newSpeaker } = await supabase.from("speakers").insert({
-        meeting_id: meetingId,
-        speaker_tag: tag,
-        display_name: tag.replace("speaker_", "Speaker "),
-        color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
-        version_type: 'RAW',
-        version: 1,
-        is_active: true
-     }).select("id").single();
-     if (newSpeaker) tagToSpeakerId[tag] = newSpeaker.id;
-  }
-
-  const insertRows = utterances.map((u) => {
-    const speakerTag = `speaker_${u.speaker + 1}`;
-    return {
-      meeting_id: meetingId,
-      speaker_id: tagToSpeakerId[speakerTag] || null,
-      original_text: u.text,
-      corrected_text: u.text,
-      start_ms: Math.round(Number(u.start * 1000)),
-      end_ms: Math.round(Number(u.end * 1000)),
-      confidence: u.confidence || 1.0,
-      speaker_tag: speakerTag,
-      speaker_name: speakerTag.replace("speaker_", "Speaker "),
-      version_type: 'RAW',
-      version: 1,
-      is_active: true
-    };
-  });
-
-  const insertBatches = chunkArray(insertRows, 100);
-  for (const batch of insertBatches) {
-    await supabase.from("transcripts").insert(batch);
-  }
-  
-  // Cập nhật raw_transcript vào meetings (text-only backup)
-  const rawTranscriptText = insertRows
-    .map((t) => `[${t.speaker_name}]: ${t.original_text}`)
-    .join("\n");
-
-  const maxEndMs = insertRows.length > 0
-    ? Math.max(...insertRows.map((t) => Number(t.end_ms || 0)))
-    : 0;
+  const alt = dgResult?.results?.channels?.[0]?.alternatives?.[0];
+  const rawText: string = alt?.transcript || "";
+  const words = alt?.words || [];
+  const lastEnd = words.length > 0 ? Number(words[words.length - 1].end || 0) : Number(dgResult?.metadata?.duration || 0);
 
   await supabase
     .from("meetings")
     .update({
-      raw_transcript: rawTranscriptText,
-      duration_ms: Math.round(maxEndMs),
+      raw_transcript: rawText,
+      duration_ms: Math.round(lastEnd * 1000),
     })
     .eq("id", meetingId);
-}
-
-export async function saveToTables(
-  // Deprecated. We use specialized save functions in queueWorker now.
-): Promise<void> {}
-
-// ================================================================
-// Helper: trích xuất utterances từ Deepgram result
-// ================================================================
-
-function extractUtterancesFromDeepgram(dgResult: any): RawUtterance[] {
-  // Deepgram Pre-recorded API trả về utterances khi option utterances=true
-  if (dgResult?.results?.utterances && dgResult.results.utterances.length > 0) {
-    return dgResult.results.utterances.map((u: any) => ({
-      text: u.transcript || u.text || "",
-      start: u.start || 0,
-      end: u.end || 0,
-      speaker: u.speaker ?? 0,
-      confidence: u.confidence ?? 1.0,
-    }));
-  }
-
-  // Fallback: nếu không có utterances, dùng words grouped by speaker
-  const channel = dgResult?.results?.channels?.[0];
-  if (!channel?.alternatives?.[0]?.words) {
-    return [];
-  }
-
-  const words = channel.alternatives[0].words;
-  const utterances: RawUtterance[] = [];
-  let currentUtterance: RawUtterance | null = null;
-
-  for (const word of words) {
-    const speaker = word.speaker ?? 0;
-
-    if (!currentUtterance || currentUtterance.speaker !== speaker) {
-      if (currentUtterance) {
-        utterances.push(currentUtterance);
-      }
-      currentUtterance = {
-        text: word.punctuated_word || word.word,
-        start: word.start,
-        end: word.end,
-        speaker,
-        confidence: word.confidence,
-      };
-    } else {
-      currentUtterance.text += " " + (word.punctuated_word || word.word);
-      currentUtterance.end = word.end;
-      currentUtterance.confidence = Math.min(
-        currentUtterance.confidence || 1,
-        word.confidence || 1
-      );
-    }
-  }
-
-  if (currentUtterance) {
-    utterances.push(currentUtterance);
-  }
-
-  return utterances;
 }
 
 // ================================================================
@@ -1687,7 +841,7 @@ async function saveDeepgramMetadata(
 // Helper: language labels & instructions (tái sử dụng pattern từ process-transcript-batch)
 // ================================================================
 
-function getSourceLangLabel(lang: string): string {
+export function getSourceLangLabel(lang: string): string {
   const labels: Record<string, string> = {
     ja: "Japanese (日本語)",
     en: "English",
@@ -1697,37 +851,3 @@ function getSourceLangLabel(lang: string): string {
   return labels[lang] || labels["auto"];
 }
 
-function getSourceLangInstruction(lang: string): string {
-  const instructions: Record<string, string> = {
-    ja: `Ngôn ngữ gốc: JAPANESE (日本語)
-Dấu hiệu nhận diện người nói:
-- Đại từ: 私 (watashi, formal), 僕 (boku, nam casual), 俺 (ore, nam rough)
-- Register: です/ます (lịch sự) vs だ/ね (casual)
-- Trợ từ cuối câu: よ, ね, か, わ, ぞ
-- Kính ngữ: 〜さん, 〜先生, 〜様
-- Aizuchi: なるほど, うん, はい, そうですね, ええ, あー`,
-
-    en: `Ngôn ngữ gốc: ENGLISH
-Dấu hiệu nhận diện người nói:
-- Pronouns: I/me vs you, we vs they
-- Question vs statement patterns
-- Formal ("Could you please...") vs casual ("Hey, so...")
-- Backchannels: yeah, okay, I see, right, uh-huh, sure, got it`,
-
-    vi: `Ngôn ngữ gốc: VIETNAMESE (Tiếng Việt)
-Dấu hiệu nhận diện người nói:
-- Đại từ: tôi/mình (tôi, trung lập), anh/chị/em (theo giới/tuổi), ông/bà (người lớn tuổi)
-- Register: formal (thưa, kính, ạ) vs casual (ừ, ờ, nhé, nha)
-- Trợ từ cuối câu: ạ, nhé, nha, nhỉ, hả, à
-- Backchannels: vâng, dạ, ừ, thế à, đúng rồi, à ra vậy`,
-
-    auto: `Ngôn ngữ gốc: AUTO-DETECT (có thể là Japanese, English, Vietnamese, hoặc mixed)
-Áp dụng TẤT CẢ dấu hiệu nhận diện ngôn ngữ:
-- Japanese: Đại từ (私/僕/俺), register (です・ます vs だ・ね), aizuchi (なるほど, うん, はい)
-- English: Pronouns (I/you), question patterns, backchannels (yeah, okay, I see)
-- Vietnamese: Đại từ (tôi/anh/chị/em), trợ từ (ạ/nhé/nha), backchannels (vâng, dạ, ừ)
-- QUAN TRỌNG: Theo dõi speaker nào dùng ngôn ngữ nào — chuyển ngôn ngữ là tín hiệu mạnh về chuyển người nói.`,
-  };
-
-  return instructions[lang] || instructions["auto"];
-}

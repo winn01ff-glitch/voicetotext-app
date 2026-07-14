@@ -265,7 +265,7 @@ export default function Dashboard() {
           .from("meetings")
           .select(`
             id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
-            ai_summaries ( executive_summary, is_active ),
+            ai_summaries ( executive_summary ),
             meeting_metadata ( created_from )
           `)
           .order("created_at", { ascending: false });
@@ -417,7 +417,7 @@ export default function Dashboard() {
         .from("meetings")
         .select(`
           id, title, status, progress, duration_ms, source_language, target_language, meeting_context, is_pinned, is_favorite, created_at,
-          ai_summaries ( executive_summary, is_active ),
+          ai_summaries ( executive_summary ),
           meeting_metadata ( created_from )
         `)
         .order("created_at", { ascending: false });

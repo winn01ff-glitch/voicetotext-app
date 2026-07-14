@@ -52,6 +52,47 @@ function mdToHtml(src: string): string {
   return html;
 }
 
+// Map các dòng transcript (đã xử lý) từ DB sang shape UI, gán màu speaker xen kẽ nóng/lạnh.
+function mapTranscriptRows(txs: any[]): any[] {
+  const HOT_COLORS = ["#ea580c", "#dc2626", "#d97706", "#db2777"];
+  const COLD_COLORS = ["#2563eb", "#4f46e5", "#0d9488", "#0891b2"];
+  const uniqueSpeakerTags = Array.from(
+    new Set(txs.map((t: any) => t.speakers?.speaker_tag || t.speaker_tag || "speaker_1"))
+  );
+  const speakerToColorMap: { [tag: string]: string } = {};
+  uniqueSpeakerTags.forEach((tag, idx) => {
+    speakerToColorMap[tag] = idx % 2 === 0
+      ? HOT_COLORS[Math.floor(idx / 2) % HOT_COLORS.length]
+      : COLD_COLORS[Math.floor(idx / 2) % COLD_COLORS.length];
+  });
+
+  return txs.map((t: any) => {
+    const tag = t.speakers?.speaker_tag || t.speaker_tag || "speaker_1";
+    return {
+      id: t.id,
+      originalText: t.original_text,
+      correctedText: t.original_text, // model 2-bản: không còn cột corrected_text riêng
+      translatedText: t.translated_text,
+      speakerName: t.speakers?.display_name || t.speaker_name || "Unknown",
+      speakerTag: tag,
+      speakerColor: speakerToColorMap[tag] || t.speakers?.color_hex || "#64748b",
+      startMs: t.start_ms,
+      endMs: t.end_ms,
+      confidence: t.confidence,
+    };
+  });
+}
+
+// Tách blob thô thành các câu để hiển thị "tách dòng" (thuần frontend, KHÔNG đổi nội dung —
+// chỉ chèn ngắt dòng sau dấu kết câu). Hỗ trợ dấu câu Nhật (。！？) lẫn Latin (.!?).
+function splitSentences(text: string): string[] {
+  if (!text) return [];
+  return text
+    .split(/(?<=[。．！？!?])\s*/u)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 interface HistoryDetailProps {
   params: Promise<{ id: string }>;
 }
@@ -143,6 +184,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [activeEditingMode, setActiveEditingMode] = useState<string | null>(null);
   const [isRewritingRaw, setIsRewritingRaw] = useState(false);
   const [rawLangMode, setRawLangMode] = useState<"original" | "translated">("original");
+  // Bản gốc: cách hiển thị blob thô. "split" = tách dòng theo câu (mặc định, thuần frontend),
+  // "flat" = thô 100% nguyên khối, "shortened" = bản rút gọn AI tạm thời (KHÔNG lưu DB).
+  const [rawViewMode, setRawViewMode] = useState<"split" | "flat" | "shortened">("split");
+  const [shortenedRaw, setShortenedRaw] = useState<string | null>(null);
+  const [isShorteningRaw, setIsShorteningRaw] = useState(false);
+  const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
+  const speakerMenuRef = useRef<HTMLDivElement>(null);
+  const [isRediarizing, setIsRediarizing] = useState(false);
 
   const isGeneratingSummaryRef = useRef(isGeneratingSummary);
   const activeSummaryModeRef = useRef(activeSummaryMode);
@@ -231,6 +280,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showReprocessMenu]);
+  // Close speaker (Phân vai) dropdown on outside click
+  useEffect(() => {
+    if (!showSpeakerMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (speakerMenuRef.current && !speakerMenuRef.current.contains(e.target as Node)) {
+        setShowSpeakerMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSpeakerMenu]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -832,69 +892,29 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         .eq("meeting_id", meetingId);
       setSpeakers(sps || []);
 
-      // 3. Fetch transcripts
+      // 3. Fetch transcripts (model 2-bản: bảng chỉ chứa dòng ĐÃ XỬ LÝ; RAW là blob meeting.raw_transcript)
       const { data: txs } = await supabase
         .from("transcripts")
         .select(`
-          id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active,
+          id, original_text, translated_text, start_ms, end_ms, confidence, speaker_tag, speaker_name,
           speakers ( display_name, color_hex, speaker_tag )
         `)
         .eq("meeting_id", meetingId)
-        .or("is_active.eq.true,version_type.eq.RAW")
         .order("start_ms", { ascending: true });
 
       if (txs) {
-        // Alternating warm/hot and cold/cool colors for clear distinction
-        const HOT_COLORS = ["#ea580c", "#dc2626", "#d97706", "#db2777"];
-        const COLD_COLORS = ["#2563eb", "#4f46e5", "#0d9488", "#0891b2"];
-        const uniqueSpeakerTags = Array.from(
-          new Set(txs.map((t: any) => t.speakers?.speaker_tag || "speaker_1"))
-        );
-        const speakerToColorMap: { [tag: string]: string } = {};
-        uniqueSpeakerTags.forEach((tag, idx) => {
-          if (idx % 2 === 0) {
-            speakerToColorMap[tag] = HOT_COLORS[Math.floor(idx / 2) % HOT_COLORS.length];
-          } else {
-            speakerToColorMap[tag] = COLD_COLORS[Math.floor(idx / 2) % COLD_COLORS.length];
-          }
-        });
-
-        const allTranscripts = txs.map((t: any) => {
-          const tag = t.speakers?.speaker_tag || "speaker_1";
-          return {
-            id: t.id,
-            originalText: t.original_text,
-            correctedText: t.corrected_text,
-            translatedText: t.translated_text,
-            speakerName: t.speakers?.display_name || "Unknown",
-            speakerTag: tag,
-            speakerColor: speakerToColorMap[tag] || t.speakers?.color_hex || "#64748b",
-            startMs: t.start_ms,
-            endMs: t.end_ms,
-            confidence: t.confidence,
-            isEdited: t.is_edited,
-            editedText: t.edited_text,
-            versionType: t.version_type || "RAW",
-            // Legacy rows predating this column have is_active === null — treat as active.
-            isActive: t.is_active !== false,
-          };
-        });
-
-        // Bản gốc = RAW. Hội thoại = active FINAL (hoặc active RAW nếu chưa có FINAL).
-        setTranscripts(allTranscripts.filter((t: any) => t.versionType === "RAW" || t.versionType === "raw"));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL" && t.isActive));
+        const allTranscripts = mapTranscriptRows(txs);
+        // Model 2-bản: chỉ còn 1 tập dòng đã xử lý. Nạp vào cả 2 mảng để UI hiện có (RAW/AI toggle)
+        // không vỡ; "Bản gốc" (blob thô) đọc riêng từ meeting.raw_transcript.
+        setTranscripts(allTranscripts);
+        setReprocessedTranscripts(allTranscripts);
       }
 
-      // 4. Fetch summary
-      // is_active=true is required: executeSummaryJob (queueWorker.ts) deactivates the
-      // old row and INSERTS a new versioned one instead of updating in place, so a meeting
-      // that has ever run the "summary" job has >1 row per meeting_id — .maybeSingle()
-      // without this filter throws "multiple rows" and silently blanks the summary.
+      // 4. Fetch summary (1 bản/meeting, không versioning)
       const { data: summ } = await supabase
         .from("ai_summaries")
         .select("*")
         .eq("meeting_id", meetingId)
-        .eq("is_active", true)
         .maybeSingle();
 
       setAiSummary(summ);
@@ -904,13 +924,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       }
 
       // 5. Fetch action items
-      // Same versioning pattern as ai_summaries — executeSummaryJob deactivates old
-      // action_items rows and inserts a new versioned batch, so old rows must be excluded.
       const { data: acts } = await supabase
         .from("action_items")
         .select("*")
         .eq("meeting_id", meetingId)
-        .eq("is_active", true)
         .order("created_at", { ascending: true });
       
       if (acts) {
@@ -970,56 +987,24 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
       const { data: txs } = await supabase
         .from("transcripts")
-        .select(`id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, is_edited, edited_text, version_type, is_active, speakers ( display_name, color_hex, speaker_tag )`)
+        .select(`id, original_text, translated_text, start_ms, end_ms, confidence, speaker_tag, speaker_name, speakers ( display_name, color_hex, speaker_tag )`)
         .eq("meeting_id", meetingId)
-        .or("is_active.eq.true,version_type.eq.RAW")
         .order("start_ms", { ascending: true });
 
       if (txs) {
-        const HOT_COLORS = ["#ea580c", "#dc2626", "#d97706", "#db2777"];
-        const COLD_COLORS = ["#2563eb", "#4f46e5", "#0d9488", "#0891b2"];
-        const uniqueSpeakerTags = Array.from(new Set(txs.map((t: any) => t.speakers?.speaker_tag || "speaker_1")));
-        const speakerToColorMap: { [tag: string]: string } = {};
-        uniqueSpeakerTags.forEach((tag, idx) => {
-          if (idx % 2 === 0) {
-            speakerToColorMap[tag] = HOT_COLORS[Math.floor(idx / 2) % HOT_COLORS.length];
-          } else {
-            speakerToColorMap[tag] = COLD_COLORS[Math.floor(idx / 2) % COLD_COLORS.length];
-          }
-        });
-
-        const allTranscripts = txs.map((t: any) => {
-          const tag = t.speakers?.speaker_tag || "speaker_1";
-          return {
-            id: t.id,
-            originalText: t.original_text,
-            correctedText: t.corrected_text,
-            translatedText: t.translated_text,
-            speakerName: t.speakers?.display_name || "Unknown",
-            speakerTag: tag,
-            speakerColor: speakerToColorMap[tag] || t.speakers?.color_hex || "#64748b",
-            startMs: t.start_ms,
-            endMs: t.end_ms,
-            confidence: t.confidence,
-            isEdited: t.is_edited,
-            editedText: t.edited_text,
-            versionType: t.version_type || "RAW",
-            isActive: t.is_active !== false,
-          };
-        });
-
-        setTranscripts(allTranscripts.filter((t: any) => t.versionType === "RAW" || t.versionType === "raw"));
-        setReprocessedTranscripts(allTranscripts.filter((t: any) => t.versionType === "FINAL" && t.isActive));
+        const allTranscripts = mapTranscriptRows(txs);
+        setTranscripts(allTranscripts);
+        setReprocessedTranscripts(allTranscripts);
       }
 
-      const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).eq("is_active", true).maybeSingle();
+      const { data: summ } = await supabase.from("ai_summaries").select("*").eq("meeting_id", meetingId).maybeSingle();
       setAiSummary(summ);
       if (summ) {
         setEditedExecSummary(summ.executive_summary || "");
         setEditedDecisions(summ.decisions || []);
       }
 
-      const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).eq("is_active", true).order("created_at", { ascending: true });
+      const { data: acts } = await supabase.from("action_items").select("*").eq("meeting_id", meetingId).order("created_at", { ascending: true });
       if (acts) {
         setActionItems(acts);
       }
@@ -1080,15 +1065,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const cancelledJobs = aiJobs.filter((j) => j.status === "cancelled");
 
       if (failedJobs.length > 0) {
-        addToast("Lỗi", "Một số bước xử lý AI của cuộc họp đã thất bại.", "error");
+        addToast("Lỗi", "Một số bước xử lý của cuộc họp đã thất bại.", "error");
       } else if (cancelledJobs.length > 0) {
-        addToast("Đã dừng", "Tiến trình xử lý AI cuộc họp đã bị dừng.", "warning");
+        addToast("Đã dừng", "Tiến trình xử lý cuộc họp đã bị dừng.", "warning");
       } else if (completedJobs.length > 0) {
         // Auto translate to currently selected custom global language if it's set
         if (globalLanguage && globalLanguage !== "original") {
           translateAllSections(globalLanguage, undefined, true);
         } else {
-          addToast("Thành công", "Đã hoàn thành toàn bộ tiến trình xử lý AI cuộc họp!", "success");
+          addToast("Thành công", "Đã hoàn thành toàn bộ tiến trình xử lý cuộc họp!", "success");
         }
       }
     }
@@ -1106,16 +1091,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   }, [meeting?.target_language]);
 
   const handleRunSelectedJobs = async () => {
-    const jobTypes: string[] = [];
-    if (fixSpellcheck) jobTypes.push("spellcheck");
-    if (fixSpeaker) jobTypes.push("speaker");
-    if (fixTranslate) jobTypes.push("translation");
-
-    if (jobTypes.length === 0) {
-      addToast("Chưa chọn gì", "Hãy tick ít nhất một lựa chọn xử lý.", "error");
-      return;
-    }
-
+    // Model 2-bản: chỉ có 1 lượt xử lý hợp nhất. Mọi lựa chọn (chính tả/phân vai/dịch) đều
+    // do job "process" làm cùng lúc → luôn chạy ["process","summary"].
     try {
       if (fixTranslate) {
         await supabase.from("meetings").update({ target_language: processTargetLang }).eq("id", meetingId);
@@ -1123,10 +1100,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const res = await fetch("/api/meetings/reprocess/run-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId, jobTypes }),
+        body: JSON.stringify({ meetingId, jobTypes: ["process", "summary"] }),
       });
       if (res.ok) {
-        addToast("Đã bắt đầu", "AI đang xử lý theo lựa chọn của bạn.", "success");
+        addToast("Đã bắt đầu", "Đang xử lý theo lựa chọn của bạn.", "success");
         refreshMeetingDataSilently();
       } else {
         addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
@@ -1268,8 +1245,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           executive_summary: finalExec,
           decisions: finalDec,
         })
-        .eq("meeting_id", meetingId)
-        .eq("is_active", true);
+        .eq("meeting_id", meetingId);
 
       if (error) throw error;
 
@@ -1307,39 +1283,20 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
 
 
-  // Call API route /api/regenerate-summary
+  // Model 2-bản: tạo lại tóm tắt = enqueue job "summary" qua hàng đợi (ghi đè bản duy nhất).
   const handleRegenerateSummary = async () => {
     const confirmed = await showCustomConfirm("Tải lại tóm tắt bằng Trợ lý AI? Thao tác này sẽ ghi đè lên các Action Items cũ.");
     if (!confirmed) return;
     setIsRegeneratingSummary(true);
     try {
-      const res = await fetch("/api/regenerate-summary", {
+      const res = await fetch("/api/meetings/reprocess/run-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meeting_id: meetingId }),
+        body: JSON.stringify({ meetingId, jobTypes: ["summary"] }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Regeneration failed");
-
-      // Reload all data
-      await fetchMeetingData();
-      await showCustomAlert("Cập nhật tóm tắt thành công!", "success");
-
-      // Auto translate to currently selected custom languages if they were set
-      if (globalLanguage && globalLanguage !== "original") {
-        const actionDescriptions = data.action_items
-          ? data.action_items.map((item: any) => item.description)
-          : [];
-        translateAllSections(globalLanguage, {
-          summary: data.summary,
-          decisions: data.decisions,
-          action_items: actionDescriptions,
-        });
-      } else {
-        setTranslatedExecSummary("");
-        setTranslatedDecisions([]);
-        setTranslatedActionItems([]);
-      }
+      if (!res.ok) throw new Error("Regeneration failed");
+      addToast("Đã bắt đầu", "Đang tạo lại tóm tắt.", "success");
+      refreshMeetingDataSilently();
     } catch (err) {
       console.error(err);
       await showCustomAlert("Lỗi khi tạo lại tóm tắt cuộc họp.", "error");
@@ -1407,11 +1364,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         newTranslation = transData.translatedText || "";
       }
 
-      // 2. Update transcripts in Database
+      // 2. Update transcripts in Database (model 2-bản: chỉ còn original_text/translated_text)
       const updatePayload: any = {
-        is_edited: true,
-        edited_text: finalVal,
-        corrected_text: finalVal,
+        original_text: finalVal,
       };
 
       if (newTranslation) {
@@ -1426,32 +1381,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (error) throw error;
 
       // 3. Update React States
-      setTranscripts((prevTranscripts) =>
-        prevTranscripts.map((t) =>
-          t.id === lineId
-            ? {
-                ...t,
-                isEdited: true,
-                editedText: finalVal,
-                correctedText: finalVal,
-                translatedText: newTranslation || t.translatedText,
-              }
-            : t
-        )
-      );
-      setReprocessedTranscripts((prevReprocessed) =>
-        prevReprocessed.map((t) =>
-          t.id === lineId
-            ? {
-                ...t,
-                isEdited: true,
-                editedText: finalVal,
-                correctedText: finalVal,
-                translatedText: newTranslation || t.translatedText,
-              }
-            : t
-        )
-      );
+      const patchLine = (t: any) =>
+        t.id === lineId
+          ? { ...t, originalText: finalVal, correctedText: finalVal, translatedText: newTranslation || t.translatedText }
+          : t;
+      setTranscripts((prev) => prev.map(patchLine));
+      setReprocessedTranscripts((prev) => prev.map(patchLine));
 
       initialEditingTextRef.current = finalVal;
 
@@ -1758,6 +1693,80 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   const [isTranslatingRaw, setIsTranslatingRaw] = useState(false);
 
+  // Phân vai NHẸ: chỉ gán lại người nói trên transcript đã có (đổi nhãn / tách độc thoại / AI),
+  // GIỮ nguyên nội dung + bản dịch. Chạy đồng bộ qua /rediarize (nhanh, không dịch lại).
+  const handlePhanVai = async (mode: string | null, label: string) => {
+    setShowSpeakerMenu(false);
+    setIsRediarizing(true);
+    // Bỏ hậu tố "(AI)" khỏi thông báo (giữ nguyên ở nhãn dropdown).
+    const toastLabel = label.replace(/\s*\(AI\)/i, "").toLowerCase();
+    addToast("Đang phân vai", `Gán lại người nói (${toastLabel})...`, "success");
+    try {
+      const res = await fetch("/api/meetings/rediarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId, mode }),
+      });
+      if (res.ok) {
+        await refreshMeetingDataSilently();
+        addToast("Hoàn tất", "Đã cập nhật phân vai.", "success");
+      } else {
+        addToast("Lỗi", "Không thể phân vai lại.", "error");
+      }
+    } catch {
+      addToast("Lỗi", "Lỗi kết nối khi phân vai.", "error");
+    } finally {
+      setIsRediarizing(false);
+    }
+  };
+
+  // Chạy lại xử lý AI đầy đủ (per-tab). jobs: ["process","summary"] = làm lại toàn bộ.
+  const rerunProcess = async (jobs: string[], mode?: string | null, toastMsg?: string) => {
+    setShowSpeakerMenu(false);
+    try {
+      const res = await fetch("/api/meetings/reprocess/run-queue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId, jobTypes: jobs, mode: mode ?? null }),
+      });
+      if (res.ok) {
+        addToast("Đã bắt đầu", toastMsg || "Đang xử lý lại.", "success");
+        refreshMeetingDataSilently();
+      } else {
+        addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+      }
+    } catch {
+      addToast("Lỗi", "Lỗi kết nối khi bắt đầu xử lý.", "error");
+    }
+  };
+
+  // Rút gọn bản thô bằng AI — hiển thị tạm thời + copy, KHÔNG lưu DB. Bấm lại thì gọi lại.
+  const handleShortenRaw = async () => {
+    if (!meeting?.raw_transcript) return;
+    setRawViewMode("shortened");
+    if (shortenedRaw) return; // đã có kết quả rồi thì dùng lại (khỏi gọi AI lần nữa)
+    setIsShorteningRaw(true);
+    try {
+      const res = await fetch("/api/meetings/shorten-raw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: meeting.raw_transcript }),
+      });
+      const data = await res.json();
+      if (res.ok && data.shortened) {
+        setShortenedRaw(data.shortened);
+      } else {
+        addToast("Lỗi", "Không thể rút gọn bản ghi.", "error");
+        setRawViewMode("split");
+      }
+    } catch {
+      addToast("Lỗi", "Lỗi kết nối khi rút gọn.", "error");
+      setRawViewMode("split");
+    } finally {
+      setIsShorteningRaw(false);
+    }
+  };
+
   const handleQuickTranslate = async () => {
     setIsTranslatingRaw(true);
     addToast("Đã bắt đầu", "Đang bắt đầu dịch nhanh bản ghi gốc...", "success");
@@ -1765,7 +1774,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       const res = await fetch("/api/meetings/reprocess/run-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId, jobTypes: ["translation"], isFromReprocess: true }),
+        body: JSON.stringify({ meetingId, jobTypes: ["process"], isFromReprocess: true }),
       });
       if (res.ok) {
         refreshMeetingDataSilently();
@@ -2081,9 +2090,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           {/* MAIN CONTENT AREA */}
           <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${(activeTab !== shownTab || transcriptVer !== shownVer) ? "opacity-40" : ""}`}>
 
-        {/* AI PIPELINE CONTROL PANEL — hiện ở cả 2 view (Bản gốc / Đã xử lý) của tab Transcript.
-            "Bản gốc": checklist cho chọn từng bước. "Đã xử lý (AI)": nút chạy toàn bộ như cũ. */}
-        {shownTab === "transcript" && shownVer === "ai" && (
+        {/* Model 2-bản: KHÔNG hiện tiến trình ở màn Hội thoại nữa (theo yêu cầu) — nút "Xử lý lại"
+            trong toolbar đã tự có spinner "Đang xử lý..." là đủ. Tiến trình tóm tắt hiển thị riêng
+            ở tab Tóm tắt. Block cũ vô hiệu hoá bằng `false`. */}
+        {false && shownTab === "transcript" && shownVer === "ai" && (
           <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-4 sm:p-[18px] rounded-xl shadow-sm space-y-2.5 mb-6">
             {/* Header chỉ hiện khi có job đang chạy hoặc ở view "Đã xử lý" — ở view Bản gốc,
                 tiêu đề nằm gọn cùng hàng với checklist bên dưới. */}
@@ -2095,7 +2105,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </div>
                   <div>
                     <h3 className="font-semibold text-slate-800 dark:text-slate-200">Xử lý AI</h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Sửa chính tả → Phân vai → Dịch → Tóm tắt</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Cắt dòng + phân vai + sửa &amp; dịch → Tóm tắt</p>
                   </div>
                 </div>
                 {/* Right side: Cancel button when processing, or Reprocess dropdown when idle */}
@@ -2136,7 +2146,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             const res = await fetch("/api/meetings/reprocess/run-queue", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ meetingId, jobTypes: ["spellcheck", "speaker", "translation", "summary"], isFromReprocess: true }),
+                              body: JSON.stringify({ meetingId, jobTypes: ["process", "summary"], isFromReprocess: true }),
                             });
                             if (res.ok) {
                               refreshMeetingDataSilently();
@@ -2151,12 +2161,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           </div>
                           <div>
                             <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">Xử lý lại toàn bộ</div>
-                            <div className="text-xs text-slate-400 dark:text-slate-500">Chạy lại tất cả 4 bước pipeline</div>
+                            <div className="text-xs text-slate-400 dark:text-slate-500">Cắt dòng, phân vai, sửa &amp; dịch lại + tóm tắt</div>
                           </div>
                         </button>
 
-                        {/* Tabs: Chính tả → Phân vai → Dịch thuật */}
-                        <div className="flex border-b border-slate-100 dark:border-slate-800 px-1 pt-1">
+                        {/* Model 2-bản: 1 lượt xử lý hợp nhất → bỏ các tab mode (chính tả/phân vai/dịch), ẩn đi. */}
+                        <div className="hidden">
                           {([
                             { key: "spellcheck" as const, label: "Chính tả", icon: Edit2 },
                             { key: "speaker" as const, label: "Phân vai", icon: Users },
@@ -2177,14 +2187,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           ))}
                         </div>
 
-                        {/* Tab content */}
-                        <div className="pt-1 pb-0 max-h-[30rem] overflow-y-auto">
+                        {/* Tab content — ẩn (model 2-bản: không còn chọn mode lẻ). */}
+                        <div className="hidden">
                           {reprocessTab === "spellcheck" && ([
-                            { label: "Mặc định", icon: RotateCcw, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
-                            { label: "Bỏ từ lặp & filler", icon: Eraser, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "remove_fillers", desc: "Bỏ uh, um, えー, từ lặp" },
-                            { label: "Làm sạch toàn bộ", icon: Sparkles, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "deep_clean", desc: "Sửa lỗi + bỏ filler + cải thiện" },
-                            { label: "Giữ nguyên tối đa", icon: Shield, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "minimal", desc: "Chỉ sửa lỗi rõ ràng nhất" },
-                            { label: "Sửa mạnh (khôi phục)", icon: Zap, jobs: ["spellcheck", "speaker", "translation", "summary"], mode: "aggressive", desc: "Khôi phục từ gốc từ lỗi ASR" },
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["process", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Bỏ từ lặp & filler", icon: Eraser, jobs: ["process", "summary"], mode: "remove_fillers", desc: "Bỏ uh, um, えー, từ lặp" },
+                            { label: "Làm sạch toàn bộ", icon: Sparkles, jobs: ["process", "summary"], mode: "deep_clean", desc: "Sửa lỗi + bỏ filler + cải thiện" },
+                            { label: "Giữ nguyên tối đa", icon: Shield, jobs: ["process", "summary"], mode: "minimal", desc: "Chỉ sửa lỗi rõ ràng nhất" },
+                            { label: "Sửa mạnh (khôi phục)", icon: Zap, jobs: ["process", "summary"], mode: "aggressive", desc: "Khôi phục từ gốc từ lỗi ASR" },
                           ] as const).map((opt) => (
                             <button
                               key={opt.label}
@@ -2213,12 +2223,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           ))}
 
                           {reprocessTab === "speaker" && ([
-                            { label: "Mặc định", icon: RotateCcw, jobs: ["speaker", "translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
-                            { label: "Độc thoại (Tách câu)", icon: FileText, jobs: ["speaker", "translation", "summary"], mode: "single_speaker_split", desc: "Giữ các câu ngắn tách biệt (phù hợp video 1 người)" },
-                            { label: "Gán tên từ nội dung", icon: UserCheck, jobs: ["speaker", "translation", "summary"], mode: "by_name", desc: "Tìm tên thật từ ngữ cảnh hội thoại" },
-                            { label: "Theo vai trò", icon: Briefcase, jobs: ["speaker", "translation", "summary"], mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng..." },
-                            { label: "Gộp người nói", icon: GitMerge, jobs: ["speaker", "translation", "summary"], mode: "merge_speakers", desc: "Gộp speaker bị ASR tách nhầm" },
-                            { label: "Đánh số đơn giản", icon: Hash, jobs: ["speaker", "translation", "summary"], mode: "numbered", desc: "Speaker 1, Speaker 2..." },
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["process", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Độc thoại (Tách câu)", icon: FileText, jobs: ["process", "summary"], mode: "single_speaker_split", desc: "Giữ các câu ngắn tách biệt (phù hợp video 1 người)" },
+                            { label: "Gán tên từ nội dung", icon: UserCheck, jobs: ["process", "summary"], mode: "by_name", desc: "Tìm tên thật từ ngữ cảnh hội thoại" },
+                            { label: "Theo vai trò", icon: Briefcase, jobs: ["process", "summary"], mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng..." },
+                            { label: "Gộp người nói", icon: GitMerge, jobs: ["process", "summary"], mode: "merge_speakers", desc: "Gộp speaker bị ASR tách nhầm" },
+                            { label: "Đánh số đơn giản", icon: Hash, jobs: ["process", "summary"], mode: "numbered", desc: "Speaker 1, Speaker 2..." },
                           ] as const).map((opt) => (
                             <button
                               key={opt.label}
@@ -2247,9 +2257,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           ))}
 
                           {reprocessTab === "translate" && ([
-                            { label: "Mặc định", icon: RotateCcw, jobs: ["translation", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
-                            { label: "Dịch và chỉnh sửa", icon: Sparkles, jobs: ["translation", "summary"], mode: "translate_clean", desc: "Sửa ngữ pháp, rõ ràng hơn" },
-                            { label: "Dịch đơn giản", icon: Globe, jobs: ["translation", "summary"], mode: "translate_simplify", desc: "Dễ đọc và dễ hiểu hơn" },
+                            { label: "Mặc định", icon: RotateCcw, jobs: ["process", "summary"], mode: null, desc: "Prompt xử lý sau khi kết thúc họp" },
+                            { label: "Dịch và chỉnh sửa", icon: Sparkles, jobs: ["process", "summary"], mode: "translate_clean", desc: "Sửa ngữ pháp, rõ ràng hơn" },
+                            { label: "Dịch đơn giản", icon: Globe, jobs: ["process", "summary"], mode: "translate_simplify", desc: "Dễ đọc và dễ hiểu hơn" },
                           ] as const).map((opt) => (
                             <button
                               key={opt.label}
@@ -2292,7 +2302,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     step currently processing gets a spinning ring border. */}
                 <div className="flex items-center">
                   {(() => {
-                    const STEP_ORDER = ["spellcheck", "speaker", "translation", "summary"];
+                    const STEP_ORDER = ["process", "summary"];
                     const STEP_LABEL: Record<string, string> = {
                       spellcheck: "Sửa chính tả",
                       speaker: "Phân vai",
@@ -2681,7 +2691,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       }
                     } catch (err) {
                       console.error(err);
-                      addToast("Lỗi", "Không thể lấy câu trả lời từ AI.", "error");
+                      addToast("Lỗi", "Không thể lấy câu trả lời.", "error");
                       setChatMessages((prev) => prev.slice(0, -1));
                     } finally {
                       setIsChatStreaming(false);
@@ -2727,6 +2737,25 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {/* SUB-TAB CONTENT */}
             {subTabProcessed === "summary" ? (
               <div className="space-y-5">
+                {/* Tiến trình TÓM TẮT — hiển thị RIÊNG ở tab Tóm tắt (thay cho stepper tổng đã bỏ) */}
+                {(() => {
+                  const sumJob = aiJobs.find((j) => j.type === "summary");
+                  if (!sumJob || !["processing", "queued", "failed"].includes(sumJob.status)) return null;
+                  const failed = sumJob.status === "failed";
+                  const retrying = sumJob.status === "queued" && (sumJob.retry_count || 0) > 0;
+                  return (
+                    <div className={`flex items-center gap-2.5 p-3 rounded-lg text-xs border ${failed ? "bg-red-50/50 dark:bg-red-950/10 border-red-200 dark:border-red-900/30 text-red-700 dark:text-red-400" : retrying ? "bg-amber-50/50 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400" : "bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400"}`}>
+                      {failed ? <X className="w-4 h-4 shrink-0" /> : <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />}
+                      <span className="leading-relaxed">
+                        {failed
+                          ? "Tạo tóm tắt thất bại. Chọn một kiểu tóm tắt bên dưới để thử lại."
+                          : retrying
+                          ? `Đang thử lại tạo tóm tắt (lần ${sumJob.retry_count}/${sumJob.max_retries || 3})...`
+                          : "Đang tạo tóm tắt... có thể mất ít giây tuỳ độ dài cuộc họp."}
+                      </span>
+                    </div>
+                  );
+                })()}
                 {/* Summary mode quick actions */}
                 <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm px-4 py-3">
                   <div className="flex items-center gap-2 mb-2.5">
@@ -3072,8 +3101,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
             ) : (
               <div className="space-y-5">
-                {/* Editing mode quick actions */}
-                <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm px-4 py-3">
+                {/* Editing mode quick actions — model 2-bản: bỏ viết-lại-bản-gốc (mode no-op), ẩn panel. */}
+                <div className="hidden">
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-indigo-500" />
@@ -3096,10 +3125,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           setIsRewritingRaw(true);
                           setActiveEditingMode(opt.mode);
                           try {
-                            const res = await fetch("/api/meetings/reprocess/raw-rewrite", {
+                            const res = await fetch("/api/meetings/reprocess/run-queue", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ meetingId, mode: opt.mode }),
+                              body: JSON.stringify({ meetingId, jobTypes: ["process"], mode: opt.mode }),
                             });
                             if (res.ok) {
                               await refreshMeetingDataSilently();
@@ -3215,48 +3244,109 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   </div>
 
                   <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
-                    {groupedParagraphs.length > 0 ? groupedParagraphs.map((p, pIdx) => {
-                      const isRawOriginal = rawLangMode === "original";
-                      const isJapaneseOriginal = meeting?.original_language?.toLowerCase().startsWith("ja") || meeting?.target_language?.toLowerCase().startsWith("ja");
-                      const shouldAddSpace = !(isRawOriginal && isJapaneseOriginal);
-                      const isUnknownSpeaker = p.speakerTag === "unknown" || 
-                                               p.speakerName.toLowerCase().includes("unknown") || 
-                                               p.speakerName.toLowerCase() === "unknown";
-                      
-                      return (
-                        <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
-                          {!isUnknownSpeaker && (
-                            <span 
-                              style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
-                              className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
+                    {rawLangMode === "original" ? (
+                      // Model 2-bản: "Bản gốc" = blob thô Deepgram. Mọi tùy chọn dưới đây CHỈ đổi cách
+                      // hiển thị ở frontend (không lưu DB, không đổi nội dung gốc).
+                      !meeting?.raw_transcript ? (
+                        <p className="py-12 text-center text-slate-400 italic text-sm">Chưa có bản ghi thô từ Deepgram.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                              <button
+                                onClick={() => setRawViewMode("split")}
+                                className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${rawViewMode === "split" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                              >Tách dòng</button>
+                              <button
+                                onClick={() => setRawViewMode("flat")}
+                                className={`px-3 py-1.5 text-xs font-semibold border-l border-slate-200 dark:border-slate-700 transition-colors cursor-pointer ${rawViewMode === "flat" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
+                              >Thô 100%</button>
+                            </div>
+                            <button
+                              onClick={handleShortenRaw}
+                              disabled={isShorteningRaw}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer disabled:opacity-50 ${rawViewMode === "shortened" ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/60" : "text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/40 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"}`}
                             >
-                              {p.speakerName}
-                            </span>
+                              <Sparkles className={`w-3.5 h-3.5 ${isShorteningRaw ? "animate-spin" : ""}`} />
+                              Rút gọn (AI)
+                            </button>
+                            <button
+                              onClick={() => handleCopyText(
+                                rawViewMode === "shortened" ? (shortenedRaw || "") : rawViewMode === "flat" ? meeting.raw_transcript : splitSentences(meeting.raw_transcript).join("\n"),
+                                "raw_blob"
+                              )}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                            >
+                              {copiedKey === "raw_blob" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                              Sao chép
+                            </button>
+                            <span className="text-[11px] text-slate-400 italic hidden sm:inline">Chỉ hiển thị — không lưu, không đổi nội dung gốc.</span>
+                          </div>
+
+                          {rawViewMode === "shortened" ? (
+                            isShorteningRaw ? (
+                              <div className="py-8 flex items-center justify-center gap-2 text-sm text-indigo-500"><RefreshCw className="w-4 h-4 animate-spin" /> Đang rút gọn bằng AI...</div>
+                            ) : (
+                              <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300 py-2">{highlightText(shortenedRaw || "", searchQuery)}</div>
+                            )
+                          ) : rawViewMode === "flat" ? (
+                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300 py-2">{highlightText(meeting.raw_transcript, searchQuery)}</div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {splitSentences(meeting.raw_transcript).map((s, i) => (
+                                <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(s, searchQuery)}</p>
+                              ))}
+                            </div>
                           )}
-                          <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1">
-                            {p.segments.map((t) => {
-                              const text = rawLangMode === "translated" 
-                                ? (t.translatedText || "") 
-                                : (t.correctedText || t.originalText || "");
-                              
-                              if (rawLangMode === "translated" && !t.translatedText) {
+                        </div>
+                      )
+                    ) : rawLangMode === "translated" && !hasTranslation ? (
+                      <div className="py-12 text-center space-y-3 bg-slate-50/50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 my-2">
+                        <Languages className="w-8 h-8 text-indigo-400 dark:text-indigo-600 mx-auto" />
+                        <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Bản dịch tiếng Việt chưa được tạo</p>
+                        <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                          Hãy bấm vào nút <strong>"Dịch nhanh"</strong> ở góc trên bên phải để AI bắt đầu dịch tự động toàn bộ bản ghi cuộc họp.
+                        </p>
+                      </div>
+                    ) : groupedParagraphs.length > 0 ? (
+                      groupedParagraphs.map((p, pIdx) => {
+                        // Model 2-bản: "Bản gốc" (original) render blob riêng ở trên; nhánh script này chỉ còn "Bản dịch".
+                        const shouldAddSpace = true;
+                        const isUnknownSpeaker = p.speakerTag === "unknown" || 
+                                                 p.speakerName.toLowerCase().includes("unknown") || 
+                                                 p.speakerName.toLowerCase() === "unknown";
+                        
+                        return (
+                          <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
+                            {!isUnknownSpeaker && (
+                              <span 
+                                style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
+                                className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
+                              >
+                                {p.speakerName}
+                              </span>
+                            )}
+                            <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1">
+                              {p.segments.map((t) => {
+                                const isUntranslated = rawLangMode === "translated" && !t.translatedText;
+                                const text = rawLangMode === "translated" 
+                                  ? (t.translatedText || t.correctedText || t.originalText || "") 
+                                  : (t.correctedText || t.originalText || "");
+                                
                                 return (
-                                  <span key={t.id} className="text-slate-400 dark:text-slate-500 italic text-xs block mt-1">
-                                    (Chưa có bản dịch cho câu này. Hãy chạy lại pipeline dịch ở Hội thoại)
+                                  <span 
+                                    key={t.id} 
+                                    className={`${shouldAddSpace ? "mr-1" : ""} ${isUntranslated ? "text-slate-400/70 italic text-xs" : ""}`}
+                                  >
+                                    {highlightText(text, searchQuery)}
                                   </span>
                                 );
-                              }
-                              
-                              return (
-                                <span key={t.id} className={shouldAddSpace ? "mr-1" : ""}>
-                                  {highlightText(text, searchQuery)}
-                                </span>
-                              );
-                            })}
-                          </p>
-                        </div>
-                      );
-                    }) : (
+                              })}
+                            </p>
+                          </div>
+                        );
+                      })
+                    ) : (
                       <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
                     )}
                   </div>
@@ -3276,11 +3366,60 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
             ) : (
               <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
-                {/* Card title */}
-                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300 pb-2 border-b border-slate-100 dark:border-slate-800">
-                  <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
-                  <span>Hội thoại đã xử lý</span>
-                  <span className="text-xs font-normal opacity-60">({filteredReprocessedTranscripts.length} đoạn)</span>
+                {/* Card title + điều khiển riêng của tab Hội thoại (Phân vai / Xử lý lại) */}
+                <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
+                    <span>Hội thoại đã xử lý</span>
+                    <span className="text-xs font-normal opacity-60">({filteredReprocessedTranscripts.length} đoạn)</span>
+                  </div>
+                  {(() => {
+                    const busy = isRediarizing || aiJobs.some((j) => j.status === "processing" || j.status === "queued");
+                    return (
+                      <div className="flex items-center gap-2">
+                        <div ref={speakerMenuRef} className="relative">
+                          <button
+                            disabled={busy}
+                            onClick={() => setShowSpeakerMenu((v) => !v)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/20 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            <Users className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Phân vai</span>
+                            <ChevronDown className={`w-3 h-3 transition-transform ${showSpeakerMenu ? "rotate-180" : ""}`} />
+                          </button>
+                          {showSpeakerMenu && (
+                            <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
+                              {([
+                                { label: "Mặc định (theo họp)", mode: null, desc: "Người nói đã đăng ký + ngữ cảnh" },
+                                { label: "Theo tên (AI)", mode: "by_name", desc: "Suy tên thật từ nội dung" },
+                                { label: "Độc thoại 1 người", mode: "single_speaker_split", desc: "Video/bài giảng 1 người nói" },
+                                { label: "Đánh số đơn giản", mode: "numbered", desc: "Speaker 1, 2, 3..." },
+                                { label: "Theo vai trò", mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng..." },
+                                { label: "Gộp người nói", mode: "merge_speakers", desc: "Gộp speaker bị tách nhầm" },
+                              ] as { label: string; mode: string | null; desc: string }[]).map((opt) => (
+                                <button
+                                  key={opt.label}
+                                  onClick={() => handlePhanVai(opt.mode, opt.label)}
+                                  className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                                >
+                                  <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                  <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          disabled={busy}
+                          onClick={() => rerunProcess(["process", "summary"], null, "Đang xử lý lại toàn bộ...")}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/20 transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} />
+                          <span className="hidden sm:inline">{busy ? "Đang xử lý..." : "Xử lý lại"}</span>
+                        </button>
+                      </div>
+                    );
+                  })()}
                 </div>
                 {/* Internal Search & Voice selector */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
@@ -3363,17 +3502,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               {fmtTime(t.startMs)}
                             </span>
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-semibold" style={{ backgroundColor: `${t.speakerColor}15`, color: t.speakerColor }}>{t.speakerName}</span>
-                            {t.isEdited && <span className="text-[9px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium">Đã sửa</span>}
                           </div>
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => handleSummarizeLine(t.id, t.correctedText || t.originalText, t.translatedText || "")} className={`p-1.5 rounded transition-colors cursor-pointer ${lineSummaries[t.id] ? "text-emerald-600 bg-emerald-50" : "text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"}`} title="Tóm tắt AI">
                               <Sparkles className="w-3.5 h-3.5" />
                             </button>
-                            {!isEditing && (
-                              <button onClick={() => startEditingTranscript(t)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded transition-colors cursor-pointer" title="Sửa">
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
                           </div>
                         </div>
                         <div className="px-3 py-2.5 space-y-2">
@@ -3804,15 +3937,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 >
                                   <Sparkles className="w-4 h-4" />
                                 </button>
-                                {!isEditing && (
-                                  <button
-                                    onClick={() => startEditingTranscript(t)}
-                                    className="p-1 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer"
-                                    title="Chỉnh sửa văn bản"
-                                  >
-                                    <Edit2 className="w-4 h-4" />
-                                  </button>
-                                )}
                               </div>
                             </td>
                           </tr>

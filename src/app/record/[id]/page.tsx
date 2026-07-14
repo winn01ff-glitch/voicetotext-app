@@ -103,7 +103,6 @@ export default function RecordPage({ params }: RecordPageProps) {
             .from("transcripts")
             .update({
               original_text: updatedText,
-              corrected_text: updatedText,
               end_ms: dgData.endMs,
             })
             .eq("id", lastBlock.id);
@@ -132,12 +131,9 @@ export default function RecordPage({ params }: RecordPageProps) {
               id: newBlockId,
               meeting_id: meetingId,
               original_text: dgData.text.trim(),
-              corrected_text: dgData.text.trim(),
               start_ms: dgData.startMs,
               end_ms: dgData.endMs,
               confidence: dgData.confidence,
-              version_type: "RAW",
-              is_active: true,
             });
         } catch (err) {
           console.error("Error inserting transcript in DB:", err);
@@ -244,7 +240,6 @@ export default function RecordPage({ params }: RecordPageProps) {
           .from("transcripts")
           .update({
             original_text: updatedText,
-            corrected_text: updatedText,
           })
           .eq("id", lastBlock.id);
       } catch (err) {

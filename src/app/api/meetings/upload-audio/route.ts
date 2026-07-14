@@ -3,6 +3,8 @@ import { after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { validateAudioBuffer } from "@/lib/ai/audio-validator";
 import { runPipeline, PipelineConfig } from "@/lib/ai/pipeline";
+import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
+import { runAIJobsQueue } from "@/lib/ai/queueWorker";
 
 export async function POST(request: Request) {
   try {
@@ -137,7 +139,11 @@ export async function POST(request: Request) {
 
     after(async () => {
       try {
+        // 1) Bóc băng → lưu RAW blob (meetings.raw_transcript + raw_deepgram_result).
         await runPipeline(meetingId, buffer, pipelineConfig);
+        // 2) Xử lý AI hợp nhất (cắt dòng + phân vai + sửa + dịch) rồi tóm tắt.
+        await enqueueAiJobs(meetingId, ["process", "summary"]);
+        await runAIJobsQueue(meetingId);
       } catch (error) {
         console.error(`[Pipeline Error] Meeting ${meetingId}:`, error);
         // runPipeline đã handle set status='failed' bên trong

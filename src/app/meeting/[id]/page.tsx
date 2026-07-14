@@ -341,7 +341,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         const { data: txs } = await supabase
           .from("transcripts")
           .select(`
-            id, original_text, corrected_text, translated_text, start_ms, end_ms, confidence, created_at,
+            id, original_text, translated_text, start_ms, end_ms, confidence, created_at,
             speakers ( display_name, color_hex, speaker_tag )
           `)
           .eq("meeting_id", meetingId)
@@ -352,7 +352,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             txs.map((t: any) => ({
               id: t.id,
               text: t.original_text,
-              correctedText: t.corrected_text,
+              correctedText: t.original_text,
               translatedText: t.translated_text,
               speakerTag: t.speakers?.speaker_tag || "speaker_1",
               speakerName: t.speakers?.display_name || "Unknown",

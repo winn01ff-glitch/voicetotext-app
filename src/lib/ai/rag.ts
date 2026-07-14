@@ -9,12 +9,11 @@ const CHUNK_MAX_CHARS = 4000; // Khoảng 1000 tokens (1 token ~ 4 chars)
 export async function generateEmbeddings(meetingId: string) {
   const supabase = await createServerSupabaseClient();
   
-  // 1. Fetch active transcripts
+  // 1. Fetch transcripts (model 2-bản: bảng chỉ chứa dòng đã xử lý)
   const { data: transcripts } = await supabase
     .from("transcripts")
-    .select("speaker_name, corrected_text, original_text, start_ms, end_ms")
+    .select("speaker_name, original_text, start_ms, end_ms")
     .eq("meeting_id", meetingId)
-    .eq("is_active", true)
     .order("start_ms", { ascending: true });
 
   if (!transcripts || transcripts.length === 0) return;
@@ -26,7 +25,7 @@ export async function generateEmbeddings(meetingId: string) {
   let currentEndMs = transcripts[0].end_ms;
 
   for (const t of transcripts) {
-    const turnText = `[${t.speaker_name}]: ${t.corrected_text || t.original_text}`;
+    const turnText = `[${t.speaker_name}]: ${t.original_text}`;
     if (currentChunkText.length + turnText.length > CHUNK_MAX_CHARS && currentChunkText.length > 0) {
       chunks.push({
         text: currentChunkText.trim(),

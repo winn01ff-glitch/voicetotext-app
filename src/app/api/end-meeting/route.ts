@@ -43,8 +43,7 @@ export async function POST(request: Request) {
     await supabase
       .from("ai_summaries")
       .update({ status: "Generating" })
-      .eq("meeting_id", meeting_id)
-      .eq("is_active", true);
+      .eq("meeting_id", meeting_id);
 
     // 2. Fetch or create speakers and insert transcripts
     const { data: existingSpeakers } = await supabase
@@ -64,69 +63,50 @@ export async function POST(request: Request) {
       new Set((transcripts || []).map((t: any) => t.speakerTag).filter(Boolean))
     );
 
+    const speakerTagToName: Record<string, string> = {};
     for (const tag of uniqueSpeakerTags as string[]) {
+      const name = tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker ");
+      speakerTagToName[tag] = name;
       if (!speakerTagToId[tag]) {
         const { data: newSpeaker } = await supabase
           .from("speakers")
           .insert({
             meeting_id,
             speaker_tag: tag,
-            display_name: tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker "),
+            display_name: name,
             color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
           })
           .select()
           .single();
-        if (newSpeaker) {
-          speakerTagToId[tag] = newSpeaker.id;
-        }
+        if (newSpeaker) speakerTagToId[tag] = newSpeaker.id;
       }
     }
 
-    // Insert transcripts to DB
-    // Nội dung ở đây đã qua AI (process-transcript-batch) trong lúc họp live,
-    // không phải Deepgram thô, nên đánh dấu FINAL thay vì để rơi vào RAW mặc định.
+    // Model 2-bản: cuộc họp trực tiếp đã xử lý AI real-time trong lúc ghi (sửa/dịch), nên các
+    // utterance này CHÍNH LÀ bản đã-xử-lý. Lưu thẳng vào transcripts (không versioning). RAW blob
+    // giữ ở meetings.raw_transcript. Chỉ cần chạy job "summary".
     if ((transcripts || []).length > 0) {
-      // Deactivate any existing transcripts for this meeting first
-      // (prevents duplicates if end-meeting is called multiple times)
-      await supabase.from("transcripts").update({ is_active: false }).eq("meeting_id", meeting_id);
-
-      // Find next version number
-      const { data: maxVerData } = await supabase
-        .from("transcripts")
-        .select("version")
-        .eq("meeting_id", meeting_id)
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextVersion = (maxVerData?.version || 0) + 1;
+      // Xoá dòng cũ (tránh trùng nếu end-meeting gọi nhiều lần) rồi ghi mới.
+      await supabase.from("transcripts").delete().eq("meeting_id", meeting_id);
 
       const insertRows = transcripts.map((t: any) => ({
         meeting_id,
         speaker_id: speakerTagToId[t.speakerTag] || null,
-        original_text: t.text,
-        corrected_text: t.correctedText || t.text,
-        translated_text: t.translatedText,
-        translation_language: meeting.target_language || "vi",
-        translation_provider: "Gemini",
+        original_text: t.correctedText || t.text,
+        translated_text: t.translatedText || null,
         start_ms: t.startMs,
         end_ms: t.endMs,
         confidence: t.confidence || 1.0,
-        version_type: "FINAL",
-        version: nextVersion,
-        is_active: true,
+        speaker_tag: t.speakerTag,
+        speaker_name: speakerTagToName[t.speakerTag] || t.speakerTag,
       }));
 
-      const { error: insertError } = await supabase
-        .from("transcripts")
-        .insert(insertRows);
+      const { error: insertError } = await supabase.from("transcripts").insert(insertRows);
       if (insertError) throw insertError;
-    }
 
-    // Auto-enqueue background AI pipeline (spellcheck → speaker → translation → summary).
-    // All AI processing is handled by the queue worker using the saved transcripts.
-    if ((transcripts || []).length > 0) {
+      // Chỉ cần tóm tắt (nội dung đã xử lý real-time).
       try {
-        const enqueuedTypes = await enqueueAiJobs(meeting_id, ["spellcheck", "speaker", "translation", "summary"]);
+        const enqueuedTypes = await enqueueAiJobs(meeting_id, ["summary"]);
         if (enqueuedTypes.length > 0) {
           after(() => runAIJobsQueue(meeting_id).catch((err) => console.error("[QueueWorker] Background error:", err)));
         }
