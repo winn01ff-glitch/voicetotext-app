@@ -135,6 +135,34 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [reprocessedTranscripts, setReprocessedTranscripts] = useState<any[]>(cachedData?.reprocessedTranscripts || []); // Contains reprocessed transcripts
   const [aiSummary, setAiSummary] = useState<any>(cachedData?.aiSummary ?? null);
   const [actionItems, setActionItems] = useState<any[]>(cachedData?.actionItems || []); // Contains live action items
+
+  const getCleanOwner = (owner: string | null) => {
+    if (!owner) return "Chưa gán";
+    const trimmed = owner.trim();
+    if (trimmed.length > 30 || trimmed.includes("\n") || trimmed.includes(":") || trimmed.includes(" - ")) {
+      const foundSpeaker = speakers.find((sp) => 
+        trimmed.toLowerCase().includes(sp.display_name.toLowerCase()) ||
+        trimmed.toLowerCase().includes(sp.speaker_tag.toLowerCase())
+      );
+      return foundSpeaker ? foundSpeaker.display_name : "Chưa gán";
+    }
+    return trimmed;
+  };
+
+  const getCleanDeadlineStr = (item: any) => {
+    if (!item.deadline) return "N/A";
+    const trimmed = String(item.deadline).trim();
+    if (trimmed.length > 30 || trimmed.includes("\n") || trimmed.includes(":") || trimmed.includes(" - ")) {
+      return "N/A";
+    }
+    const d = new Date(item.deadline);
+    return isNaN(d.getTime())
+      ? trimmed
+      : d.toLocaleDateString("vi-VN") +
+        " " +
+        d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+  };
+
   const [loading, setLoading] = useState(() => {
     if (typeof window !== "undefined" && isAppHydrated) {
       return !cachedData;
@@ -230,22 +258,82 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     };
     const lines = text.split('\n');
     const elements: React.ReactNode[] = [];
+    let lastWasBoldBullet = false;
+    let inDiscussionSection = false;
+
     lines.forEach((line, i) => {
       const trimmed = line.trimStart();
+      const leadingSpaces = line.length - trimmed.length;
+
       if (trimmed.startsWith('## ')) {
+        lastWasBoldBullet = false;
+        const titleText = trimmed.slice(3).toUpperCase();
+        if (titleText.includes("THẢO LUẬN") || titleText.includes("討論") || titleText.includes("DISCUSSION") || titleText.includes("NỘI DUNG")) {
+          inDiscussionSection = true;
+        } else {
+          inDiscussionSection = false;
+        }
         elements.push(<h3 key={i} className="font-bold text-base text-slate-800 dark:text-slate-200 mt-4 mb-1.5 first:mt-0">{parseInline(trimmed.slice(3))}</h3>);
       } else if (trimmed.startsWith('### ')) {
+        lastWasBoldBullet = false;
         elements.push(<h4 key={i} className="font-semibold text-sm text-slate-700 dark:text-slate-300 mt-3 mb-1 first:mt-0">{parseInline(trimmed.slice(4))}</h4>);
       } else if (trimmed.startsWith('# ')) {
+        lastWasBoldBullet = false;
         elements.push(<h2 key={i} className="font-bold text-lg text-slate-800 dark:text-slate-200 mt-4 mb-2 first:mt-0">{parseInline(trimmed.slice(2))}</h2>);
       } else if (trimmed === '---' || trimmed === '***') {
+        lastWasBoldBullet = false;
         elements.push(<hr key={i} className="my-3 border-slate-200 dark:border-slate-700" />);
       } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ') || trimmed.startsWith('• ')) {
-        const content = trimmed.startsWith('• ') ? trimmed.slice(2) : trimmed.slice(2);
-        elements.push(<li key={i} className="text-sm text-slate-700 dark:text-slate-300 ml-4 list-disc leading-relaxed">{parseInline(content)}</li>);
+        const content = trimmed.slice(2);
+        const hasBold = content.includes('**');
+        
+        // Nếu ở trong mục NỘI DUNG THẢO LUẬN và dòng có chứa "**: " (in đậm + dấu hai chấm và có mô tả đằng sau)
+        if (inDiscussionSection && content.includes('**: ')) {
+          const splitIdx = content.indexOf('**: ');
+          const headerPart = content.slice(0, splitIdx + 3); // Lấy đến "**: "
+          const descPart = content.slice(splitIdx + 4).trim(); // Phần text đằng sau
+          
+          if (descPart.length > 0) {
+            // Render dòng cha (chỉ có tiêu đề in đậm và dấu hai chấm)
+            elements.push(
+              <li key={`${i}_parent`} className="text-sm leading-relaxed ml-4 list-disc mt-1">
+                {parseInline(headerPart)}
+              </li>
+            );
+            
+            // Render dòng con (text giải thích đi liền ngay sau) thụt lề dưới dạng sub-bullet
+            elements.push(
+              <li key={`${i}_child`} className="text-sm leading-relaxed ml-8 list-[circle] text-slate-500 dark:text-slate-400 pl-1 mt-0.5">
+                {parseInline(descPart)}
+              </li>
+            );
+            
+            lastWasBoldBullet = true;
+            return; // Đã xử lý xong dòng này, tiếp tục dòng tiếp theo
+          }
+        }
+
+        // Cụm gạch đầu dòng phụ: nếu dòng này thụt lề từ trước, HOẶC nếu dòng này không in đậm (không có **) nhưng dòng trước là gạch đầu dòng in đậm
+        const isSubBullet = leadingSpaces > 0 || (!hasBold && lastWasBoldBullet);
+        
+        if (hasBold) {
+          lastWasBoldBullet = true;
+        }
+
+        const marginClass = isSubBullet 
+          ? "ml-8 list-[circle] text-slate-500 dark:text-slate-400 pl-1 mt-0.5" 
+          : "ml-4 list-disc mt-1";
+
+        elements.push(
+          <li key={i} className={`text-sm leading-relaxed ${marginClass}`}>
+            {parseInline(content)}
+          </li>
+        );
       } else if (trimmed === '') {
+        lastWasBoldBullet = false;
         elements.push(<div key={i} className="h-2" />);
       } else {
+        lastWasBoldBullet = false;
         elements.push(<p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{parseInline(line)}</p>);
       }
     });
@@ -1420,8 +1508,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }));
     const actionItemsFormatted = actionItems.map((item) => ({
       description: item.description,
-      owner: item.owner || "",
-      deadline: item.deadline || "",
+      owner: getCleanOwner(item.owner),
+      deadline: getCleanDeadlineStr(item),
     }));
 
     await exportToDocx(meeting, speakersFormatted, transcriptsFormatted, aiSummary, actionItemsFormatted);
@@ -1439,8 +1527,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }));
     const actionItemsFormatted = actionItems.map((item) => ({
       description: item.description,
-      owner: item.owner || "",
-      deadline: item.deadline || "",
+      owner: getCleanOwner(item.owner),
+      deadline: getCleanDeadlineStr(item),
     }));
 
     exportToPdf(meeting, speakersFormatted, transcriptsFormatted, aiSummary, actionItemsFormatted);
@@ -1707,7 +1795,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     setIsRediarizing(true);
     // Bỏ hậu tố "(AI)" khỏi thông báo (giữ nguyên ở nhãn dropdown).
     const toastLabel = label.replace(/\s*\(AI\)/i, "").toLowerCase();
-    addToast("Đang phân vai", `Gán lại người nói (${toastLabel})...`, "success");
     try {
       const res = await fetch("/api/meetings/rediarize", {
         method: "POST",
@@ -1737,7 +1824,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         body: JSON.stringify({ meetingId, jobTypes: jobs, mode: mode ?? null }),
       });
       if (res.ok) {
-        addToast("Đã bắt đầu", toastMsg || "Đang xử lý lại.", "success");
         refreshMeetingDataSilently();
       } else {
         addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
@@ -1776,7 +1862,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   const handleQuickTranslate = async () => {
     setIsTranslatingRaw(true);
-    addToast("Đã bắt đầu", "Đang bắt đầu dịch nhanh bản ghi gốc...", "success");
     try {
       const res = await fetch("/api/meetings/reprocess/run-queue", {
         method: "POST",
@@ -2031,7 +2116,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   } ${
                     activeIndex === idx
                       ? "text-blue-600 dark:text-blue-400 bg-gradient-to-t from-blue-50/30 to-transparent dark:from-blue-950/5"
-                      : "text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                      : "text-slate-600 hover:text-blue-600 dark:text-slate-400 dark:hover:text-blue-400"
                   }`;
 
                 return (
@@ -2149,7 +2234,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <button
                           onClick={async () => {
                             setShowReprocessMenu(false);
-                            addToast("Đã bắt đầu", getReprocessToastMessage("Đang xử lý lại toàn bộ pipeline"), "success");
                             const res = await fetch("/api/meetings/reprocess/run-queue", {
                               method: "POST",
                               headers: { "Content-Type": "application/json" },
@@ -2886,17 +2970,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               <Copy className="w-4 h-4" />
                             )}
                           </button>
-                          <button
-                            onClick={() => {
-                              setIsEditingSummary(true);
-                              initialExecSummaryRef.current = editedExecSummary;
-                              initialDecisionsRef.current = [...editedDecisions];
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:text-slate-400 dark:hover:text-amber-400 dark:hover:bg-amber-950/30 rounded transition-colors cursor-pointer shrink-0"
-                            title="Sửa tóm tắt"
-                          >
-                            <Edit2 className="w-4 h-4" />
-                          </button>
                         </div>
                       )}
                     </div>
@@ -3020,8 +3093,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 .map(
                                   (item) =>
                                     `- [${item.is_completed ? "x" : " "}] ${item.description} (Phụ trách: ${
-                                      item.owner || "Chưa gán"
-                                    }, Hạn: ${item.deadline ? new Date(item.deadline).toLocaleDateString("vi-VN") : "N/A"})`
+                                      getCleanOwner(item.owner)
+                                    }, Hạn: ${getCleanDeadlineStr(item)})`
                                 )
                                 .join("\n"),
                               "action_items"
@@ -3046,15 +3119,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <p className="text-xs text-slate-400 italic py-4">Không có công việc nào được phân công.</p>
                       ) : (
                         actionItems.map((item) => {
-                          let deadlineStr = "N/A";
-                          if (item.deadline) {
-                            const d = new Date(item.deadline);
-                            deadlineStr = isNaN(d.getTime())
-                              ? item.deadline
-                              : d.toLocaleDateString("vi-VN") +
-                                " " +
-                                d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
-                          }
+                          const cleanOwner = getCleanOwner(item.owner);
+                          const deadlineStr = getCleanDeadlineStr(item);
 
                           return (
                             <div
@@ -3095,9 +3161,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-400">
                                   <span>
-                                    Phụ trách: <strong>{item.owner || "Chưa gán"}</strong>
+                                    Phụ trách: <strong>{cleanOwner}</strong>
                                   </span>
-                                  {item.deadline && (
+                                  {item.deadline && deadlineStr !== "N/A" && (
                                     <>
                                       <span>•</span>
                                       <span>
@@ -3192,9 +3258,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   )}
                 </div>
 
-                <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 p-5 sm:p-6 rounded-xl shadow-sm">
+                <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 pt-3.5 px-5 pb-5 sm:pt-4 sm:px-6 sm:pb-6 rounded-xl shadow-sm">
                   {/* Card title */}
-                  <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between mb-4 pb-3.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
                       <FileText className="w-4.5 h-4.5 text-indigo-500" />
                       <span>Bản ghi gốc</span>
@@ -3213,12 +3279,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </button>
                       )}
                       
-                      <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 shadow-inner">
+                      <div className="relative flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 shadow-inner w-36 select-none">
+                        {/* Sliding Background */}
+                        <div
+                          className="absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] bg-white dark:bg-slate-900 rounded-full transition-transform duration-300 ease-in-out shadow-sm"
+                          style={{
+                            transform: rawLangMode === "original" ? "translateX(0)" : "translateX(100%)",
+                          }}
+                        />
                         <button
                           onClick={() => setRawLangMode("original")}
-                          className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer ${
+                          className={`relative z-10 flex-1 text-center py-1 text-xs font-semibold rounded-full transition-colors duration-200 cursor-pointer ${
                             rawLangMode === "original"
-                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                              ? "text-indigo-600 dark:text-indigo-400"
                               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                           }`}
                         >
@@ -3226,9 +3299,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </button>
                         <button
                           onClick={() => setRawLangMode("translated")}
-                          className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all cursor-pointer ${
+                          className={`relative z-10 flex-1 text-center py-1 text-xs font-semibold rounded-full transition-colors duration-200 cursor-pointer ${
                             rawLangMode === "translated"
-                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm"
+                              ? "text-indigo-600 dark:text-indigo-400"
                               : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
                           }`}
                         >
@@ -3238,8 +3311,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </div>
                   </div>
 
-                  {/* Search bar with Copy button inside */}
-                  <div className="flex pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
+                  {/* Search bar with Copy button outside */}
+                  <div className="flex items-center justify-between gap-4 pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
                     <div className="relative w-full sm:max-w-xs md:max-w-md">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                       <input
@@ -3247,96 +3320,119 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         placeholder="Tìm kiếm từ khóa trong bản ghi gốc..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-16 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                        className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
                       />
-                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                        {searchQuery && (
-                          <button
-                            onClick={() => setSearchQuery("")}
-                            className="p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
-                            title="Xóa lọc"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                      {searchQuery && (
                         <button
-                          onClick={() => handleCopyText(
-                            splitSentences(meeting.raw_transcript).join("\n"),
-                            "raw_blob"
-                          )}
-                          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer"
-                          title="Sao chép bản ghi gốc"
+                          onClick={() => setSearchQuery("")}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                          title="Xóa lọc"
                         >
-                          {copiedKey === "raw_blob" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                          <X className="w-3.5 h-3.5" />
                         </button>
-                      </div>
+                      )}
                     </div>
+
+                    <button
+                      onClick={() => {
+                        const textToCopy = rawLangMode === "original"
+                          ? splitSentences(meeting.raw_transcript).join("\n")
+                          : filteredTranscripts
+                              .map((t) => t.translatedText || t.correctedText || t.originalText || "")
+                              .join("\n");
+                        handleCopyText(textToCopy, "raw_blob");
+                      }}
+                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer shrink-0"
+                      title={rawLangMode === "original" ? "Sao chép bản ghi gốc" : "Sao chép bản dịch"}
+                    >
+                      {copiedKey === "raw_blob" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
 
-                  <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
-                    {rawLangMode === "original" ? (
-                      // Model 2-bản: "Bản gốc" = blob thô Deepgram. Mọi tùy chọn dưới đây CHỈ đổi cách
-                      // hiển thị ở frontend (không lưu DB, không đổi nội dung gốc).
-                      !meeting?.raw_transcript ? (
+                  <div className="relative w-full overflow-hidden min-h-[100px]">
+                    {/* Slide 1: Original */}
+                    <div
+                      className="w-full transition-opacity duration-300 ease-in-out"
+                      style={{
+                        position: rawLangMode === "original" ? "relative" : "absolute",
+                        top: 0,
+                        left: 0,
+                        opacity: rawLangMode === "original" ? 1 : 0,
+                        pointerEvents: rawLangMode === "original" ? "auto" : "none",
+                      }}
+                    >
+                      {!meeting?.raw_transcript ? (
                         <p className="py-12 text-center text-slate-400 italic text-sm">Chưa có bản ghi thô từ Deepgram.</p>
                       ) : (
                         <div className="space-y-3">
-                          <div className="space-y-1.5 pt-2">
+                          <div className="space-y-1.5">
                             {splitSentences(meeting.raw_transcript).map((s, i) => (
                               <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(s, searchQuery)}</p>
                             ))}
                           </div>
                         </div>
-                      )
-                    ) : rawLangMode === "translated" && !hasTranslation ? (
-                      <div className="py-12 text-center space-y-3 bg-slate-50/50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 my-2">
-                        <Languages className="w-8 h-8 text-indigo-400 dark:text-indigo-600 mx-auto" />
-                        <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Bản dịch tiếng Việt chưa được tạo</p>
-                        <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                          Hãy bấm vào nút <strong>"Dịch nhanh"</strong> ở góc trên bên phải để AI bắt đầu dịch tự động toàn bộ bản ghi cuộc họp.
-                        </p>
-                      </div>
-                    ) : groupedParagraphs.length > 0 ? (
-                      groupedParagraphs.map((p, pIdx) => {
-                        // Model 2-bản: "Bản gốc" (original) render blob riêng ở trên; nhánh script này chỉ còn "Bản dịch".
-                        const shouldAddSpace = true;
-                        const isUnknownSpeaker = p.speakerTag === "unknown" || 
-                                                 p.speakerName.toLowerCase().includes("unknown") || 
-                                                 p.speakerName.toLowerCase() === "unknown";
-                        
-                        return (
-                          <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
-                            {!isUnknownSpeaker && (
-                              <span 
-                                style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
-                                className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
-                              >
-                                {p.speakerName}
-                              </span>
-                            )}
-                            <p className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1">
-                              {p.segments.map((t) => {
-                                const isUntranslated = rawLangMode === "translated" && !t.translatedText;
-                                const text = rawLangMode === "translated" 
-                                  ? (t.translatedText || t.correctedText || t.originalText || "") 
-                                  : (t.correctedText || t.originalText || "");
-                                
-                                return (
+                      )}
+                    </div>
+
+                    {/* Slide 2: Translated */}
+                    <div
+                      className="w-full transition-opacity duration-300 ease-in-out"
+                      style={{
+                        position: rawLangMode === "translated" ? "relative" : "absolute",
+                        top: 0,
+                        left: 0,
+                        opacity: rawLangMode === "translated" ? 1 : 0,
+                        pointerEvents: rawLangMode === "translated" ? "auto" : "none",
+                      }}
+                    >
+                      {rawLangMode === "translated" && !hasTranslation ? (
+                        <div className="py-12 text-center space-y-3 bg-slate-50/50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 my-2">
+                          <Languages className="w-8 h-8 text-indigo-400 dark:text-indigo-600 mx-auto" />
+                          <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Bản dịch tiếng Việt chưa được tạo</p>
+                          <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                            Hãy bấm vào nút <strong>"Dịch nhanh"</strong> ở góc trên bên phải để AI bắt đầu dịch tự động toàn bộ bản ghi cuộc họp.
+                          </p>
+                        </div>
+                      ) : groupedParagraphs.length > 0 ? (
+                        <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
+                          {groupedParagraphs.map((p, pIdx) => {
+                            const isUnknownSpeaker = p.speakerTag === "unknown" || 
+                                                     p.speakerName.toLowerCase().includes("unknown") || 
+                                                     p.speakerName.toLowerCase() === "unknown";
+                            
+                            return (
+                              <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
+                                {!isUnknownSpeaker && (
                                   <span 
-                                    key={t.id} 
-                                    className={`${shouldAddSpace ? "mr-1" : ""} ${isUntranslated ? "text-slate-400/70 italic text-xs" : ""}`}
+                                    style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
+                                    className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
                                   >
-                                    {highlightText(text, searchQuery)}
+                                    {p.speakerName}
                                   </span>
-                                );
-                              })}
-                            </p>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
-                    )}
+                                )}
+                                <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1 space-y-1.5">
+                                  {p.segments.map((t) => {
+                                    const isUntranslated = !t.translatedText;
+                                    const text = t.translatedText || t.correctedText || t.originalText || "";
+                                    
+                                    return (
+                                      <p 
+                                        key={t.id} 
+                                        className={`${isUntranslated ? "text-slate-400/70 italic text-xs" : ""}`}
+                                      >
+                                        {highlightText(text, searchQuery)}
+                                      </p>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3353,9 +3449,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </p>
               </div>
             ) : (
-              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:p-6 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
+              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:px-6 sm:pb-6 sm:pt-4 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
                 {/* Card title + điều khiển riêng của tab Hội thoại (Phân vai / Xử lý lại) */}
-                <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between gap-2 pb-2.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
                     <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
                     <span>Hội thoại đã xử lý</span>

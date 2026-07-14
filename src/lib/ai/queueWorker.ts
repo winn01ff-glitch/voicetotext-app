@@ -1,10 +1,12 @@
 import { createHash } from "crypto";
+import { SchemaType } from "@google/generative-ai";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import {
   PipelineConfig,
   TranslatedTurn,
   step5_summarize,
   step6_extractActions,
+  callGemini,
 } from "./pipeline";
 import { processMeetingTranscript } from "./processPipeline";
 import { generateEmbeddings } from "./rag";
@@ -198,11 +200,99 @@ async function getProcessedTranscripts(meetingId: string) {
   return data || [];
 }
 
+async function ensureTranscriptsTranslated(
+  meetingId: string,
+  transcripts: any[],
+  config: PipelineConfig
+) {
+  const supabase = await createServerSupabaseClient();
+  const targetLang = config.targetLanguage || "vi";
+
+  // Lọc các transcript bị thiếu translated_text
+  const missingTxs = transcripts.filter(
+    (t) => !t.translated_text || !t.translated_text.trim()
+  );
+
+  if (missingTxs.length === 0) return;
+
+  console.log(
+    `[QueueWorker] Translating ${missingTxs.length} missing segments for meeting ${meetingId} to ${targetLang}...`
+  );
+
+  const chunkSize = 30;
+  for (let i = 0; i < missingTxs.length; i += chunkSize) {
+    const chunk = missingTxs.slice(i, i + chunkSize);
+    
+    const prompt = `
+You are a professional translator. Translate the following JSON array of strings into ${targetLang}.
+Translate faithfully and naturally. Keep the tone appropriate. Do not add any comments or notes. Return a JSON array of strings in the exact same order.
+
+JSON to translate:
+${JSON.stringify(chunk.map((t) => t.original_text || ""))}
+`;
+
+    try {
+      const translatedArray = await callGemini<string[]>(
+        prompt,
+        "gemini-3.1-flash-lite",
+        {
+          temperature: 0.1,
+          responseSchema: {
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+          },
+        }
+      );
+
+      if (Array.isArray(translatedArray) && translatedArray.length === chunk.length) {
+        for (let j = 0; j < chunk.length; j++) {
+          const originalTx = chunk[j];
+          const translation = translatedArray[j] || originalTx.original_text || "";
+          
+          await supabase
+            .from("transcripts")
+            .update({ translated_text: translation })
+            .eq("id", originalTx.id);
+            
+          originalTx.translated_text = translation;
+        }
+      } else {
+        console.error("[QueueWorker] Translation response length mismatch or invalid format");
+        // Fallback: copy original text
+        for (const originalTx of chunk) {
+          const translation = originalTx.original_text || "";
+          await supabase
+            .from("transcripts")
+            .update({ translated_text: translation })
+            .eq("id", originalTx.id);
+          originalTx.translated_text = translation;
+        }
+      }
+    } catch (err) {
+      console.error("[QueueWorker] Error translating chunk:", err);
+      // Fallback: copy original text
+      for (const originalTx of chunk) {
+        const translation = originalTx.original_text || "";
+        try {
+          await supabase
+            .from("transcripts")
+            .update({ translated_text: translation })
+            .eq("id", originalTx.id);
+        } catch (dbErr) {
+          console.error("[QueueWorker] DB update failed for fallback:", dbErr);
+        }
+        originalTx.translated_text = translation;
+      }
+    }
+  }
+}
+
 async function executeSummaryJob(job: any, config: PipelineConfig) {
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
   const supabase = await createServerSupabaseClient();
 
   const transcripts = await getProcessedTranscripts(job.meeting_id);
+  await ensureTranscriptsTranslated(job.meeting_id, transcripts, config);
   const translatedTurns: TranslatedTurn[] = transcripts.map((r: any) => ({
     original_text: r.original_text || "",
     translated_text: r.translated_text || "",
@@ -217,7 +307,10 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
   const contentForHash = translatedTurns
     .map((t) => (t.translated_text || t.original_text || "").trim())
     .join("\n");
-  const summaryHash = hashText(`${job.mode || ""}::${contentForHash}`);
+  
+  const currentContentHash = hashText(contentForHash);
+  const modeHash = hashText(job.mode || "");
+  const summaryHash = `${modeHash}::${currentContentHash}`;
 
   const { data: current } = await supabase
     .from("ai_summaries")
@@ -230,11 +323,79 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
     return;
   }
 
+  // Kiểm tra xem nội dung văn bản gốc/bản dịch có thay đổi thực sự hay không
+  let contentChanged = true;
+  if (current?.source_hash) {
+    const parts = current.source_hash.split("::");
+    if (parts.length > 1) {
+      const prevContentHash = parts[1];
+      if (prevContentHash === currentContentHash) {
+        contentChanged = false;
+      }
+    }
+  }
+
+  // Kiểm tra xem đã có danh sách Action Items trong database chưa
+  let hasActions = false;
+  if (!contentChanged) {
+    const { count } = await supabase
+      .from("action_items")
+      .select("*", { count: "exact", head: true })
+      .eq("meeting_id", job.meeting_id);
+    hasActions = (count ?? 0) > 0;
+  }
+
+  // Dọn dẹp phòng ngừa cho các Action Items hiện tại nếu bị dính lỗi giải thích dài dòng của AI
+  try {
+    const { data: existingActions } = await supabase
+      .from("action_items")
+      .select("*")
+      .eq("meeting_id", job.meeting_id);
+
+    if (existingActions && existingActions.length > 0) {
+      for (const item of existingActions) {
+        let needsUpdate = false;
+        let cleanOwner = item.owner;
+        let cleanDeadline = item.deadline;
+
+        if (cleanOwner && (cleanOwner.length > 30 || cleanOwner.includes("\n") || cleanOwner.includes(":") || cleanOwner.includes(" - "))) {
+          const foundSpeaker = config.speakers.find((sp) => 
+            cleanOwner!.toLowerCase().includes(sp.display_name.toLowerCase()) ||
+            cleanOwner!.toLowerCase().includes(sp.speaker_tag.toLowerCase())
+          );
+          cleanOwner = foundSpeaker ? foundSpeaker.display_name : null;
+          needsUpdate = true;
+        }
+
+        if (cleanDeadline && (cleanDeadline.length > 30 || cleanDeadline.includes("\n") || cleanDeadline.includes(":") || cleanDeadline.includes(" - "))) {
+          cleanDeadline = null;
+          needsUpdate = true;
+        }
+
+        if (needsUpdate) {
+          await supabase
+            .from("action_items")
+            .update({ owner: cleanOwner, deadline: cleanDeadline })
+            .eq("id", item.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[QueueWorker] Failed to sanitize existing actions:", err);
+  }
+
   const summary = await step5_summarize(translatedTurns, config, job.mode);
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
 
-  const actions = await step6_extractActions(translatedTurns, summary, config);
-  if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
+  // Chỉ trích xuất lại Action Items khi nội dung cuộc họp thay đổi hoặc chưa có Action Items nào được lưu
+  let actions: any[] = [];
+  let shouldUpdateActions = false;
+
+  if (contentChanged || !hasActions) {
+    actions = await step6_extractActions(translatedTurns, summary, config);
+    if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
+    shouldUpdateActions = true;
+  }
 
   // Ghi đè bản tóm tắt duy nhất của meeting (không versioning).
   await supabase.from("ai_summaries").delete().eq("meeting_id", job.meeting_id);
@@ -246,15 +407,33 @@ async function executeSummaryJob(job: any, config: PipelineConfig) {
     source_hash: summaryHash,
   });
 
-  await supabase.from("action_items").delete().eq("meeting_id", job.meeting_id);
-  if (actions.length > 0) {
-    await supabase.from("action_items").insert(
-      actions.map((a) => ({
-        meeting_id: job.meeting_id,
-        description: a.description,
-        owner: a.owner,
-        deadline: a.deadline,
-      }))
-    );
+  if (shouldUpdateActions) {
+    await supabase.from("action_items").delete().eq("meeting_id", job.meeting_id);
+    if (actions.length > 0) {
+      await supabase.from("action_items").insert(
+        actions.map((a) => {
+          let cleanOwner = a.owner ? a.owner.trim() : null;
+          if (cleanOwner && (cleanOwner.length > 30 || cleanOwner.includes("\n") || cleanOwner.includes(":") || cleanOwner.includes(" - "))) {
+            const foundSpeaker = config.speakers.find((sp) => 
+              cleanOwner!.toLowerCase().includes(sp.display_name.toLowerCase()) ||
+              cleanOwner!.toLowerCase().includes(sp.speaker_tag.toLowerCase())
+            );
+            cleanOwner = foundSpeaker ? foundSpeaker.display_name : null;
+          }
+
+          let cleanDeadline = a.deadline ? a.deadline.trim() : null;
+          if (cleanDeadline && (cleanDeadline.length > 30 || cleanDeadline.includes("\n") || cleanDeadline.includes(":") || cleanDeadline.includes(" - "))) {
+            cleanDeadline = null;
+          }
+
+          return {
+            meeting_id: job.meeting_id,
+            description: a.description,
+            owner: cleanOwner,
+            deadline: cleanDeadline,
+          };
+        })
+      );
+    }
   }
 }

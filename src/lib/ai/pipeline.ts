@@ -436,20 +436,43 @@ function getSummaryModeInstructions(mode: string | null | undefined, targetLangu
   switch (mode) {
     case "detailed":
       return `
-NHIỆM VỤ: Tạo TÓM TẮT CHI TIẾT — phân tích đầy đủ từng chủ đề được thảo luận.
+NHIỆM VỤ: Tạo BẢN CHI TIẾT CUỘC TRAO ĐỔI cực kỳ đầy đủ, phân tích chi tiết từng chủ đề bằng Markdown.
 
-HƯỚNG DẪN:
-1. Chia nội dung thành các phần theo chủ đề (sections) riêng biệt bằng cách xuống dòng.
-2. Mỗi phần bắt đầu bằng tiêu đề bắt đầu với "## " trên một dòng riêng.
-3. Sau tiêu đề là nội dung phân tích chi tiết của chủ đề đó ở các dòng tiếp theo.
-4. Bao gồm ý kiến của từng người tham gia nếu có.
-5. Liệt kê các quyết định đã được thông qua.
-6. Viết bằng ngôn ngữ "${targetLanguage}".
-7. Không hallucinate thông tin không có trong biên bản.
+HƯỚNG DẪN CẤU TRÚC VÀ ĐỊNH DẠNG BẮT BUỘC:
+1. Định dạng văn bản chính xác theo cấu trúc sau:
+# BẢN CHI TIẾT CUỘC TRAO ĐỔI
+
+**Chủ đề:** [Tên chủ đề thực tế của cuộc họp/trao đổi]
+
+## 1. Mở đầu
+[Nội dung tóm tắt chi tiết phần mở đầu cuộc trao đổi, chào hỏi, giới thiệu nhân vật...]
+
+## 2. [Chủ đề thảo luận chính thứ nhất]
+[Nội dung phân tích chi tiết, đầy đủ câu chuyện, lập luận, trải nghiệm của từng thành viên liên quan đến chủ đề này...]
+
+## 3. [Chủ đề thảo luận chính thứ hai]
+[Nội dung phân tích chi tiết...]
+
+(Tiếp tục phân tích toàn bộ cuộc hội thoại bằng các đề mục đánh số ## 4, ## 5, ## 6... cho đến hết mọi khía cạnh được thảo luận)
+
+### Nội dung thống nhất
+* [Ý kiến/Quyết định thống nhất 1...]
+* [Ý kiến/Quyết định thống nhất 2...]
+
+### Công việc cần thực hiện
+**[Nếu có công việc cần làm, ghi mô tả ngắn gọn. Nếu không phát sinh công việc hoặc hành động tiếp theo, bắt buộc phải ghi nguyên văn dòng chữ đậm sau: "Không phát sinh nhiệm vụ hoặc nội dung cần theo dõi sau cuộc trao đổi."]**
+
+2. YÊU CẦU QUAN TRỌNG:
+- Tiêu đề chính bắt đầu bằng một dấu thăng (#) duy nhất: "# BẢN CHI TIẾT CUỘC TRAO ĐỔI"
+- Các tiêu đề chủ đề thảo luận bắt đầu bằng hai dấu thăng (##) và được đánh số thứ tự (ví dụ: ## 1. Mở đầu, ## 2. ...).
+- Mỗi mục chủ đề phải là một đoạn văn tóm tắt chi tiết, dày dặn, không viết chung chung sơ sài.
+- Các phần "Nội dung thống nhất" và "Công việc cần thực hiện" ở cuối bắt đầu bằng ba dấu thăng (###) và tuân thủ cách định dạng danh sách/chữ in đậm như mẫu.
+- Viết bằng ngôn ngữ "${targetLanguage}".
+- Tuyệt đối không tự bịa ra thông tin không có trong cuộc họp.
 
 OUTPUT FORMAT — JSON ONLY:
 {
-  "executive_summary": "## Chủ đề 1\\nNội dung chi tiết chủ đề 1...\\n\\n## Chủ đề 2\\nNội dung chi tiết chủ đề 2...",
+  "executive_summary": "# BẢN CHI TIẾT CUỘC TRAO ĐỔI\\n\\n**Chủ đề:** ...\\n\\n## 1. Mở đầu\\n...\\n\\n## 2. ...\\n\\n### Nội dung thống nhất\\n* ...\\n\\n### Công việc cần thực hiện\\n**...**",
   "decisions": ["Quyết định 1...", "Quyết định 2..."]
 }`;
 
@@ -473,28 +496,59 @@ OUTPUT FORMAT — JSON ONLY:
 
     case "meeting_minutes":
       return `
-NHIỆM VỤ: Tạo BIÊN BẢN HỌP chuyên nghiệp, sẵn sàng gửi qua email, trình bày bằng Markdown.
+NHIỆM VỤ: Tạo BIÊN BẢN CUỘC HỌP chi tiết, rõ ràng theo đúng cấu trúc và định dạng của phiên bản cũ bằng Markdown.
 
-HƯỚNG DẪN:
-1. Viết biên bản với cấu trúc chuyên nghiệp, sử dụng Markdown formatting:
-   - Dùng ## cho tiêu đề lớn (BIÊN BẢN CUỘC HỌP)
-   - Dùng ### cho tiêu đề mục (1. THÔNG TIN CHUNG, 2. NỘI DUNG THẢO LUẬN...)
-   - Dùng **in đậm** cho nhãn quan trọng (Ngày:, Chủ đề:, Người tham gia:...)
-   - Dùng bullet points (- hoặc •) cho danh sách
-   - Dùng --- để phân cách giữa các mục lớn
-2. Cấu trúc bao gồm:
-   - Thông tin chung (ngày, chủ đề, người tham gia)
-   - Nội dung thảo luận chính
-   - Quyết định đã thông qua
-   - Công việc tiếp theo (nếu có)
-3. Giọng điệu trang trọng, chuyên nghiệp.
-4. Viết bằng ngôn ngữ "${targetLanguage}".
-5. Không hallucinate thông tin không có trong biên bản.
+HƯỚNG DẪN CẤU TRÚC VÀ ĐỊNH DẠNG BẮT BUỘC:
+1. Viết biên bản theo đúng định dạng cấu trúc sau (lưu ý tăng kích thước tiêu đề phần bằng ##, đưa dấu hai chấm ra ngoài phần in đậm **, và phân tách rõ ràng các ý thảo luận bằng gạch đầu dòng con thụt lề):
+
+# BIÊN BẢN CUỘC HỌP
+
+## 1. THÔNG TIN CHUNG
+- **Ngày**: [Ngày diễn ra cuộc họp/trao đổi]
+- **Chủ đề**: [Tên chủ đề hoặc nội dung chính]
+- **Người tham gia**: [Tên những người tham gia và vai trò ngắn gọn]
+
+---
+
+## 2. NỘI DUNG THẢO LUẬN
+- **[Chủ đề thảo luận 1]**: [Tóm tắt khái quát chủ đề].
+  - [Ý chi tiết/Ý phụ 1 của chủ đề 1]
+  - [Ý chi tiết/Ý phụ 2 của chủ đề 1]
+  - [Ý chi tiết/Ý phụ 3 của chủ đề 1]
+- **[Chủ đề thảo luận 2]**: [Tóm tắt khái quát].
+  - [Ý chi tiết/Ý phụ 1 của chủ đề 2]
+  - [Ý chi tiết/Ý phụ 2 của chủ đề 2]
+- **[Chủ đề thảo luận 3]**: [Tóm tắt khái quát].
+  - [Ý chi tiết/Ý phụ 1 của chủ đề 3]
+
+---
+
+## 3. QUYẾT ĐỊNH
+- [Quyết định hoặc ý kiến thống nhất 1...]
+- [Quyết định hoặc ý kiến thống nhất 2...]
+
+---
+
+## 4. CÔNG VIỆC TIẾP THEO
+- [Công việc cần thực hiện tiếp theo 1. Nếu không phát sinh công việc hoặc hành động tiếp theo, ghi nguyên văn: "Không phát sinh công việc, nhiệm vụ hoặc nội dung cần theo dõi sau cuộc trao đổi."]
+
+2. YÊU CẦU QUAN TRỌNG:
+- Tiêu đề chính "BIÊN BẢN CUỘC HỌP" bắt đầu bằng một dấu thăng (#) duy nhất để đạt kích thước lớn nhất.
+- Các tiêu đề phần bắt đầu bằng hai dấu thăng (##) để tăng kích thước chữ lớn hơn phiên bản trước.
+- Dấu hai chấm (:) của các nhãn ở phần 1 và các tiêu đề thảo luận ở phần 2 phải nằm NGOÀI phần in đậm (ví dụ viết là: **Ngày**: hoặc **Lựa chọn quốc gia**: chứ KHÔNG viết **Ngày:** hoặc **Lựa chọn quốc gia**:).
+- **YÊU CẦU BẮT BUỘC VỀ GẠCH ĐẦU DÒNG CON (NESTED BULLETS)**: 
+  * Các câu bắt đầu có chữ in đậm (ví dụ: "- **Lựa chọn quốc gia**: ...") được gán làm gạch đầu dòng cha (sử dụng dấu gạch ngang "-").
+  * Tất cả các ý phụ giải thích tiếp theo, thông tin chi tiết hoặc lập luận đi kèm của chủ đề đó **BẮT BUỘC** phải thụt lề vào trong bằng 2 khoảng trắng và dấu gạch ngang (viết là: "  - [Nội dung ý phụ...]").
+  * **TUYỆT ĐỐI KHÔNG** đặt các ý phụ ở ngoài cùng dòng cha hoặc sử dụng cùng một mức gạch đầu dòng phẳng với dòng tiêu đề in đậm. Phải có sự phân hóa phân cấp rõ ràng bằng thụt lề.
+- Biên bản phải CỰC KỲ CHI TIẾT và RÕ RÀNG, tóm tắt đầy đủ mọi thông tin, các điểm nhấn và các câu chuyện thực tế được thảo luận trong cuộc họp.
+- Sử dụng đúng định dạng Markdown (tiêu đề #, ##, in đậm **, gạch đầu dòng -, đường kẻ ngang --- để ngăn cách các mục).
+- Viết bằng ngôn ngữ "${targetLanguage}".
+- Tuyệt đối không tự bịa ra thông tin không có trong cuộc họp.
 
 OUTPUT FORMAT — JSON ONLY:
 {
-  "executive_summary": "## BIÊN BẢN CUỘC HỌP\\n\\n### 1. THÔNG TIN CHUNG\\n- **Ngày:** ...\\n- **Chủ đề:** ...\\n- **Người tham gia:** ...\\n\\n---\\n\\n### 2. NỘI DUNG THẢO LUẬN\\n...\\n\\n---\\n\\n### 3. QUYẾT ĐỊNH\\n...\\n\\n---\\n\\n### 4. CÔNG VIỆC TIẾP THEO\\n...",
-  "decisions": ["Quyết định 1...", "Quyết định 2..."]
+  "executive_summary": "# BIÊN BẢN CUỘC HỌP\\n\\n## 1. THÔNG TIN CHUNG\\n- **Ngày**: ...\\n- **Chủ đề**: ...\\n- **Người tham gia**: ...\\n\\n---\\n\\n## 2. NỘI DUNG THẢO LUẬN\\n- **...**: ...\\n  - ...\\n\\n---\\n\\n## 3. QUYẾT ĐỊNH\\n...\\n\\n---\\n\\n## 4. CÔNG VIỆC TIẾP THEO\\n...",
+  "decisions": ["Điểm thống nhất 1...", "Điểm thống nhất 2..."]
 }`;
 
     case "action_items_only":
