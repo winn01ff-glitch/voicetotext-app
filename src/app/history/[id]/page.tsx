@@ -3388,7 +3388,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             <ChevronDown className={`w-3 h-3 transition-transform ${showSpeakerMenu ? "rotate-180" : ""}`} />
                           </button>
                           {showSpeakerMenu && (
-                            <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-0">
+                            <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden p-1.5">
                               {([
                                 { label: "Mặc định (theo họp)", mode: null, desc: "Người nói đã đăng ký + ngữ cảnh", icon: UserCheck },
                                 { label: "Theo tên (AI)", mode: "by_name", desc: "Suy tên thật từ nội dung", icon: Sparkles },
@@ -3400,11 +3400,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 <button
                                   key={opt.label}
                                   onClick={() => handlePhanVai(opt.mode, opt.label)}
-                                  className="w-full text-left px-3.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer flex items-start gap-2.5"
+                                  className="group w-full text-left px-3 py-1.5 rounded-lg hover:bg-indigo-50/80 dark:hover:bg-indigo-950/40 transition-colors cursor-pointer flex items-center gap-2.5"
                                 >
-                                  <opt.icon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 mt-0.5 shrink-0" />
+                                  <opt.icon className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors shrink-0" />
                                   <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                    <div className="text-sm font-medium text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{opt.label}</div>
                                     <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
                                   </div>
                                 </button>
