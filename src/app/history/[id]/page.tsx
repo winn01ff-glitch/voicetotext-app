@@ -3197,45 +3197,22 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
                       <FileText className="w-4.5 h-4.5 text-indigo-500" />
-                      <span>Bản ghi gốc từ Deepgram</span>
+                      <span>Bản ghi gốc</span>
                       <span className="text-xs font-normal opacity-60">({filteredTranscripts.length} đoạn)</span>
                     </div>
                     
-                    {!hasTranslation && (
-                      <button
-                        onClick={handleQuickTranslate}
-                        disabled={isTranslatingRaw}
-                        className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:border-indigo-300 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                      >
-                        <Languages className={`w-3.5 h-3.5 ${isTranslatingRaw ? "animate-spin" : ""}`} />
-                        {isTranslatingRaw ? "Đang dịch..." : "Dịch nhanh"}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Search & Language pill control bar */}
-                  <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
-                    <div className="relative w-full sm:max-w-xs md:max-w-md">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Tìm kiếm từ khóa trong bản ghi gốc..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
-                      />
-                      {searchQuery && (
+                    <div className="flex items-center space-x-3">
+                      {!hasTranslation && (
                         <button
-                          onClick={() => setSearchQuery("")}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
-                          title="Xóa lọc"
+                          onClick={handleQuickTranslate}
+                          disabled={isTranslatingRaw}
+                          className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:border-indigo-300 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <Languages className={`w-3.5 h-3.5 ${isTranslatingRaw ? "animate-spin" : ""}`} />
+                          {isTranslatingRaw ? "Đang dịch..." : "Dịch nhanh"}
                         </button>
                       )}
-                    </div>
-
-                    <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
+                      
                       <div className="flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 shadow-inner">
                         <button
                           onClick={() => setRawLangMode("original")}
@@ -3261,6 +3238,41 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </div>
                   </div>
 
+                  {/* Search bar with Copy button inside */}
+                  <div className="flex pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
+                    <div className="relative w-full sm:max-w-xs md:max-w-md">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Tìm kiếm từ khóa trong bản ghi gốc..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-9 pr-16 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+                        {searchQuery && (
+                          <button
+                            onClick={() => setSearchQuery("")}
+                            className="p-0.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-full transition-colors cursor-pointer"
+                            title="Xóa lọc"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleCopyText(
+                            rawViewMode === "flat" ? meeting.raw_transcript : splitSentences(meeting.raw_transcript).join("\n"),
+                            "raw_blob"
+                          )}
+                          className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer"
+                          title="Sao chép bản ghi gốc"
+                        >
+                          {copiedKey === "raw_blob" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
                     {rawLangMode === "original" ? (
                       // Model 2-bản: "Bản gốc" = blob thô Deepgram. Mọi tùy chọn dưới đây CHỈ đổi cách
@@ -3280,34 +3292,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                 className={`px-3 py-1.5 text-xs font-semibold border-l border-slate-200 dark:border-slate-700 transition-colors cursor-pointer ${rawViewMode === "flat" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
                               >Thô 100%</button>
                             </div>
-                            <button
-                              onClick={handleShortenRaw}
-                              disabled={isShorteningRaw}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer disabled:opacity-50 ${rawViewMode === "shortened" ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/60" : "text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800/60 bg-indigo-50/40 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"}`}
-                            >
-                              <Sparkles className={`w-3.5 h-3.5 ${isShorteningRaw ? "animate-spin" : ""}`} />
-                              Rút gọn (AI)
-                            </button>
-                            <button
-                              onClick={() => handleCopyText(
-                                rawViewMode === "shortened" ? (shortenedRaw || "") : rawViewMode === "flat" ? meeting.raw_transcript : splitSentences(meeting.raw_transcript).join("\n"),
-                                "raw_blob"
-                              )}
-                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                            >
-                              {copiedKey === "raw_blob" ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-                              Sao chép
-                            </button>
                             <span className="text-[11px] text-slate-400 italic hidden sm:inline">Chỉ hiển thị — không lưu, không đổi nội dung gốc.</span>
                           </div>
 
-                          {rawViewMode === "shortened" ? (
-                            isShorteningRaw ? (
-                              <div className="py-8 flex items-center justify-center gap-2 text-sm text-indigo-500"><RefreshCw className="w-4 h-4 animate-spin" /> Đang rút gọn bằng AI...</div>
-                            ) : (
-                              <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300 py-2">{highlightText(shortenedRaw || "", searchQuery)}</div>
-                            )
-                          ) : rawViewMode === "flat" ? (
+                          {rawViewMode === "flat" ? (
                             <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300 py-2">{highlightText(meeting.raw_transcript, searchQuery)}</div>
                           ) : (
                             <div className="space-y-1.5">
