@@ -13,6 +13,7 @@
 import { SchemaType } from "@google/generative-ai";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { PipelineConfig, callGemini, getSourceLangLabel } from "./pipeline";
+import { createHash } from "crypto";
 
 const AI_MODEL = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
 
@@ -20,9 +21,9 @@ const AI_MODEL = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
 // mỗi call nhanh hơn; bù lại nhiều chunk hơn nhưng chúng chạy song song.
 const WORDS_PER_CHUNK = Number(process.env.AI_WORDS_PER_CHUNK) || 300;
 // Số từ ngữ-cảnh (chỉ để model đọc, KHÔNG emit lại) nối từ cuối chunk trước.
-const CONTEXT_WORDS = 15;
+const CONTEXT_WORDS = 40;
 // Số chunk chạy song song cùng lúc (flash-lite RPM cao + key rotation chịu được).
-const CONCURRENCY = Number(process.env.AI_CONCURRENCY) || 6;
+const CONCURRENCY = Number(process.env.AI_CONCURRENCY) || 8;
 // Trần output token/chunk — đủ lớn để nhiều dòng + bản dịch không bị cắt giữa JSON.
 const MAX_OUTPUT_TOKENS = Number(process.env.AI_MAX_OUTPUT_TOKENS) || 8192;
 
@@ -418,6 +419,14 @@ export async function saveProcessedTranscripts(
 // Orchestrator — xử lý toàn bộ transcript của 1 meeting
 // ================================================================
 
+function getChunkHash(words: DgWord[], chunk: WordChunk, config: PipelineConfig, mode: string | null | undefined): string {
+  const chunkWords = words.slice(chunk.startIdx, chunk.endIdx).map(w => w.w).join(" ");
+  const glossaryStr = JSON.stringify(config.glossary || []);
+  const speakersStr = JSON.stringify(config.speakers || []);
+  const raw = `${chunk.contextText}::${chunkWords}::${config.sourceLanguage}::${config.targetLanguage}::${mode || ""}::${glossaryStr}::${speakersStr}`;
+  return createHash("sha256").update(raw).digest("hex");
+}
+
 export async function processMeetingTranscript(
   meetingId: string,
   config: PipelineConfig,
@@ -439,9 +448,39 @@ export async function processMeetingTranscript(
 
   if (shouldCancel && (await shouldCancel())) throw new Error("CANCELLED");
 
-  const chunkResults = await mapWithConcurrency(chunks, CONCURRENCY, async (chunk) => {
+  // Read existing cache rows from database
+  const { data: cachedRows } = await supabase
+    .from("pipeline_cache")
+    .select("chunk_index, words_hash, result")
+    .eq("meeting_id", meetingId);
+  const cacheMap = new Map<number, { hash: string; result: ProcessedLine[] }>();
+  (cachedRows || []).forEach((row: any) => {
+    cacheMap.set(row.chunk_index, { hash: row.words_hash, result: row.result });
+  });
+
+  const chunkResults = await mapWithConcurrency(chunks, CONCURRENCY, async (chunk, idx) => {
     if (shouldCancel && (await shouldCancel())) throw new Error("CANCELLED");
-    return processChunk(words, chunk, config, mode);
+
+    const currentHash = getChunkHash(words, chunk, config, mode);
+    const cached = cacheMap.get(idx);
+    if (cached && cached.hash === currentHash) {
+      console.log(`[processMeetingTranscript] Cache HIT for chunk ${idx}/${chunks.length}`);
+      return cached.result;
+    }
+
+    console.log(`[processMeetingTranscript] Cache MISS for chunk ${idx}/${chunks.length} - processing with AI`);
+    const result = await processChunk(words, chunk, config, mode);
+
+    // Save to cache
+    await supabase.from("pipeline_cache").upsert({
+      meeting_id: meetingId,
+      chunk_index: idx,
+      words_hash: currentHash,
+      result: result,
+      created_at: new Date().toISOString()
+    }, { onConflict: "meeting_id,chunk_index" });
+
+    return result;
   });
 
   if (shouldCancel && (await shouldCancel())) throw new Error("CANCELLED");
@@ -460,69 +499,106 @@ export async function processMeetingTranscript(
 const REASSIGN_SCHEMA = {
   type: SchemaType.OBJECT,
   properties: {
-    assignments: {
+    speaker_mappings: {
       type: SchemaType.ARRAY,
       items: {
         type: SchemaType.OBJECT,
         properties: {
           speaker_tag: { type: SchemaType.STRING },
           speaker_name: { type: SchemaType.STRING },
+          merge_into_tag: { type: SchemaType.STRING },
         },
-        required: ["speaker_tag", "speaker_name"],
+        required: ["speaker_tag", "speaker_name", "merge_into_tag"],
       },
     },
   },
-  required: ["assignments"],
+  required: ["speaker_mappings"],
 };
+
+interface SpeakerMapping {
+  speaker_tag: string;
+  speaker_name: string;
+  merge_into_tag: string;
+}
 
 function reassignModeInstruction(mode: string | null | undefined): string {
   switch (mode) {
     case "by_name":
-      return `Suy ra TÊN THẬT của mỗi người nói từ nội dung (xưng hô, giới thiệu, gọi tên) và gán vào speaker_name. Cùng một người phải giữ CÙNG speaker_tag xuyên suốt. Nếu không tìm được tên → giữ "Speaker N".`;
+      return `Suy ra TÊN THẬT của mỗi người nói từ nội dung hội thoại mẫu (xưng hô, giới thiệu, gọi tên) và gán vào speaker_name. Cùng một người phải có cùng merge_into_tag. Nếu không tìm được tên thật -> giữ nguyên hoặc điền "Speaker N".`;
     case "by_role":
-      return `Gán speaker_name theo VAI TRÒ suy từ nội dung (Quản lý, Nhân viên, Khách hàng, Phỏng vấn viên, Ứng viên...). Cùng người → cùng speaker_tag. Không rõ → "Người tham gia N".`;
+      return `Gán speaker_name theo VAI TRÒ suy từ nội dung mẫu (Quản lý, Nhân viên, Khách hàng, Phỏng vấn viên, Ứng viên...). Cùng một người/vai trò phải có cùng merge_into_tag. Nếu không rõ -> gán "Người tham gia N".`;
     case "merge_speakers":
-      return `GỘP các speaker có thể là CÙNG một người (ASR tách nhầm): gán cho họ CÙNG speaker_tag + speaker_name. So sánh register/từ vựng/chủ đề. Ưu tiên gộp khi không chắc.`;
+      return `GỘP các speaker có thể là CÙNG một người (do máy tách nhầm): gán cho họ cùng merge_into_tag (ví dụ cả speaker_1 và speaker_2 đều gộp vào speaker_1). Phân tích văn phong, chủ đề, đại từ xưng hô để quyết định.`;
     default:
-      return `Gán người nói dựa trên danh sách đã đăng ký + ngữ cảnh hội thoại. Cùng người → cùng speaker_tag.`;
+      return `Gán người nói dựa trên danh sách đã đăng ký + ngữ cảnh hội thoại mẫu. Cùng một người phải có cùng merge_into_tag.`;
   }
 }
 
-// Gọi AI 1 lần: nhận các dòng (index + tag hiện tại + text), trả về speaker mới cho từng dòng.
+// Gọi AI 1 lần: phân tích mẫu hội thoại của các speaker_tag và trả về Metadata Mapping (tên/gộp)
 async function aiReassignSpeakers(
   lines: ProcessedLine[],
   config: PipelineConfig,
   mode: string | null | undefined
-): Promise<{ speaker_tag: string; speaker_name: string }[]> {
-  const input = lines.map((l, i) => ({ i, tag: l.speaker_tag, text: l.original_text }));
+): Promise<SpeakerMapping[]> {
+  // Gom các mẫu hội thoại của từng speaker_tag
+  const speakerSamples: Record<string, string[]> = {};
+  for (const l of lines) {
+    if (!l.speaker_tag) continue;
+    if (!speakerSamples[l.speaker_tag]) {
+      speakerSamples[l.speaker_tag] = [];
+    }
+    // Lấy tối đa 12 dòng hội thoại tiêu biểu (bỏ dòng quá ngắn)
+    if (speakerSamples[l.speaker_tag].length < 12 && l.original_text.trim().length > 10) {
+      speakerSamples[l.speaker_tag].push(l.original_text.trim());
+    }
+  }
+
+  // Dự phòng nếu có speaker chỉ nói các câu cực ngắn
+  for (const l of lines) {
+    if (!l.speaker_tag) continue;
+    if (speakerSamples[l.speaker_tag].length === 0) {
+      speakerSamples[l.speaker_tag].push(l.original_text.trim());
+    }
+  }
+
+  const input = Object.entries(speakerSamples).map(([tag, texts]) => ({
+    speaker_tag: tag,
+    dialogue_samples: texts,
+  }));
+
   const speakersStr = config.speakers.length > 0
     ? JSON.stringify(config.speakers.map((s) => ({ speaker_tag: s.speaker_tag, display_name: s.display_name })))
     : "(chưa đăng ký)";
 
   const prompt = `
-Bạn là chuyên gia phân tách người nói (diarization). Dưới đây là các DÒNG hội thoại ĐÃ CÓ.
-Nhiệm vụ: gán lại speaker_tag + speaker_name cho MỖI dòng. TUYỆT ĐỐI KHÔNG đổi/không dịch nội dung.
+Bạn là chuyên gia phân tách người nói (diarization).
+Dưới đây là MẪU HỘI THOẠI (dialogue samples) của từng người nói (speaker_tag).
+Nhiệm vụ của bạn là phân tích nội dung mẫu của mỗi người nói để gán tên thật hoặc vai trò và quyết định xem có gộp speaker nào hay không.
 
 YÊU CẦU: ${reassignModeInstruction(mode)}
 
 NGÔN NGỮ: ${getSourceLangLabel(config.sourceLanguage)}
 NGƯỜI NÓI ĐÃ ĐĂNG KÝ: ${speakersStr}
 
-DỮ LIỆU (JSON) — mỗi dòng: i=chỉ số, tag=người nói hiện tại, text=nội dung:
+DỮ LIỆU MẪU (JSON):
 ${JSON.stringify(input)}
 
-Trả về "assignments" ĐÚNG số lượng và ĐÚNG thứ tự dòng (assignments[k] ứng với dòng i=k).
-speaker_tag dạng "speaker_1", "speaker_2"...`;
+Trả về "speaker_mappings" cho TẤT CẢ các speaker_tag nhận được ở dữ liệu đầu vào.
+Với mỗi đối tượng trong speaker_mappings:
+- speaker_tag: tag hiện tại (ví dụ: "speaker_1")
+- speaker_name: Tên thật suy luận được, hoặc vai trò suy luận được, hoặc nhãn thích hợp.
+- merge_into_tag: Nếu phát hiện speaker_tag này thực chất là cùng một người với một speaker_tag khác, hãy điền tag đích ở đây (ví dụ: "speaker_1"). Nếu không gộp, hãy điền BẰNG CHÍNH "speaker_tag" của đối tượng đó.`;
 
-  const result = await callGemini<{ assignments: { speaker_tag: string; speaker_name: string }[] }>(
+  const result = await callGemini<{ speaker_mappings: SpeakerMapping[] }>(
     prompt,
     process.env.AI_FAST_MODEL || AI_MODEL,
     { temperature: 0, responseSchema: REASSIGN_SCHEMA, maxOutputTokens: MAX_OUTPUT_TOKENS }
   );
-  return Array.isArray(result?.assignments) ? result.assignments : [];
+
+  return Array.isArray(result?.speaker_mappings) ? result.speaker_mappings : [];
 }
 
-// Gộp các dòng liên tiếp CÙNG speaker_tag (dùng sau merge_speakers).
+// Gộp các dòng liên tiếp CÙNG speaker_tag
 function mergeAdjacentSameSpeaker(lines: ProcessedLine[]): ProcessedLine[] {
   const out: ProcessedLine[] = [];
   for (const l of lines) {
@@ -544,40 +620,97 @@ export async function reDiarizeMeeting(
   mode: string | null | undefined
 ): Promise<void> {
   const supabase = await createServerSupabaseClient();
-  const { data: rows } = await supabase
-    .from("transcripts")
-    .select("*")
+
+  // Try to restore original lines from pipeline_cache to preserve original sentence segments & speaker_tags
+  const { data: cachedRows } = await supabase
+    .from("pipeline_cache")
+    .select("chunk_index, result")
     .eq("meeting_id", meetingId)
-    .order("start_ms", { ascending: true });
-  if (!rows || rows.length === 0) return;
+    .order("chunk_index", { ascending: true });
 
-  let lines: ProcessedLine[] = rows.map((r: any) => ({
-    original_text: r.original_text || "",
-    translated_text: r.translated_text || "",
-    speaker_tag: r.speaker_tag || "speaker_1",
-    speaker_name: r.speaker_name || "",
-    start_ms: r.start_ms || 0,
-    end_ms: r.end_ms || 0,
-    confidence: r.confidence ?? 1.0,
-  }));
+  let lines: ProcessedLine[] = [];
 
-  if (mode === "numbered") {
-    // Đổi nhãn thuần — KHÔNG AI.
-    lines = lines.map((l) => ({ ...l, speaker_name: l.speaker_tag.replace("speaker_", "Speaker ") }));
-  } else if (mode === "single_speaker_split") {
-    // Độc thoại — tất cả về 1 người, giữ nguyên các dòng đã tách (KHÔNG AI, KHÔNG gộp).
-    lines = lines.map((l) => ({ ...l, speaker_tag: "speaker_1", speaker_name: "Diễn giả" }));
+  if (cachedRows && cachedRows.length > 0) {
+    const chunkResults = cachedRows.map((r: any) => r.result as ProcessedLine[]);
+    lines = stitch(chunkResults);
+    console.log(`[reDiarizeMeeting] Restored ${lines.length} original lines from pipeline_cache`);
   } else {
-    // by_name / by_role / merge_speakers / default → 1 lượt AI gán lại người nói (giữ text + dịch).
-    const assign = await aiReassignSpeakers(lines, config, mode);
-    lines = lines.map((l, i) => {
-      const a = assign[i];
-      const tag = a && /^speaker_\d+$/.test(a.speaker_tag) ? a.speaker_tag : l.speaker_tag;
-      return { ...l, speaker_tag: tag, speaker_name: (a?.speaker_name || l.speaker_name).trim() };
-    });
-    if (mode === "merge_speakers") lines = mergeAdjacentSameSpeaker(lines);
+    // Fallback if no cache exists (e.g. legacy meetings)
+    const { data: rows } = await supabase
+      .from("transcripts")
+      .select("*")
+      .eq("meeting_id", meetingId)
+      .order("start_ms", { ascending: true });
+    if (!rows || rows.length === 0) return;
+
+    lines = rows.map((r: any) => ({
+      original_text: r.original_text || "",
+      translated_text: r.translated_text || "",
+      speaker_tag: r.speaker_tag || "speaker_1",
+      speaker_name: r.speaker_name || "",
+      start_ms: r.start_ms || 0,
+      end_ms: r.end_ms || 0,
+      confidence: r.confidence ?? 1.0,
+    }));
+    console.log(`[reDiarizeMeeting] Loaded ${lines.length} lines from transcripts (no cache found)`);
   }
 
-  // forceNames: re-diarize đặt nhãn người nói áp đặt (kể cả "Speaker N" / "Diễn giả").
+  if (mode === "numbered") {
+    // Pure tag rename - no AI
+    lines = lines.map((l) => ({ ...l, speaker_name: l.speaker_tag.replace("speaker_", "Speaker ") }));
+  } else if (mode === "single_speaker_split") {
+    // Monologue - map all to speaker_1, keep original lines (no AI, no merge)
+    lines = lines.map((l) => ({ ...l, speaker_tag: "speaker_1", speaker_name: "Diễn giả" }));
+  } else if (mode === null || mode === undefined || mode === "default") {
+    // Reset to default registered names or tags
+    const registeredSpeakers = config.speakers || [];
+    const tagToName: Record<string, string> = {};
+    registeredSpeakers.forEach((s) => {
+      tagToName[s.speaker_tag] = s.display_name;
+    });
+
+    lines = lines.map((l) => ({
+      ...l,
+      speaker_name: tagToName[l.speaker_tag] || l.speaker_tag.replace("speaker_", "Speaker "),
+    }));
+  } else {
+    // by_name / by_role / merge_speakers -> reassign using Mapping Metadata
+    const mappings = await aiReassignSpeakers(lines, config, mode);
+
+    const mergeMap: Record<string, string> = {};
+    const nameMap: Record<string, string> = {};
+    for (const m of mappings) {
+      if (m.speaker_tag) {
+        nameMap[m.speaker_tag] = m.speaker_name || "";
+        if (m.merge_into_tag && m.merge_into_tag !== m.speaker_tag) {
+          mergeMap[m.speaker_tag] = m.merge_into_tag;
+        }
+      }
+    }
+
+    const resolveTag = (tag: string): string => {
+      let current = tag;
+      const visited = new Set<string>();
+      while (mergeMap[current] && !visited.has(current)) {
+        visited.add(current);
+        current = mergeMap[current];
+      }
+      return current;
+    };
+
+    lines = lines.map((l) => {
+      const finalTag = resolveTag(l.speaker_tag);
+      const name = nameMap[finalTag] || nameMap[l.speaker_tag] || l.speaker_name;
+      return {
+        ...l,
+        speaker_tag: finalTag,
+        speaker_name: name.trim(),
+      };
+    });
+
+    lines = mergeAdjacentSameSpeaker(lines);
+  }
+
+  // Save the lines, overwrite the transcripts
   await saveProcessedTranscripts(meetingId, lines, true);
 }

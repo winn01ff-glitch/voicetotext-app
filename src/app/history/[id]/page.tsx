@@ -192,6 +192,13 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const speakerMenuRef = useRef<HTMLDivElement>(null);
   const [isRediarizing, setIsRediarizing] = useState(false);
+  const [isReprocessingLocal, setIsReprocessingLocal] = useState(false);
+  const [activeDiarizeMode, setActiveDiarizeMode] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(`meeting_diarize_mode_${meetingId}`) || null;
+    }
+    return null;
+  });
 
   const isGeneratingSummaryRef = useRef(isGeneratingSummary);
   const activeSummaryModeRef = useRef(activeSummaryMode);
@@ -2738,24 +2745,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             {subTabProcessed === "summary" ? (
               <div className="space-y-5">
                 {/* Tiến trình TÓM TẮT — hiển thị RIÊNG ở tab Tóm tắt (thay cho stepper tổng đã bỏ) */}
-                {(() => {
-                  const sumJob = aiJobs.find((j) => j.type === "summary");
-                  if (!sumJob || !["processing", "queued", "failed"].includes(sumJob.status)) return null;
-                  const failed = sumJob.status === "failed";
-                  const retrying = sumJob.status === "queued" && (sumJob.retry_count || 0) > 0;
-                  return (
-                    <div className={`flex items-center gap-2.5 p-3 rounded-lg text-xs border ${failed ? "bg-red-50/50 dark:bg-red-950/10 border-red-200 dark:border-red-900/30 text-red-700 dark:text-red-400" : retrying ? "bg-amber-50/50 dark:bg-amber-950/10 border-amber-200 dark:border-amber-900/30 text-amber-700 dark:text-amber-400" : "bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400"}`}>
-                      {failed ? <X className="w-4 h-4 shrink-0" /> : <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />}
-                      <span className="leading-relaxed">
-                        {failed
-                          ? "Tạo tóm tắt thất bại. Chọn một kiểu tóm tắt bên dưới để thử lại."
-                          : retrying
-                          ? `Đang thử lại tạo tóm tắt (lần ${sumJob.retry_count}/${sumJob.max_retries || 3})...`
-                          : "Đang tạo tóm tắt... có thể mất ít giây tuỳ độ dài cuộc họp."}
-                      </span>
-                    </div>
-                  );
-                })()}
+                
                 {/* Summary mode quick actions */}
                 <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm px-4 py-3">
                   <div className="flex items-center gap-2 mb-2.5">
@@ -2770,58 +2760,86 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         { label: "Bullet", icon: List, mode: "bullets" as string | null, desc: "Gạch đầu dòng" },
                         { label: "Biên bản", icon: BookOpen, mode: "meeting_minutes" as string | null, desc: "Biên bản họp" },
                         { label: "Công việc", icon: ListChecks, mode: "action_items_only" as string | null, desc: "Task & cam kết" },
-                      ]).map((opt) => (
+                      ]).map((opt) => {
+                        const isSelected = activeSummaryMode === opt.mode;
+                        const isSummaryJobActive = aiJobs.some((j) => j.type === "summary" && (j.status === "processing" || j.status === "queued"));
+                        const isProcessing = (isSummaryJobActive || isGeneratingSummary) && isSelected;
+                        const isDisabled = isSummaryJobActive || isGeneratingSummary;
+
+                        return (
+                          <button
+                            key={opt.label}
+                            disabled={isDisabled}
+                            onClick={async () => {
+                              setIsGeneratingSummary(true);
+                              setActiveSummaryMode(opt.mode);
+                              isGeneratingSummaryRef.current = true;
+                              activeSummaryModeRef.current = opt.mode;
+                              const res = await fetch("/api/meetings/reprocess/run-queue", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ meetingId, jobTypes: ["summary"], mode: opt.mode }),
+                              });
+                              if (res.ok) {
+                                refreshMeetingDataSilently();
+                              } else {
+                                setIsGeneratingSummary(false);
+                                const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+                                setActiveSummaryMode(cachedMode || null);
+                                isGeneratingSummaryRef.current = false;
+                                activeSummaryModeRef.current = cachedMode || null;
+                                addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                              }
+                            }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer
+                              ${isProcessing
+                                ? "bg-indigo-600 text-white border-indigo-600 cursor-not-allowed"
+                                : isSelected
+                                ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/50 ring-1 ring-indigo-200 dark:ring-indigo-800/50"
+                                : "text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400 dark:hover:border-indigo-800/50"
+                              } ${isDisabled && !isProcessing ? "opacity-50 cursor-not-allowed" : ""}`}
+                            title={opt.desc}
+                          >
+                            {isProcessing ? (
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <opt.icon className="w-3.5 h-3.5" />
+                            )}
+                            <span>{opt.label}</span>
+                          </button>
+                        );
+                      })}
+                      {/* Cancel button if summary job is active */}
+                      {(aiJobs.some((j) => j.type === "summary" && (j.status === "processing" || j.status === "queued")) || isGeneratingSummary) && (
                         <button
-                          key={opt.label}
                           onClick={async () => {
-                            setIsGeneratingSummary(true);
-                            setActiveSummaryMode(opt.mode);
-                            isGeneratingSummaryRef.current = true;
-                            activeSummaryModeRef.current = opt.mode;
-                            const res = await fetch("/api/meetings/reprocess/run-queue", {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ meetingId, jobTypes: ["summary"], mode: opt.mode }),
-                            });
-                            if (res.ok) {
-                              refreshMeetingDataSilently();
-                            } else {
-                              setIsGeneratingSummary(false);
-                              const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
-                              setActiveSummaryMode(cachedMode || null);
-                              isGeneratingSummaryRef.current = false;
-                              activeSummaryModeRef.current = cachedMode || null;
-                              addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
+                            const activeJob = aiJobs.find((j) => j.status === "processing" || j.status === "queued");
+                            if (activeJob) {
+                              await fetch("/api/meetings/reprocess/cancel-job", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ jobId: activeJob.id }),
+                              });
                             }
+                            setIsGeneratingSummary(false);
+                            const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+                            setActiveSummaryMode(cachedMode || null);
+                            isGeneratingSummaryRef.current = false;
+                            activeSummaryModeRef.current = cachedMode || null;
+                            await refreshMeetingDataSilently();
                           }}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-all cursor-pointer border ${
-                            activeSummaryMode === opt.mode
-                              ? "bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-950/30 dark:text-indigo-400 dark:border-indigo-800/50 ring-1 ring-indigo-200 dark:ring-indigo-800/50"
-                              : "text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/30 dark:hover:text-indigo-400 dark:hover:border-indigo-800/50"
-                          }`}
-                          title={opt.desc}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-950/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/30 transition-all cursor-pointer shadow-sm shrink-0"
+                          title="Hủy tiến trình tạo tóm tắt hiện tại"
                         >
-                          <opt.icon className="w-3.5 h-3.5" />
-                          <span>{opt.label}</span>
+                          <X className="w-3.5 h-3.5" />
+                          <span>Hủy xử lý</span>
                         </button>
-                      ))}
+                      )}
                     </div>
 
                     {/* Global Translation Dropdown */}
                     {renderGlobalTranslateDropdown()}
                   </div>
-
-                  {(hasActiveJobs || isGeneratingSummary) && (
-                    <div className="mt-3 p-3 rounded-lg text-xs border bg-blue-50/50 dark:bg-blue-950/10 border-blue-200 dark:border-blue-900/30 text-blue-700 dark:text-blue-400 flex items-center gap-2.5 shadow-sm">
-                      <RefreshCw className="w-4 h-4 animate-spin shrink-0 text-indigo-500" />
-                      <p className="leading-relaxed">
-                        <span className="font-bold mr-1.5 shrink-0 inline-flex items-center gap-1">
-                          Đang xử lý:
-                        </span>
-                        Đang tạo lại tóm tắt cuộc họp bằng AI. Tiến trình này có thể mất ít giây, vòng xoay sẽ kết thúc sau khi cập nhật dữ liệu...
-                      </p>
-                    </div>
-                  )}
                 </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -3374,7 +3392,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     <span className="text-xs font-normal opacity-60">({filteredReprocessedTranscripts.length} đoạn)</span>
                   </div>
                   {(() => {
-                    const busy = isRediarizing || aiJobs.some((j) => j.status === "processing" || j.status === "queued");
+                    const busy = isRediarizing || isReprocessingLocal || aiJobs.some((j) => j.status === "processing" || j.status === "queued");
                     return (
                       <div className="flex items-center gap-2">
                         <div ref={speakerMenuRef} className="relative">
@@ -3414,12 +3432,37 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         </div>
                         <button
                           disabled={busy}
-                          onClick={() => rerunProcess(["process", "summary"], null, "Đang xử lý lại toàn bộ...")}
-                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/20 transition-all cursor-pointer disabled:opacity-50"
+                          onClick={() => rerunProcess(["process"], null, "Đang xử lý lại cuộc hội thoại...")}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer
+                            ${busy
+                              ? "bg-indigo-600 text-white border-indigo-600 cursor-not-allowed opacity-90"
+                              : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 dark:hover:bg-indigo-950/20"
+                            }`}
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} />
-                          <span className="hidden sm:inline">{busy ? "Đang xử lý..." : "Xử lý lại"}</span>
+                          <span className="hidden sm:inline">Xử lý lại</span>
                         </button>
+                        {busy && (
+                          <button
+                            onClick={async () => {
+                              const activeJob = aiJobs.find((j) => j.status === "processing" || j.status === "queued");
+                              if (activeJob) {
+                                await fetch("/api/meetings/reprocess/cancel-job", {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ jobId: activeJob.id }),
+                                });
+                              }
+                              setIsReprocessingLocal(false);
+                              await refreshMeetingDataSilently();
+                            }}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-red-200 dark:border-red-900/30 bg-red-50 dark:bg-red-950/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-950/30 transition-all cursor-pointer shadow-sm"
+                            title="Hủy tiến trình xử lý hiện tại"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Hủy</span>
+                          </button>
+                        )}
                       </div>
                     );
                   })()}

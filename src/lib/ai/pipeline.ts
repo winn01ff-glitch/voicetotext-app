@@ -439,16 +439,17 @@ function getSummaryModeInstructions(mode: string | null | undefined, targetLangu
 NHIỆM VỤ: Tạo TÓM TẮT CHI TIẾT — phân tích đầy đủ từng chủ đề được thảo luận.
 
 HƯỚNG DẪN:
-1. Chia nội dung thành các phần theo chủ đề (sections).
-2. Mỗi phần có tiêu đề rõ ràng và nội dung chi tiết.
-3. Bao gồm ý kiến của từng người tham gia nếu có.
-4. Liệt kê các quyết định đã được thông qua.
-5. Viết bằng ngôn ngữ "${targetLanguage}".
-6. Không hallucinate thông tin không có trong biên bản.
+1. Chia nội dung thành các phần theo chủ đề (sections) riêng biệt bằng cách xuống dòng.
+2. Mỗi phần bắt đầu bằng tiêu đề bắt đầu với "## " trên một dòng riêng.
+3. Sau tiêu đề là nội dung phân tích chi tiết của chủ đề đó ở các dòng tiếp theo.
+4. Bao gồm ý kiến của từng người tham gia nếu có.
+5. Liệt kê các quyết định đã được thông qua.
+6. Viết bằng ngôn ngữ "${targetLanguage}".
+7. Không hallucinate thông tin không có trong biên bản.
 
 OUTPUT FORMAT — JSON ONLY:
 {
-  "executive_summary": "Phân tích chi tiết với các phần được đánh dấu ## cho mỗi chủ đề...",
+  "executive_summary": "## Chủ đề 1\\nNội dung chi tiết chủ đề 1...\\n\\n## Chủ đề 2\\nNội dung chi tiết chủ đề 2...",
   "decisions": ["Quyết định 1...", "Quyết định 2..."]
 }`;
 
@@ -653,15 +654,18 @@ BIÊN BẢN CHI TIẾT
 ${transcriptLog}
 
 ==================================================
-HƯỚNG DẪN
+HƯỚNG DẪN BẮT BUỘC
 ==================================================
-1. Trích xuất MỌI công việc/nhiệm vụ được nhắc đến, kể cả ngầm hiểu.
-2. Xác định:
-   - description: Mô tả cụ thể công việc
-   - owner: Người chịu trách nhiệm (tên hoặc role). Nếu không rõ → null.
-   - deadline: Thời hạn dạng ISO 8601 hoặc mô tả ("Thứ Sáu tới", "Cuối tuần", "ASAP"). Nếu không rõ → null.
-3. Viết description bằng ngôn ngữ "${config.targetLanguage}".
-4. Nếu không có action item nào → trả mảng rỗng.
+1. Trích xuất MỌI công việc/nhiệm vụ được nhắc đến hoặc ngầm hiểu trong cuộc họp.
+2. Với mỗi công việc, xác định các trường:
+   - description: Mô tả cụ thể công việc bằng ngôn ngữ "${config.targetLanguage}".
+   - owner: Chỉ điền TÊN hoặc VAI TRÒ ngắn gọn của người chịu trách nhiệm (ví dụ: "Shun", "Haruka", "Quản lý").
+     * TUYỆT ĐỐI KHÔNG viết giải thích, lập luận hay văn tự dài dòng giải thích lý do vào trường này.
+     * Nếu không rõ người chịu trách nhiệm hoặc là sự hợp tác chung không có cá nhân cụ thể → Gán giá trị JSON null (không điền text giải thích, không điền chuỗi "null").
+   - deadline: Thời hạn thực hiện (ví dụ: "2026-07-20", "Thứ Sáu tới", "ASAP").
+     * TUYỆT ĐỐI KHÔNG viết giải thích dài dòng vào trường này.
+     * Nếu không rõ thời hạn → Gán giá trị JSON null.
+3. Nếu không có action item nào → trả mảng rỗng [].
 
 ==================================================
 OUTPUT FORMAT — JSON ONLY
@@ -670,8 +674,8 @@ OUTPUT FORMAT — JSON ONLY
   "action_items": [
     {
       "description": "Nội dung công việc...",
-      "owner": "Tên người chịu trách nhiệm hoặc null",
-      "deadline": "ISO 8601 hoặc mô tả hoặc null"
+      "owner": null,
+      "deadline": null
     }
   ]
 }
