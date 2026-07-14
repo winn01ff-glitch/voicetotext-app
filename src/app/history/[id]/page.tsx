@@ -3388,22 +3388,25 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             <ChevronDown className={`w-3 h-3 transition-transform ${showSpeakerMenu ? "rotate-180" : ""}`} />
                           </button>
                           {showSpeakerMenu && (
-                            <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
+                            <div className="absolute right-0 top-full mt-1.5 w-64 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-0">
                               {([
-                                { label: "Mặc định (theo họp)", mode: null, desc: "Người nói đã đăng ký + ngữ cảnh" },
-                                { label: "Theo tên (AI)", mode: "by_name", desc: "Suy tên thật từ nội dung" },
-                                { label: "Độc thoại 1 người", mode: "single_speaker_split", desc: "Video/bài giảng 1 người nói" },
-                                { label: "Đánh số đơn giản", mode: "numbered", desc: "Speaker 1, 2, 3..." },
-                                { label: "Theo vai trò", mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng..." },
-                                { label: "Gộp người nói", mode: "merge_speakers", desc: "Gộp speaker bị tách nhầm" },
-                              ] as { label: string; mode: string | null; desc: string }[]).map((opt) => (
+                                { label: "Mặc định (theo họp)", mode: null, desc: "Người nói đã đăng ký + ngữ cảnh", icon: UserCheck },
+                                { label: "Theo tên (AI)", mode: "by_name", desc: "Suy tên thật từ nội dung", icon: Sparkles },
+                                { label: "Độc thoại 1 người", mode: "single_speaker_split", desc: "Video/bài giảng 1 người nói", icon: AlignLeft },
+                                { label: "Đánh số đơn giản", mode: "numbered", desc: "Speaker 1, 2, 3...", icon: Hash },
+                                { label: "Theo vai trò", mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng...", icon: Briefcase },
+                                { label: "Gộp người nói", mode: "merge_speakers", desc: "Gộp speaker bị tách nhầm", icon: GitMerge },
+                              ] as { label: string; mode: string | null; desc: string; icon: any }[]).map((opt) => (
                                 <button
                                   key={opt.label}
                                   onClick={() => handlePhanVai(opt.mode, opt.label)}
-                                  className="w-full text-left px-3.5 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                                  className="w-full text-left px-3.5 py-1 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer flex items-start gap-2.5"
                                 >
-                                  <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
-                                  <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                                  <opt.icon className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500 mt-0.5 shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{opt.label}</div>
+                                    <div className="text-xs text-slate-400 dark:text-slate-500 truncate">{opt.desc}</div>
+                                  </div>
                                 </button>
                               ))}
                             </div>
