@@ -3261,7 +3261,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         )}
                         <button
                           onClick={() => handleCopyText(
-                            rawViewMode === "flat" ? meeting.raw_transcript : splitSentences(meeting.raw_transcript).join("\n"),
+                            splitSentences(meeting.raw_transcript).join("\n"),
                             "raw_blob"
                           )}
                           className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer"
@@ -3281,29 +3281,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <p className="py-12 text-center text-slate-400 italic text-sm">Chưa có bản ghi thô từ Deepgram.</p>
                       ) : (
                         <div className="space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-                              <button
-                                onClick={() => setRawViewMode("split")}
-                                className={`px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${rawViewMode === "split" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                              >Tách dòng</button>
-                              <button
-                                onClick={() => setRawViewMode("flat")}
-                                className={`px-3 py-1.5 text-xs font-semibold border-l border-slate-200 dark:border-slate-700 transition-colors cursor-pointer ${rawViewMode === "flat" ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/30 dark:text-indigo-400" : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"}`}
-                              >Thô 100%</button>
-                            </div>
-                            <span className="text-[11px] text-slate-400 italic hidden sm:inline">Chỉ hiển thị — không lưu, không đổi nội dung gốc.</span>
+                          <div className="space-y-1.5 pt-2">
+                            {splitSentences(meeting.raw_transcript).map((s, i) => (
+                              <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(s, searchQuery)}</p>
+                            ))}
                           </div>
-
-                          {rawViewMode === "flat" ? (
-                            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-700 dark:text-slate-300 py-2">{highlightText(meeting.raw_transcript, searchQuery)}</div>
-                          ) : (
-                            <div className="space-y-1.5">
-                              {splitSentences(meeting.raw_transcript).map((s, i) => (
-                                <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(s, searchQuery)}</p>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       )
                     ) : rawLangMode === "translated" && !hasTranslation ? (
