@@ -21,6 +21,12 @@ export interface PipelineConfig {
   targetLanguage: string; // 'vi' | 'en' | 'ja'
   speakers: PipelineSpeaker[];
   glossary: GlossaryEntry[];
+  liveTranscripts?: Array<{
+    speaker_tag: string;
+    start_ms: number;
+    end_ms: number;
+    original_text: string;
+  }>;
 }
 
 export interface PipelineSpeaker {

@@ -444,6 +444,22 @@ export async function processMeetingTranscript(
   const words = extractWords(meeting?.raw_deepgram_result);
   if (words.length === 0) return [];
 
+  // Align speaker tags with live transcripts if available
+  if (config.liveTranscripts && config.liveTranscripts.length > 0) {
+    console.log(`[processMeetingTranscript] Aligning ${words.length} offline words with ${config.liveTranscripts.length} live segments...`);
+    for (const word of words) {
+      const wordMidMs = (word.start + word.end) * 500; // middle timestamp of the word in ms
+      // Find a live segment that covers this timestamp
+      const matchingSegment = config.liveTranscripts.find(
+        (seg) => wordMidMs >= seg.start_ms && wordMidMs <= seg.end_ms
+      );
+      if (matchingSegment) {
+        const tagNum = parseInt(matchingSegment.speaker_tag.replace("speaker_", "")) - 1;
+        word.speaker = isNaN(tagNum) ? 0 : tagNum;
+      }
+    }
+  }
+
   const chunks = buildChunks(words);
 
   if (shouldCancel && (await shouldCancel())) throw new Error("CANCELLED");

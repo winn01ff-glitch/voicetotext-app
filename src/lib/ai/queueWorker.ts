@@ -36,6 +36,13 @@ async function getMeetingConfig(meetingId: string): Promise<PipelineConfig> {
     .select("*")
     .eq("meeting_id", meetingId);
 
+  // Fetch the existing live transcripts before they are overwritten
+  const { data: liveTxs } = await supabase
+    .from("transcripts")
+    .select("speaker_tag, start_ms, end_ms, original_text")
+    .eq("meeting_id", meetingId)
+    .order("start_ms", { ascending: true });
+
   return {
     title: meeting?.title || "Meeting",
     meetingContext: meeting?.meeting_context || "",
@@ -43,6 +50,12 @@ async function getMeetingConfig(meetingId: string): Promise<PipelineConfig> {
     targetLanguage: meeting?.target_language || "vi",
     glossary: glossary || [],
     speakers: speakers || [],
+    liveTranscripts: liveTxs ? liveTxs.map((t: any) => ({
+      speaker_tag: t.speaker_tag,
+      start_ms: t.start_ms,
+      end_ms: t.end_ms,
+      original_text: t.original_text,
+    })) : [],
   };
 }
 
