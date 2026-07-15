@@ -712,7 +712,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     );
 
     const completedTranscripts = transcriptsRef.current.filter((t) => t.status !== "draft" && t.status !== "processing" && t.status !== "Dịch lỗi - Thử lại");
-    const history = completedTranscripts.slice(-30).map((tx) => ({
+    const history = completedTranscripts.slice(-20).map((tx) => ({
       speaker_tag: tx.speakerTag || "unknown",
       speaker_name: tx.speakerName || "Unknown",
       text: tx.text,

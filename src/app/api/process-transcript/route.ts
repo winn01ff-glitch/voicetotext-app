@@ -73,13 +73,13 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. Fetch the last 30 transcripts to use as context for boundary alignment and merging
+    // 4. Fetch the last 20 transcripts to use as context for boundary alignment and merging
     const { data: recentTxs } = await supabase
       .from("transcripts")
       .select("id, original_text, corrected_text, translated_text, start_ms, end_ms, speaker_id, confidence, speakers(speaker_tag, display_name)")
       .eq("meeting_id", meeting_id)
       .order("start_ms", { ascending: false })
-      .limit(30);
+      .limit(20);
       
     const history = (recentTxs || []).reverse();
     const historyContext = history.map((tx: any, idx: number) => ({
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
 
     const sourceLangInstruction: Record<string, string> = {
       ja: `The input speech is in JAPANESE. Expect Japanese text with possible kanji errors from ASR.
-Speaker cues: Pronouns (私/僕/俺), register (です/ます vs だ/ね), particles (よ/ね/か), aizuchi (なるほど, うん, はい)`,
+Speaker cues: Pronouns (私/僕/俺), register (です/ます vs だ/ね), particles (よ/ね/か), aizuchi (なるほど, うん, hai)`,
       en: `The input speech is in ENGLISH. Expect English text with possible homophones from ASR.
 Speaker cues: Pronouns (I/you), question vs statement, formal vs casual, backchannels (yeah, okay, I see)`,
       vi: `The input speech is in VIETNAMESE. Expect Vietnamese text with possible diacritics errors from ASR.
@@ -126,7 +126,7 @@ Speaker cues: Pronouns (tôi/anh/chị/em), register (formal ạ vs casual ừ/n
       ? `The "speaker_tag" is a HINT from Deepgram audio analysis. VERIFY it against conversation history and correct if it contradicts the dialog logic.`
       : `Audio diarization is DISABLED. The speaker_tag "${speaker_tag}" is a default — ignore it. Detect speaker changes using dialog transitions, pronoun shifts, and register changes.`;
 
-    const systemPrompt = `
+    const systemInstructionText = `
 You are an expert dialogue editor, speaker classifier, and translator for live meeting transcription.
 
 Source Language: ${sourceLangLabel[sourceLang] || sourceLangLabel["auto"]}
@@ -142,24 +142,9 @@ Task:
 5. Translate each turn into "${targetLang}".
    If the original text is already in "${targetLang}", set translated_text = original_text.
 
-REGISTERED SPEAKERS:
-${JSON.stringify(allSpeakers || [])}
-
-CONVERSATION HISTORY (Last ${historyContext.length} lines):
-${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — first segment)"}
-${coldStartNote}
-
-MEETING CONTEXT: ${context || "General discussion"}
-
-GLOSSARY:
-${JSON.stringify(glossaryList || [])}
-
-INPUT RAW SEGMENT TO PROCESS:
-- Raw Speaker Tag: "${speaker_tag}" (Name: "${resolvedSpeaker?.display_name || "Unknown"}")
-- Raw Text: "${original_text}"
-
 Return VALID JSON ONLY. No markdown, no explanation.
 
+Expected Output Format:
 {
   "corrected_previous_text": "updated previous original text (only if trailing words of previous speaker were moved back, otherwise empty string)",
   "corrected_previous_translation": "translation of corrected_previous_text (only if corrected_previous_text is updated, otherwise empty string)",
@@ -174,24 +159,54 @@ Return VALID JSON ONLY. No markdown, no explanation.
 }
 `;
 
+    const userContent = `
+REGISTERED SPEAKERS:
+${JSON.stringify(allSpeakers || [])}
+
+CONVERSATION HISTORY (Last ${historyContext.length} lines):
+${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — first segment)"}
+${coldStartNote}
+
+MEETING CONTEXT: ${context || "General discussion"}
+
+GLOSSARY:
+${JSON.stringify(glossaryList || [])}
+
+INPUT RAW SEGMENT TO PROCESS:
+- Start Time: ${start_ms || 0} ms
+- End Time: ${end_ms || 0} ms
+- Time Gap since last turn: ${timeGap} ms
+- Raw Speaker Tag: "${speaker_tag}" (Name: "${resolvedSpeaker?.display_name || "Unknown"}")
+- Raw Text: "${original_text}"
+
+Perform the task and return ONLY the JSON object matching the expected format.
+`;
+
     // 5. Setup Gemini Client & Call API
     const genAI = getGeminiClient();
     const modelName = process.env.AI_FAST_MODEL || "gemini-3.1-flash-lite";
+    const generationConfig = { 
+      responseMimeType: "application/json" as const,
+      temperature: 0.3 
+    };
+
     const model = genAI.getGenerativeModel({ 
       model: modelName,
-      generationConfig: { responseMimeType: "application/json" }
+      systemInstruction: systemInstructionText,
+      generationConfig
     });
 
     let result;
     try {
-      result = await model.generateContent(systemPrompt);
+      result = await model.generateContent(userContent);
     } catch (err) {
       console.warn(`Model ${modelName} failed, falling back to gemini-3.1-flash-lite:`, err);
       const fallbackModel = genAI.getGenerativeModel({ 
         model: "gemini-3.1-flash-lite",
-        generationConfig: { responseMimeType: "application/json" }
+        systemInstruction: systemInstructionText,
+        generationConfig
       });
-      result = await fallbackModel.generateContent(systemPrompt);
+      result = await fallbackModel.generateContent(userContent);
     }
 
     const responseText = result.response.text().trim();

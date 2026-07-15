@@ -127,7 +127,7 @@ Apply ALL language-specific cues:
    - Cross-reference with CONVERSATION HISTORY to match speech patterns to known speakers.
    - If a new speaker appears who is not registered, assign a new sequential tag (e.g., "speaker_3").`;
 
-    const systemPrompt = `
+    const systemInstructionText = `
 You are an expert dialogue editor, speaker classifier, and translator for live meeting transcription.
 
 ==================================================
@@ -136,29 +136,6 @@ LANGUAGE CONFIGURATION
 Source Language: ${sourceLangLabel[sourceLang] || sourceLangLabel["auto"]}
 Target Language: ${targetLang}
 ${sourceLangInstruction[sourceLang] || sourceLangInstruction["auto"]}
-
-==================================================
-INPUT DATA
-==================================================
-
-REGISTERED SPEAKERS:
-${JSON.stringify(allSpeakers || [])}
-
-MEETING CONTEXT:
-${context || "General discussion"}
-
-EARLIER CONVERSATION SUMMARY (who's who, topics discussed before the recent history below — use this to resolve speaker identity for references beyond the recent window):
-${rolling_summary || "(none yet)"}
-
-CONVERSATION HISTORY (Last ${historyContext.length} completed lines):
-${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — this is the first segment)"}
-${coldStartNote}
-
-GLOSSARY (Apply if matching words are found):
-${JSON.stringify(glossaryList || [])}
-
-RAW DIALOGUE SEQUENCE TO PROCESS:
-${JSON.stringify(draftsContext)}
 
 ==================================================
 INSTRUCTIONS
@@ -214,6 +191,31 @@ Prefer preserving uncertain words over guessing.
 The output must preserve the chronological order of the conversation.
 `;
 
+    const userContent = `
+==================================================
+INPUT DATA
+==================================================
+
+REGISTERED SPEAKERS:
+${JSON.stringify(allSpeakers || [])}
+
+MEETING CONTEXT:
+${context || "General discussion"}
+
+EARLIER CONVERSATION SUMMARY (who's who, topics discussed before the recent history below — use this to resolve speaker identity for references beyond the recent window):
+${rolling_summary || "(none yet)"}
+
+CONVERSATION HISTORY (Last ${historyContext.length} completed lines):
+${historyContext.length > 0 ? JSON.stringify(historyContext) : "(empty — this is the first segment)"}
+${coldStartNote}
+
+GLOSSARY (Apply if matching words are found):
+${JSON.stringify(glossaryList || [])}
+
+RAW DIALOGUE SEQUENCE TO PROCESS:
+${JSON.stringify(draftsContext)}
+`;
+
 
     // 4. Setup Gemini Client & Call API
     const genAI = getGeminiClient();
@@ -223,19 +225,21 @@ The output must preserve the chronological order of the conversation.
     const generationConfig = { responseMimeType: "application/json" as const, temperature: 0.15, topP: 0.85 };
     const model = genAI.getGenerativeModel({
       model: modelName,
+      systemInstruction: systemInstructionText,
       generationConfig
     });
 
     let result;
     try {
-      result = await model.generateContent(systemPrompt);
+      result = await model.generateContent(userContent);
     } catch (err) {
       console.warn(`Model ${modelName} failed, falling back to gemini-3.1-flash-lite:`, err);
       const fallbackModel = genAI.getGenerativeModel({
         model: "gemini-3.1-flash-lite",
+        systemInstruction: systemInstructionText,
         generationConfig
       });
-      result = await fallbackModel.generateContent(systemPrompt);
+      result = await fallbackModel.generateContent(userContent);
     }
 
     let responseText = result.response.text().trim();
