@@ -3352,7 +3352,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   <div className="relative w-full overflow-hidden min-h-[100px]">
                     {/* Slide 1: Original */}
                     <div
-                      className="w-full transition-opacity duration-300 ease-in-out"
+                      className="w-full"
                       style={{
                         position: rawLangMode === "original" ? "relative" : "absolute",
                         top: 0,
@@ -3376,7 +3376,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                     {/* Slide 2: Translated */}
                     <div
-                      className="w-full transition-opacity duration-300 ease-in-out"
+                      className="w-full"
                       style={{
                         position: rawLangMode === "translated" ? "relative" : "absolute",
                         top: 0,
