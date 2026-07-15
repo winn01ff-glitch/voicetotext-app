@@ -307,7 +307,7 @@ The output must preserve the chronological order of the conversation.
         correctedText: mergedOriginal,
         translatedText: mergedTranslated,
         speakerTag: firstTurn.speaker_tag,
-        speakerName: lastTx.speaker_name || (firstTurn.speaker_tag === "speaker_1" ? "Tôi" : firstTurn.speaker_tag.replace("speaker_", "Speaker ")),
+        speakerName: lastTx.speaker_name || (firstTurn.speaker_tag === "speaker_1" ? "Speaker 1" : firstTurn.speaker_tag.replace("speaker_", "Speaker ")),
         startMs: lastTx.start_ms,
         endMs: turnEndMs,
         confidence: 1.0,
@@ -323,7 +323,7 @@ The output must preserve the chronological order of the conversation.
       const turnSpeakerTag = turn.speaker_tag || "speaker_1";
       
       const speakerObj = allSpeakers?.find((s: any) => s.speaker_tag === turnSpeakerTag);
-      const speakerName = speakerObj?.display_name || (turnSpeakerTag === "speaker_1" ? "Tôi" : turnSpeakerTag.replace("speaker_", "Speaker "));
+      const speakerName = speakerObj?.display_name || (turnSpeakerTag === "speaker_1" ? "Speaker 1" : turnSpeakerTag.replace("speaker_", "Speaker "));
 
       const turnStartMs = startMsVal + step * i;
       const turnEndMs = startMsVal + step * (i + 1);

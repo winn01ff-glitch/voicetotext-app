@@ -952,7 +952,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[tag] = colors[existingCount % colors.length];
       }
       const newColor = speakerColorsRef.current[tag] || "#cbd5e1";
-      const name = tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker ");
+      const name = tag === "speaker_1" ? "Speaker 1" : tag.replace("speaker_", "Speaker ");
 
       setSpeakers((prev) => {
         if (prev.some((s) => s.speaker_tag === tag)) return prev;

@@ -55,7 +55,7 @@ export default function Dashboard() {
   const [sourceLanguage, setSourceLanguage] = useState("ja");
   const [targetLanguage, setTargetLanguage] = useState("vi");
   const [expectedSpeakers, setExpectedSpeakers] = useState<{ speaker_tag: string; display_name: string; language_code: string }[]>([
-    { speaker_tag: "1", display_name: "Tôi", language_code: "ja" },
+    { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
   ]);
   const [glossary, setGlossary] = useState<{ source: string; target: string; source_language: string; target_language: string }[]>([]);
   const [openSpeakerDropdown, setOpenSpeakerDropdown] = useState<number | null>(null);
@@ -195,10 +195,10 @@ export default function Dashboard() {
         setExpectedSpeakers(JSON.parse(savedSpeakers));
       } catch (e) {
         console.error("Failed to parse speakers", e);
-        setExpectedSpeakers([{ speaker_tag: "1", display_name: "Tôi", language_code: "ja" }]);
+        setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" }]);
       }
     } else {
-      setExpectedSpeakers([{ speaker_tag: "1", display_name: "Tôi", language_code: "ja" }]);
+      setExpectedSpeakers([{ speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" }]);
     }
 
     // Load saved glossary
@@ -809,7 +809,7 @@ export default function Dashboard() {
     setSourceLanguage("auto");
     setTargetLanguage("vi");
     setExpectedSpeakers([
-      { speaker_tag: "1", display_name: "Tôi", language_code: "ja" },
+      { speaker_tag: "speaker_1", display_name: "Speaker 1", language_code: "ja" },
     ]);
     setGlossary([]);
     setEchoCancellation(true);

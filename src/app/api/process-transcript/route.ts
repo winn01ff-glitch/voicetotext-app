@@ -62,7 +62,7 @@ export async function POST(request: Request) {
           .insert({
             meeting_id,
             speaker_tag,
-            display_name: speaker_tag === "speaker_0" ? "Tôi" : speaker_tag.replace("speaker_", "Speaker "),
+            display_name: speaker_tag === "speaker_1" ? "Speaker 1" : speaker_tag.replace("speaker_", "Speaker "),
             color_hex: "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0"),
           })
           .select().single();
@@ -265,7 +265,7 @@ Return VALID JSON ONLY. No markdown, no explanation.
           correctedText: mergedText,
           translatedText: block.translated_text,
           speakerTag: blockSpeakerTag,
-          speakerName: blockResolvedSpeaker?.display_name || (blockSpeakerTag === "speaker_0" ? "Tôi" : blockSpeakerTag.replace("speaker_", "Speaker ")),
+          speakerName: blockResolvedSpeaker?.display_name || (blockSpeakerTag === "speaker_1" ? "Speaker 1" : blockSpeakerTag.replace("speaker_", "Speaker ")),
         });
 
         isFirstBlockMerged = true;
@@ -299,7 +299,7 @@ Return VALID JSON ONLY. No markdown, no explanation.
             correctedText: block.text,
             translatedText: block.translated_text,
             speakerTag: blockSpeakerTag,
-            speakerName: blockResolvedSpeaker?.display_name || (blockSpeakerTag === "speaker_0" ? "Tôi" : blockSpeakerTag.replace("speaker_", "Speaker ")),
+            speakerName: blockResolvedSpeaker?.display_name || (blockSpeakerTag === "speaker_1" ? "Speaker 1" : blockSpeakerTag.replace("speaker_", "Speaker ")),
           });
         }
       }

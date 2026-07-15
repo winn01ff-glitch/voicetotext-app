@@ -48,13 +48,15 @@ export async function POST(request: Request) {
     // 2. Fetch or create speakers and insert transcripts
     const { data: existingSpeakers } = await supabase
       .from("speakers")
-      .select("id, speaker_tag")
+      .select("id, speaker_tag, display_name")
       .eq("meeting_id", meeting_id);
 
     const speakerTagToId: Record<string, string> = {};
+    const speakerTagToName: Record<string, string> = {};
     if (existingSpeakers) {
       existingSpeakers.forEach((s: any) => {
         speakerTagToId[s.speaker_tag] = s.id;
+        speakerTagToName[s.speaker_tag] = s.display_name;
       });
     }
 
@@ -63,10 +65,11 @@ export async function POST(request: Request) {
       new Set((transcripts || []).map((t: any) => t.speakerTag).filter(Boolean))
     );
 
-    const speakerTagToName: Record<string, string> = {};
     for (const tag of uniqueSpeakerTags as string[]) {
-      const name = tag === "speaker_1" ? "Tôi" : tag.replace("speaker_", "Speaker ");
-      speakerTagToName[tag] = name;
+      if (!speakerTagToName[tag]) {
+        speakerTagToName[tag] = tag === "speaker_1" ? "Speaker 1" : tag.replace("speaker_", "Speaker ");
+      }
+      const name = speakerTagToName[tag];
       if (!speakerTagToId[tag]) {
         const { data: newSpeaker } = await supabase
           .from("speakers")
@@ -78,7 +81,10 @@ export async function POST(request: Request) {
           })
           .select()
           .single();
-        if (newSpeaker) speakerTagToId[tag] = newSpeaker.id;
+        if (newSpeaker) {
+          speakerTagToId[tag] = newSpeaker.id;
+          speakerTagToName[tag] = newSpeaker.display_name;
+        }
       }
     }
 
