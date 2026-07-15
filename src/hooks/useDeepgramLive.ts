@@ -65,6 +65,7 @@ export function useDeepgramLive({
   const reconnectCountRef = useRef<number>(0);
   const maxReconnects = 5;
   const isIntentionalStop = useRef<boolean>(false);
+  const lastFinalWordStartRef = useRef<number>(-1);
 
   const onTranscriptRef = useRef(onTranscript);
   useEffect(() => {
@@ -244,6 +245,7 @@ export function useDeepgramLive({
       return;
     }
     isIntentionalStop.current = false;
+    lastFinalWordStartRef.current = -1;
     audioQueueRef.current = []; // Clear any residual queue
     if (isFirstStartRef.current) {
       recordedChunksRef.current = [];
@@ -322,14 +324,41 @@ export function useDeepgramLive({
             const isFinal = data.is_final;
             const words = data.channel.alternatives[0].words || [];
             
+            let filteredTranscript = transcript;
+            let filteredWords = words;
+
+            if (isFinal && words.length > 0) {
+              // Lọc các từ đã được xử lý ở các segment final trước để tránh trùng lặp
+              filteredWords = words.filter(
+                (w: any) => w.start > lastFinalWordStartRef.current + 0.01
+              );
+
+              if (filteredWords.length === 0) {
+                // Toàn bộ từ trong segment này đã được xử lý trước đó, bỏ qua để tránh trùng
+                return;
+              }
+
+              // Cập nhật mốc start lớn nhất đã xử lý
+              const maxStart = Math.max(...filteredWords.map((w: any) => w.start));
+              lastFinalWordStartRef.current = maxStart;
+
+              // Tái dựng lại đoạn text từ các từ chưa bị trùng lặp
+              // ja, zh, ko không dùng dấu cách làm phân tách từ
+              const isNoSpaceLang = ["ja", "zh", "ko"].includes(sourceLanguage || "");
+              const joinChar = isNoSpaceLang ? "" : " ";
+              filteredTranscript = filteredWords
+                .map((w: any) => w.punctuated_word || w.word)
+                .join(joinChar);
+            }
+
             // Calculate predominant speaker tag
             let speakerTag = "speaker_1";
-            if (words.length > 0) {
+            if (filteredWords.length > 0) {
               const speakerCounts: Record<number, number> = {};
               let maxCount = 0;
               let predominantSpeaker = 0;
 
-              for (const word of words) {
+              for (const word of filteredWords) {
                 if (typeof word.speaker === "number") {
                   speakerCounts[word.speaker] = (speakerCounts[word.speaker] || 0) + 1;
                   if (speakerCounts[word.speaker] > maxCount) {
@@ -343,15 +372,15 @@ export function useDeepgramLive({
 
             let startMs = 0;
             let endMs = 0;
-            if (words.length > 0) {
-              startMs = Math.round(words[0].start * 1000);
-              endMs = Math.round(words[words.length - 1].end * 1000);
+            if (filteredWords.length > 0) {
+              startMs = Math.round(filteredWords[0].start * 1000);
+              endMs = Math.round(filteredWords[filteredWords.length - 1].end * 1000);
             }
 
             const confidence = data.channel.alternatives[0].confidence || 1.0;
 
             onTranscriptRef.current({
-              text: transcript,
+              text: filteredTranscript,
               isFinal,
               speechFinal: data.speech_final || false,
               speakerTag,
