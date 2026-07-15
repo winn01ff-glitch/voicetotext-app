@@ -80,7 +80,7 @@ export async function putAudio(meetingId: string, blob: Blob): Promise<void> {
 }
 
 // Lấy Blob audio đã cache (hoặc null nếu không có / đã bị purge).
-async function getAudioBlob(meetingId: string): Promise<Blob | null> {
+export async function getAudioBlob(meetingId: string): Promise<Blob | null> {
   if (typeof window === "undefined" || !meetingId) return null;
   await ensureSessionFresh();
   const db = await openDb();

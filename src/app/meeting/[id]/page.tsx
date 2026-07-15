@@ -1194,6 +1194,23 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "End meeting error");
 
+      // Upload file âm thanh ghi âm live lên server để lưu trữ lâu dài
+      try {
+        const { getAudioBlob } = await import("@/lib/audio-cache");
+        const audioBlob = await getAudioBlob(meetingId);
+        if (audioBlob) {
+          const audioFormData = new FormData();
+          audioFormData.append("audio", audioBlob, `${meetingId}.webm`);
+          await fetch(`/api/meetings/${meetingId}/audio`, {
+            method: "POST",
+            body: audioFormData,
+          });
+          console.log("[EndMeeting] Uploaded live audio to server successfully!");
+        }
+      } catch (audioErr) {
+        console.warn("[EndMeeting] Failed to upload audio to server:", audioErr);
+      }
+
       setSummaryProgress(100);
       clearInterval(interval);
 

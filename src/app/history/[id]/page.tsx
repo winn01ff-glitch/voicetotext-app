@@ -929,8 +929,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
           objectUrl = url;
           setAudioBlobUrl(url);
         } else {
-          // If not cached in IndexedDB, try to fetch from server static audio (e.g., YouTube)
-          const serverAudioUrl = `/audio/${meetingId}.webm`;
+          // If not cached in IndexedDB, try to fetch from server
+          const serverAudioUrl = `/api/meetings/${meetingId}/audio`;
           fetch(serverAudioUrl)
             .then(async (res) => {
               if (res.ok && !cancelled) {

@@ -71,6 +71,22 @@ export async function POST(request: Request) {
 
     const meetingId = meeting.id;
 
+    // Lưu file âm thanh upload lên server disk tại public/audio/[meetingId].[ext]
+    try {
+      const fs = require("fs");
+      const path = require("path");
+      const ext = file.name.split(".").pop() || "mp3";
+      const audioDir = path.join(process.cwd(), "public", "audio");
+      if (!fs.existsSync(audioDir)) {
+        fs.mkdirSync(audioDir, { recursive: true });
+      }
+      const audioPath = path.join(audioDir, `${meetingId}.${ext}`);
+      fs.writeFileSync(audioPath, buffer);
+      console.log(`[Upload Audio] Saved file cache to server: ${audioPath}`);
+    } catch (saveErr) {
+      console.error("[Upload Audio] Failed to save audio file to disk:", saveErr);
+    }
+
     // === 4. Tạo speakers ===
     const defaultColors = ["#3b82f6", "#10b981", "#a855f7", "#f59e0b", "#ec4899", "#14b8a6"];
     if (speakers && speakers.length > 0) {
