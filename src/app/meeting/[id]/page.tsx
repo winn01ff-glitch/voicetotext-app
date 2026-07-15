@@ -272,7 +272,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     setChunkSize(parseInt(localStorage.getItem("meeting_chunk_size") || "100"));
     setEndpointing(parseInt(localStorage.getItem("meeting_endpointing") || "3000"));
     setTranslationDelay(parseInt(localStorage.getItem("meeting_translation_delay") || "5000"));
-    setDiarizationEnabled(localStorage.getItem("meeting_diarization_enabled") !== "false");
+    setDiarizationEnabled(true);
 
     fetchMeetingDetails();
   }, []);
@@ -855,7 +855,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     localStorage.setItem("meeting_echo_cancellation", "true");
     localStorage.setItem("meeting_noise_suppression", "true");
     localStorage.setItem("meeting_auto_gain_control", "true");
-    localStorage.setItem("meeting_diarization_enabled", "true");
     addToast("Cài đặt", "Đã khôi phục thiết lập mặc định.", "success");
   };
 
@@ -1848,7 +1847,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       onChange={(e) => {
                         const val = e.target.checked;
                         setDiarizationEnabled(val);
-                        localStorage.setItem("meeting_diarization_enabled", String(val));
                       }}
                       disabled={status === "recording"}
                       className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
