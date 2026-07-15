@@ -196,6 +196,20 @@ export async function POST(request: Request) {
           .update({ file_size_bytes: audioBuffer.length })
           .eq("meeting_id", meetingId);
 
+        // Lưu cache âm thanh YouTube vào thư mục public/audio để client tải về phát lại
+        try {
+          const fs = require("fs");
+          const audioDir = path.join(process.cwd(), "public", "audio");
+          if (!fs.existsSync(audioDir)) {
+            fs.mkdirSync(audioDir, { recursive: true });
+          }
+          const audioPath = path.join(audioDir, `${meetingId}.webm`);
+          fs.writeFileSync(audioPath, audioBuffer);
+          console.log(`[YouTube Process] Saved audio cache to: ${audioPath}`);
+        } catch (saveErr) {
+          console.error("[YouTube Process] Failed to save audio file to disk:", saveErr);
+        }
+
         // Bóc băng → RAW blob, rồi xử lý AI hợp nhất + tóm tắt.
         await runPipeline(meetingId, audioBuffer, pipelineConfig);
         await enqueueAiJobs(meetingId, ["process", "summary"]);

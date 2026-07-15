@@ -921,13 +921,35 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     let cancelled = false;
     getAudioUrl(meetingId)
       .then((url) => {
-        if (!url) return;
-        if (cancelled) {
-          URL.revokeObjectURL(url);
-          return;
+        if (url) {
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          objectUrl = url;
+          setAudioBlobUrl(url);
+        } else {
+          // If not cached in IndexedDB, try to fetch from server static audio (e.g., YouTube)
+          const serverAudioUrl = `/audio/${meetingId}.webm`;
+          fetch(serverAudioUrl)
+            .then(async (res) => {
+              if (res.ok && !cancelled) {
+                const blob = await res.blob();
+                const { putAudio } = await import("@/lib/audio-cache");
+                await putAudio(meetingId, blob);
+                
+                // Get the URL again to make sure it's consistent
+                const cachedUrl = await getAudioUrl(meetingId);
+                if (cachedUrl && !cancelled) {
+                  objectUrl = cachedUrl;
+                  setAudioBlobUrl(cachedUrl);
+                }
+              }
+            })
+            .catch((err) => {
+              console.warn("Không tìm thấy audio trên server hoặc lỗi tải file:", err);
+            });
         }
-        objectUrl = url;
-        setAudioBlobUrl(url);
       })
       .catch((err) => {
         console.warn("Không thể nạp audio đã cache:", err);
