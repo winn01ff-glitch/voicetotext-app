@@ -1179,6 +1179,28 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }, 1500);
 
     try {
+      // 1. Tải file audio từ IndexedDB (được save khi stopRecording chạy) để upload lên server
+      // Chúng ta upload TRƯỚC khi gọi end-meeting để backend có file chạy pipeline xử lý lại
+      try {
+        const { getAudioBlob } = await import("@/lib/audio-cache");
+        const audioBlob = await getAudioBlob(meetingId);
+        if (audioBlob) {
+          const audioFormData = new FormData();
+          audioFormData.append("audio", audioBlob, `${meetingId}.webm`);
+          const uploadRes = await fetch(`/api/meetings/${meetingId}/audio`, {
+            method: "POST",
+            body: audioFormData,
+          });
+          if (uploadRes.ok) {
+            console.log("[EndMeeting] Uploaded live audio to server successfully!");
+          } else {
+            console.warn("[EndMeeting] Failed to upload audio:", uploadRes.statusText);
+          }
+        }
+      } catch (audioErr) {
+        console.warn("[EndMeeting] Error processing audio upload:", audioErr);
+      }
+
       const finalizedTranscripts = transcriptsRef.current.filter((t) => t.status !== "draft" && t.status !== "processing" && t.status !== "Dịch lỗi - Thử lại");
       const res = await fetch("/api/end-meeting", {
         method: "POST",
@@ -1193,23 +1215,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "End meeting error");
-
-      // Upload file âm thanh ghi âm live lên server để lưu trữ lâu dài
-      try {
-        const { getAudioBlob } = await import("@/lib/audio-cache");
-        const audioBlob = await getAudioBlob(meetingId);
-        if (audioBlob) {
-          const audioFormData = new FormData();
-          audioFormData.append("audio", audioBlob, `${meetingId}.webm`);
-          await fetch(`/api/meetings/${meetingId}/audio`, {
-            method: "POST",
-            body: audioFormData,
-          });
-          console.log("[EndMeeting] Uploaded live audio to server successfully!");
-        }
-      } catch (audioErr) {
-        console.warn("[EndMeeting] Failed to upload audio to server:", audioErr);
-      }
 
       setSummaryProgress(100);
       clearInterval(interval);

@@ -1,5 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import fs from "fs";
+import path from "path";
+import { runPipeline, PipelineConfig } from "@/lib/ai/pipeline";
 
 import { runAIJobsQueue } from "@/lib/ai/queueWorker";
 import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
@@ -19,7 +22,7 @@ export async function POST(request: Request) {
     // 0. Fetch meeting configuration first to get languages
     const { data: meeting, error: meetingError } = await supabase
       .from("meetings")
-      .select("target_language, source_language")
+      .select("title, meeting_context, target_language, source_language")
       .eq("id", meeting_id)
       .single();
 
@@ -45,6 +48,69 @@ export async function POST(request: Request) {
       .update({ status: "Generating" })
       .eq("meeting_id", meeting_id);
 
+    // Kiểm tra xem file âm thanh ghi âm live có tồn tại trên server không
+    const audioDir = path.join(process.cwd(), "public", "audio");
+    let audioFile: string | undefined = undefined;
+    if (fs.existsSync(audioDir)) {
+      const files = fs.readdirSync(audioDir);
+      audioFile = files.find((f) => f.startsWith(`${meeting_id}.`));
+    }
+
+    if (audioFile) {
+      console.log(`[End Meeting] Audio file found: ${audioFile}. Running reprocess pipeline...`);
+      const audioBuffer = fs.readFileSync(path.join(audioDir, audioFile));
+
+      // Fetch speakers and glossary từ Supabase để chuyển cấu hình vào pipeline
+      const { data: dbSpeakers } = await supabase
+        .from("speakers")
+        .select("speaker_tag, display_name, language_code, color_hex")
+        .eq("meeting_id", meeting_id);
+
+      const { data: dbGlossary } = await supabase
+        .from("glossary")
+        .select("source, target, source_language, target_language")
+        .eq("meeting_id", meeting_id);
+
+      const pipelineConfig: PipelineConfig = {
+        title: meeting.title || "Live Meeting",
+        meetingContext: meeting.meeting_context || "general",
+        sourceLanguage: meeting.source_language || "auto",
+        targetLanguage: meeting.target_language,
+        speakers: dbSpeakers ? dbSpeakers.map((s: any) => ({
+          speaker_tag: s.speaker_tag,
+          display_name: s.display_name,
+          language_code: s.language_code || "auto",
+          color_hex: s.color_hex,
+        })) : [],
+        glossary: dbGlossary ? dbGlossary.map((g: any) => ({
+          source: g.source,
+          target: g.target,
+          source_language: g.source_language || "auto",
+          target_language: g.target_language || meeting.target_language,
+        })) : [],
+      };
+
+      // Chạy pipeline xử lý lại ngầm
+      after(async () => {
+        try {
+          // Bóc băng lại -> lưu RAW deepgram
+          await runPipeline(meeting_id, audioBuffer, pipelineConfig);
+          // Đăng ký job process (AI phân vai + dịch thuật chất lượng cao) & summary (tóm tắt)
+          await enqueueAiJobs(meeting_id, ["process", "summary"]);
+          // Chạy hàng đợi job
+          await runAIJobsQueue(meeting_id);
+        } catch (pipelineErr) {
+          console.error(`[End Meeting Reprocess Error] for meeting ${meeting_id}:`, pipelineErr);
+        }
+      });
+
+      return NextResponse.json({
+        status: "success",
+        reprocessed: true,
+      });
+    }
+
+    // --- CƠ CHẾ DỰ PHÒNG (FALLBACK): KHÔNG CÓ FILE ÂM THANH -> LƯU THẲNG LIVE TRANSCRIPTS ---
     // 2. Fetch or create speakers and insert transcripts
     const { data: existingSpeakers } = await supabase
       .from("speakers")
