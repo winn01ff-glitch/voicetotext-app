@@ -849,13 +849,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     setEchoCancellation(true);
     setNoiseSuppression(true);
     setAutoGainControl(true);
-    setDiarizationEnabled(false);
+    setDiarizationEnabled(true);
     localStorage.setItem("meeting_endpointing", "3000");
     localStorage.setItem("meeting_translation_delay", "5000");
     localStorage.setItem("meeting_echo_cancellation", "true");
     localStorage.setItem("meeting_noise_suppression", "true");
     localStorage.setItem("meeting_auto_gain_control", "true");
-    localStorage.setItem("meeting_diarization_enabled", "false");
+    localStorage.setItem("meeting_diarization_enabled", "true");
     addToast("Cài đặt", "Đã khôi phục thiết lập mặc định.", "success");
   };
 
