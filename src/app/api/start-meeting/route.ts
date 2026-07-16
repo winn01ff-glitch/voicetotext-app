@@ -30,7 +30,11 @@ export async function POST(request: Request) {
 
     const meetingId = meeting.id;
 
-    // 2. Insert speakers
+    // 2-4. Speakers / glossary / draft summary chỉ cần meetingId, không phụ thuộc
+    // lẫn nhau — chạy song song để giảm số round-trip tuần tự tới Supabase
+    // (đây là phần chiếm phần lớn thời gian chờ khi bấm "Vào phòng họp").
+    const parallelInserts: PromiseLike<{ error: any }>[] = [];
+
     if (speakers && speakers.length > 0) {
       // Assign random color if not provided
       const defaultColors = ["#3b82f6", "#10b981", "#a855f7", "#f59e0b", "#ec4899", "#14b8a6"];
@@ -42,14 +46,9 @@ export async function POST(request: Request) {
         color_hex: sp.color_hex || defaultColors[idx % defaultColors.length],
       }));
 
-      const { error: speakersError } = await supabase
-        .from("speakers")
-        .insert(speakersToInsert);
-
-      if (speakersError) throw speakersError;
+      parallelInserts.push(supabase.from("speakers").insert(speakersToInsert));
     }
 
-    // 3. Insert glossary
     if (glossary && glossary.length > 0) {
       const glossaryToInsert = glossary.map((g: any) => ({
         meeting_id: meetingId,
@@ -59,24 +58,22 @@ export async function POST(request: Request) {
         target_language: g.target_language || target_language,
       }));
 
-      const { error: glossaryError } = await supabase
-        .from("glossary")
-        .insert(glossaryToInsert);
-
-      if (glossaryError) throw glossaryError;
+      parallelInserts.push(supabase.from("glossary").insert(glossaryToInsert));
     }
 
-    // 4. Create draft AI summary
-    const { error: summaryError } = await supabase
-      .from("ai_summaries")
-      .insert({
+    parallelInserts.push(
+      supabase.from("ai_summaries").insert({
         meeting_id: meetingId,
         status: "Draft",
         executive_summary: "",
         decisions: [],
-      });
+      })
+    );
 
-    if (summaryError) throw summaryError;
+    const insertResults = await Promise.all(parallelInserts);
+    for (const r of insertResults) {
+      if (r.error) throw r.error;
+    }
 
     return NextResponse.json({
       status: "success",

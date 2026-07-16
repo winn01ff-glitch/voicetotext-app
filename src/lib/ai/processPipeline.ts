@@ -431,7 +431,10 @@ export async function processMeetingTranscript(
   meetingId: string,
   config: PipelineConfig,
   shouldCancel?: () => Promise<boolean>,
-  mode?: string | null
+  mode?: string | null,
+  // Báo tiến trình per-chunk (chunksDone/chunkTotal) — caller dùng để cập nhật
+  // meetings.progress cho UI hiển thị % thật trong giai đoạn AI.
+  onProgress?: (chunksDone: number, chunkTotal: number) => void | Promise<void>
 ): Promise<ProcessedLine[]> {
   const supabase = await createServerSupabaseClient();
 
@@ -474,6 +477,19 @@ export async function processMeetingTranscript(
     cacheMap.set(row.chunk_index, { hash: row.words_hash, result: row.result });
   });
 
+  // Đếm chunk đã xong (các chunk chạy song song, hoàn thành không theo thứ tự)
+  let chunksDone = 0;
+  const reportChunkDone = async () => {
+    chunksDone++;
+    if (onProgress) {
+      try {
+        await onProgress(chunksDone, chunks.length);
+      } catch (err) {
+        console.warn("[processMeetingTranscript] onProgress error (ignored):", err);
+      }
+    }
+  };
+
   const chunkResults = await mapWithConcurrency(chunks, CONCURRENCY, async (chunk, idx) => {
     if (shouldCancel && (await shouldCancel())) throw new Error("CANCELLED");
 
@@ -481,6 +497,7 @@ export async function processMeetingTranscript(
     const cached = cacheMap.get(idx);
     if (cached && cached.hash === currentHash) {
       console.log(`[processMeetingTranscript] Cache HIT for chunk ${idx}/${chunks.length}`);
+      await reportChunkDone();
       return cached.result;
     }
 
@@ -496,6 +513,7 @@ export async function processMeetingTranscript(
       created_at: new Date().toISOString()
     }, { onConflict: "meeting_id,chunk_index" });
 
+    await reportChunkDone();
     return result;
   });
 

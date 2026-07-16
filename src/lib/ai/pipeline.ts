@@ -116,6 +116,10 @@ export interface PipelineProgress {
   chunk_current?: number;
   chunk_total?: number;
   message: string;
+  // Giai đoạn hiện tại cho UI 4 bước: upload | transcribe | process | summary
+  stage?: string;
+  // ISO timestamp của lần cập nhật — client dùng để tính tốc độ/ETA
+  updated_at?: string;
 }
 
 /** Checkpoint để resume pipeline */
@@ -154,17 +158,32 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const DEFAULT_MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000; // 2s → 4s → 8s exponential backoff
 
-/** Status ↔ % progress mapping */
+/** Status ↔ % progress mapping — thang % TOÀN HÀNH TRÌNH (0-100):
+ *  upload 0-5 → transcribe 5-35 → process/AI 35-85 → summary 85-100.
+ *  Các bước cũ (correcting...saving) giữ để tương thích resume dữ liệu cũ. */
 const STATUS_PERCENT: Record<PipelineStep, number> = {
-  uploading: 2,
+  uploading: 3,
   transcribing: 10,
-  correcting: 25,
-  diarizing: 40,
-  checking: 55,
+  correcting: 40,
+  diarizing: 50,
+  checking: 60,
   translating: 70,
-  summarizing: 85,
-  extracting: 92,
-  saving: 98,
+  summarizing: 88,
+  extracting: 93,
+  saving: 97,
+};
+
+/** Stage 4-bước cho UI từ PipelineStep */
+const STATUS_STAGE: Record<PipelineStep, string> = {
+  uploading: "upload",
+  transcribing: "transcribe",
+  correcting: "process",
+  diarizing: "process",
+  checking: "process",
+  translating: "process",
+  summarizing: "summary",
+  extracting: "summary",
+  saving: "summary",
 };
 
 /** Label tiếng Việt cho mỗi bước */
@@ -298,6 +317,8 @@ export async function updateProgress(
   const progress: PipelineProgress = {
     percent,
     message,
+    stage: status in STATUS_STAGE ? STATUS_STAGE[status as PipelineStep] : status === "completed" ? "done" : undefined,
+    updated_at: new Date().toISOString(),
     ...(chunkCurrent !== undefined && { chunk_current: chunkCurrent }),
     ...(chunkTotal !== undefined && { chunk_total: chunkTotal }),
   };
@@ -793,7 +814,12 @@ export async function runPipeline(
     // RAW xong → chuyển sang giai đoạn xử lý AI. Worker (job process/summary) sẽ set "completed".
     await supabase.from("meetings").update({
       status: "processing",
-      progress: { percent: 40, message: "Đã bóc băng, đang xử lý AI..." },
+      progress: {
+        percent: 35,
+        stage: "process",
+        message: "Đã bóc băng xong, chuẩn bị xử lý AI...",
+        updated_at: new Date().toISOString(),
+      },
     }).eq("id", meetingId);
 
   } catch (err: any) {

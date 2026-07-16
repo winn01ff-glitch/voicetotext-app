@@ -59,6 +59,33 @@ async function getMeetingConfig(meetingId: string): Promise<PipelineConfig> {
   };
 }
 
+/** Cập nhật meetings.progress (giữ status hiện tại trừ khi truyền statusUpdate). */
+async function updateMeetingProgress(
+  meetingId: string,
+  progress: Record<string, unknown>,
+  statusUpdate?: string
+): Promise<void> {
+  const supabase = await createServerSupabaseClient();
+  const payload: Record<string, unknown> = {
+    progress: { ...progress, updated_at: new Date().toISOString() },
+  };
+  if (statusUpdate) payload.status = statusUpdate;
+  const { error } = await supabase
+    .from("meetings")
+    .update(payload)
+    .eq("id", meetingId)
+    .neq("status", "cancelled");
+  if (error) console.error(`[QueueWorker] updateMeetingProgress failed for ${meetingId}:`, error);
+}
+
+/** Các status coi là "đang trong luồng xử lý" — chỉ khi đó job hỏng mới kéo meeting sang failed. */
+const IN_FLIGHT_STATUSES = ["queued", "uploading", "transcribing", "processing"];
+
+const JOB_LABEL: Record<string, string> = {
+  process: "phân vai & dịch (AI)",
+  summary: "tóm tắt",
+};
+
 /**
  * Auto-retry với exponential backoff. Trả về true nếu job sẽ retry, false nếu hỏng hẳn.
  */
@@ -81,6 +108,13 @@ async function handleJobError(job: any, errorMsg: string): Promise<boolean> {
       })
       .eq("id", job.id);
     console.log(`[QueueWorker] Job ${job.id} failed, retrying at ${nextRetryAt}. Error: ${errorMsg}`);
+
+    // Báo cho UI biết đang tự thử lại (giữ status/percent hiện tại)
+    const { data: m } = await supabase.from("meetings").select("progress").eq("id", job.meeting_id).single();
+    await updateMeetingProgress(job.meeting_id, {
+      ...(m?.progress || {}),
+      message: `Gặp lỗi tạm thời ở bước ${JOB_LABEL[job.type] || job.type}, tự thử lại (lần ${retryCount}/${maxRetries}) sau ${delaySeconds}s...`,
+    });
     return true;
   }
 
@@ -89,6 +123,22 @@ async function handleJobError(job: any, errorMsg: string): Promise<boolean> {
     .update({ status: "failed", progress: 0, error: `[Failed after ${maxRetries} retries] ${errorMsg}` })
     .eq("id", job.id);
   console.error(`[QueueWorker] Job ${job.id} permanently failed. Error: ${errorMsg}`);
+
+  // Job hỏng hẳn: nếu meeting đang trong luồng xử lý → chuyển failed để UI báo đúng
+  // (trước đây meeting kẹt "processing" vĩnh viễn). Meeting đã completed (re-run
+  // summary/process từ trang chi tiết) thì giữ nguyên, chỉ ghi message.
+  const { data: meeting } = await supabase
+    .from("meetings")
+    .select("status, progress")
+    .eq("id", job.meeting_id)
+    .single();
+  const shortErr = String(errorMsg).slice(0, 180);
+  if (meeting && IN_FLIGHT_STATUSES.includes(meeting.status)) {
+    await updateMeetingProgress(job.meeting_id, {
+      ...(meeting.progress || {}),
+      message: `Xử lý thất bại ở bước ${JOB_LABEL[job.type] || job.type}: ${shortErr}`,
+    }, "failed");
+  }
   return false;
 }
 
@@ -133,7 +183,10 @@ export async function runAIJobsQueue(meetingId: string): Promise<void> {
       // Hàng đợi cạn bình thường → đánh dấu cuộc họp hoàn tất.
       await supabase
         .from("meetings")
-        .update({ status: "completed", progress: { percent: 100, message: "Hoàn thành!" } })
+        .update({
+          status: "completed",
+          progress: { percent: 100, stage: "done", message: "Hoàn thành!", updated_at: new Date().toISOString() },
+        })
         .eq("id", meetingId)
         .neq("status", "cancelled");
       break;
@@ -190,11 +243,43 @@ export async function runAIJobsQueue(meetingId: string): Promise<void> {
 
 async function executeProcessJob(job: any, config: PipelineConfig) {
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
+  const supabase = await createServerSupabaseClient();
 
-  await processMeetingTranscript(job.meeting_id, config, () => checkJobCancelled(job.id), job.mode);
+  await updateMeetingProgress(job.meeting_id, {
+    percent: 36,
+    stage: "process",
+    message: "Đang phân vai & dịch (AI)...",
+  });
+
+  // Giai đoạn process chiếm dải 35→82%; % tăng thật theo từng chunk Gemini xong.
+  await processMeetingTranscript(
+    job.meeting_id,
+    config,
+    () => checkJobCancelled(job.id),
+    job.mode,
+    async (chunksDone, chunkTotal) => {
+      const percent = 35 + Math.round((chunksDone / Math.max(1, chunkTotal)) * 47);
+      await updateMeetingProgress(job.meeting_id, {
+        percent,
+        stage: "process",
+        chunk_current: chunksDone,
+        chunk_total: chunkTotal,
+        message: `Đang phân vai & dịch (AI) — phần ${chunksDone}/${chunkTotal}...`,
+      });
+      await supabase
+        .from("ai_jobs")
+        .update({ progress: Math.round((chunksDone / Math.max(1, chunkTotal)) * 100) })
+        .eq("id", job.id);
+    }
+  );
 
   // Transcript đã ở trạng thái xử lý xong → tạo embeddings cho RAG (Ask AI).
   if (!(await checkJobCancelled(job.id))) {
+    await updateMeetingProgress(job.meeting_id, {
+      percent: 83,
+      stage: "process",
+      message: "Đang tạo chỉ mục tìm kiếm (Ask AI)...",
+    });
     await generateEmbeddings(job.meeting_id);
   }
 }
@@ -303,6 +388,12 @@ ${JSON.stringify(chunk.map((t) => t.original_text || ""))}
 async function executeSummaryJob(job: any, config: PipelineConfig) {
   if (await checkJobCancelled(job.id)) throw new Error("CANCELLED");
   const supabase = await createServerSupabaseClient();
+
+  await updateMeetingProgress(job.meeting_id, {
+    percent: 88,
+    stage: "summary",
+    message: "Đang tạo tóm tắt & trích xuất công việc...",
+  });
 
   const transcripts = await getProcessedTranscripts(job.meeting_id);
   await ensureTranscriptsTranslated(job.meeting_id, transcripts, config);

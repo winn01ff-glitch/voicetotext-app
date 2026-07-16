@@ -1972,7 +1972,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const processingStatuses = [
     "queued", "uploading", "transcribing",
   ];
-  const isInPipeline = meeting && processingStatuses.includes(meeting.status);
+  // Upload/YouTube: chưa có nội dung gì để xem cho tới khi AI xử lý xong → ở lại
+  // màn tiến trình suốt cả giai đoạn "processing" (job process + summary), tạo
+  // một hành trình % liền mạch 0→100. Live meeting: đã có transcript để đọc nên
+  // giai đoạn "processing" vẫn vào thẳng trang nội dung như cũ.
+  const isInPipeline = meeting && (
+    processingStatuses.includes(meeting.status) ||
+    (meeting.status === "processing" && meeting.source_type !== "live")
+  );
   const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status) && meeting.source_type !== "live";
 
   // Show processing UI for pipeline meetings
@@ -2146,7 +2153,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     <button onClick={() => { setActiveTab("transcript"); setTranscriptVer("ai"); }} className={btnClass(0)}>
                       <Sparkles className="w-3.5 h-3.5 shrink-0" />
                       <span>Hội thoại</span>
-                      <span className="text-[11px] opacity-60">({filteredReprocessedTranscripts.length})</span>
                     </button>
                     <button onClick={() => setActiveTab("summary")} className={btnClass(1)}>
                       <List className="w-3.5 h-3.5 shrink-0" />
@@ -3283,10 +3289,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 pt-3.5 px-5 pb-5 sm:pt-4 sm:px-6 sm:pb-6 rounded-xl shadow-sm">
                   {/* Card title */}
                   <div className="flex items-center justify-between mb-4 pb-3.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                      <FileText className="w-4.5 h-4.5 text-indigo-500" />
-                      <span>Bản ghi gốc</span>
-                      <span className="text-xs font-normal opacity-60">({filteredTranscripts.length} đoạn)</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      <div className="flex items-center gap-2">
+                        <FileText className="w-4.5 h-4.5 text-indigo-500" />
+                        <span>Bản ghi gốc</span>
+                      </div>
+                      <span className="text-[10px] sm:text-xs font-normal opacity-60 pl-6 sm:pl-0">({filteredTranscripts.length} đoạn)</span>
                     </div>
                     
                     <div className="flex items-center space-x-3">
@@ -3467,17 +3475,19 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-8 rounded-xl shadow-sm text-center space-y-2">
                 <Sparkles className="w-6 h-6 text-slate-300 dark:text-slate-600 mx-auto" />
                 <p className="text-xs text-slate-400 italic max-w-md mx-auto">
-                  Chưa có dữ liệu phân tích. Hãy bấm vào nút <strong>"Tùy chỉnh AI"</strong> ở phía trên để bắt đầu xử lý cuộc họp.
+                  Chưa có dữ liệu phân tích.
                 </p>
               </div>
             ) : (
               <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:px-6 sm:pb-6 sm:pt-4 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
                 {/* Card title + điều khiển riêng của tab Hội thoại (Phân vai / Xử lý lại) */}
                 <div className="flex items-center justify-between gap-2 pb-2.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                    <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
-                    <span>Hội thoại đã xử lý</span>
-                    <span className="text-xs font-normal opacity-60">({filteredReprocessedTranscripts.length} đoạn)</span>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare className="w-4.5 h-4.5 text-blue-500" />
+                      <span>Hội thoại đã xử lý</span>
+                    </div>
+                    <span className="text-[10px] sm:text-xs font-normal opacity-60 pl-6 sm:pl-0">({filteredReprocessedTranscripts.length} đoạn)</span>
                   </div>
                   {(() => {
                     const busy = isRediarizing || isReprocessingLocal || aiJobs.some((j) => j.status === "processing" || j.status === "queued");

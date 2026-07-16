@@ -3,28 +3,65 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  CheckCircle2, Circle, Loader2, XCircle, Ban, Play, 
-  Upload, Mic, FileSearch, Languages, Brain, ListChecks,
-  Save, AlertTriangle, RotateCcw
+  CheckCircle2, Circle, Loader2, XCircle, Ban, Play,
+  Upload, Mic, Languages, ListChecks, AlertTriangle, RotateCcw, Clock,
 } from "lucide-react";
 
-const PIPELINE_STEPS = [
-  { key: "uploading", label: "Tải âm thanh", icon: Upload, chunked: false },
-  { key: "transcribing", label: "Bóc băng giọng nói (AI)", icon: Mic, chunked: true },
+// ================================================================
+// 4 giai đoạn của hành trình xử lý, khớp thang % backend ghi vào
+// meetings.progress: upload 0-5 → transcribe 5-35 → process 35-85 → summary 85-100
+// ================================================================
+const STEPS = [
+  { key: "upload", label: "Tải âm thanh", icon: Upload, from: 0, to: 5 },
+  { key: "transcribe", label: "Bóc băng giọng nói (Deepgram)", icon: Mic, from: 5, to: 35 },
+  { key: "process", label: "Phân vai & dịch (AI)", icon: Languages, from: 35, to: 85 },
+  { key: "summary", label: "Tóm tắt & công việc (AI)", icon: ListChecks, from: 85, to: 100 },
 ] as const;
+
+type StepKey = (typeof STEPS)[number]["key"];
+
+interface ProgressData {
+  percent?: number;
+  chunk_current?: number;
+  chunk_total?: number;
+  message?: string;
+  stage?: string;
+  updated_at?: string;
+}
 
 interface PipelineProgressProps {
   meetingId: string;
   initialStatus: string;
-  initialProgress?: {
-    percent?: number;
-    chunk_current?: number;
-    chunk_total?: number;
-    message?: string;
-  } | null;
+  initialProgress?: ProgressData | null;
   onCompleted: () => void;
   onCancel: () => void;
   onResume: () => void;
+}
+
+const TERMINAL_STATUSES = ["ready", "completed", "failed", "cancelled"];
+
+// Suy ra % toàn hành trình từ status + progress (tương thích cả dữ liệu cũ)
+function deriveServerPercent(status: string, progress: ProgressData | null): number {
+  if (status === "ready" || status === "completed") return 100;
+  const p = typeof progress?.percent === "number" ? progress.percent : 0;
+  if (status === "queued") return Math.max(1, p);
+  if (status === "uploading") return Math.max(3, Math.min(p, 5));
+  if (status === "transcribing") return Math.max(8, Math.min(Math.max(p, 8), 34));
+  // processing & các status khác: tin percent backend (35-100)
+  return p;
+}
+
+// Suy ra giai đoạn hiện tại
+function deriveStage(status: string, progress: ProgressData | null, percent: number): StepKey {
+  const stage = progress?.stage;
+  if (stage === "upload" || stage === "transcribe" || stage === "process" || stage === "summary") {
+    return stage;
+  }
+  if (status === "uploading" || status === "queued") return "upload";
+  if (status === "transcribing") return "transcribe";
+  // Fallback theo %
+  const step = STEPS.find((s) => percent < s.to) || STEPS[STEPS.length - 1];
+  return step.key;
 }
 
 export default function PipelineProgress({
@@ -37,46 +74,119 @@ export default function PipelineProgress({
 }: PipelineProgressProps) {
   const supabase = createClient();
   const [status, setStatus] = useState(initialStatus);
-  const [progress, setProgress] = useState(initialProgress || null);
+  const [progress, setProgress] = useState<ProgressData | null>(initialProgress || null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Subscribe to Supabase Realtime
+  const serverPercent = deriveServerPercent(status, progress);
+  const isTerminalFail = status === "failed" || status === "cancelled";
+  const isDone = status === "ready" || status === "completed";
+
+  // ---- Display percent với "creep" mượt: không bao giờ lùi, tiến chậm dần về
+  // trần của giai đoạn hiện tại trong lúc chờ mốc thật tiếp theo từ server ----
+  const [displayPercent, setDisplayPercent] = useState(serverPercent);
+  const stage = deriveStage(status, progress, Math.max(serverPercent, displayPercent));
+  const stageInfo = STEPS.find((s) => s.key === stage) || STEPS[0];
+
+  useEffect(() => {
+    // Server có mốc mới cao hơn → nhảy tới; thấp hơn nhiều (retry lại từ đầu) → theo server
+    setDisplayPercent((prev) => {
+      if (serverPercent >= prev) return serverPercent;
+      if (prev - serverPercent > 10) return serverPercent; // xử lý lại từ giai đoạn trước
+      return prev;
+    });
+  }, [serverPercent]);
+
+  useEffect(() => {
+    if (isDone || isTerminalFail) return;
+    const timer = setInterval(() => {
+      setDisplayPercent((prev) => {
+        const cap = stageInfo.to - 1; // không vượt trần giai đoạn khi chưa có mốc thật
+        if (prev >= cap) return prev;
+        return Math.min(cap, prev + Math.max(0.15, (cap - prev) * 0.02));
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isDone, isTerminalFail, stageInfo.to]);
+
+  // ---- ETA: ước lượng theo tốc độ % thực tế quan sát được ----
+  const samplesRef = useRef<{ t: number; p: number }[]>([]);
+  useEffect(() => {
+    const now = Date.now();
+    const samples = samplesRef.current;
+    const last = samples[samples.length - 1];
+    if (last && serverPercent < last.p - 5) {
+      // Retry/chạy lại → reset thống kê
+      samplesRef.current = [];
+    }
+    if (!last || serverPercent !== last.p) {
+      samplesRef.current = [...samplesRef.current, { t: now, p: serverPercent }].slice(-30);
+    }
+  }, [serverPercent]);
+
+  const [etaText, setEtaText] = useState<string | null>(null);
+  useEffect(() => {
+    if (isDone || isTerminalFail) {
+      setEtaText(null);
+      return;
+    }
+    const compute = () => {
+      const now = Date.now();
+      // Chỉ dùng mẫu trong 4 phút gần nhất để phản ánh tốc độ hiện tại
+      const samples = samplesRef.current.filter((s) => now - s.t < 240_000);
+      if (samples.length < 2) {
+        setEtaText(null);
+        return;
+      }
+      const first = samples[0];
+      const lastS = samples[samples.length - 1];
+      const dt = lastS.t - first.t;
+      const dp = lastS.p - first.p;
+      if (dt < 5000 || dp <= 0) {
+        setEtaText(null);
+        return;
+      }
+      const msRemaining = ((100 - lastS.p) / dp) * dt;
+      const minutes = msRemaining / 60000;
+      if (minutes < 1) setEtaText("Còn dưới 1 phút");
+      else if (minutes < 60) setEtaText(`Còn khoảng ${Math.ceil(minutes)} phút`);
+      else setEtaText(`Còn khoảng ${Math.floor(minutes / 60)}g ${Math.ceil(minutes % 60)}p`);
+    };
+    compute();
+    const t = setInterval(compute, 5000);
+    return () => clearInterval(t);
+  }, [serverPercent, isDone, isTerminalFail]);
+
+  // ---- Realtime + polling fallback ----
+  const applyUpdate = useCallback(
+    (newStatus: string, newProgress: ProgressData | null) => {
+      setStatus(newStatus);
+      if (newProgress) setProgress(newProgress);
+      if (newStatus === "ready" || newStatus === "completed") {
+        setTimeout(() => onCompleted(), 1200);
+      }
+    },
+    [onCompleted]
+  );
+
   useEffect(() => {
     const channel = supabase
       .channel(`meeting-progress-${meetingId}`)
       .on(
         "postgres_changes" as any,
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "meetings",
-          filter: `id=eq.${meetingId}`,
-        },
-        (payload: any) => {
-          const newStatus = payload.new.status;
-          const newProgress = payload.new.progress;
-
-          setStatus(newStatus);
-          if (newProgress) setProgress(newProgress);
-
-          if (newStatus === "ready" || newStatus === "completed") {
-            // Delay chút để animation hoàn tất
-            setTimeout(() => onCompleted(), 1500);
-          }
-        }
+        { event: "UPDATE", schema: "public", table: "meetings", filter: `id=eq.${meetingId}` },
+        (payload: any) => applyUpdate(payload.new.status, payload.new.progress)
       )
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [meetingId, supabase, onCompleted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId, applyUpdate]);
 
-  // Fallback Polling (in case Realtime connection is unstable or missed)
   useEffect(() => {
-    if (["ready", "completed", "failed", "cancelled"].includes(status)) return;
-
+    if (TERMINAL_STATUSES.includes(status)) return;
     const interval = setInterval(async () => {
       try {
         const { data, error } = await supabase
@@ -84,82 +194,43 @@ export default function PipelineProgress({
           .select("status, progress")
           .eq("id", meetingId)
           .single();
-
-        if (error) throw error;
-
-        if (data) {
-          if (data.status !== status) {
-            setStatus(data.status);
-          }
-          if (data.progress) {
-            setProgress(data.progress);
-          }
-
-          if (data.status === "ready" || data.status === "completed") {
-            clearInterval(interval);
-            setTimeout(() => onCompleted(), 1500);
-          }
-        }
+        if (!error && data) applyUpdate(data.status, data.progress);
       } catch (err) {
         console.error("[PipelineProgress] Polling fallback error:", err);
       }
-    }, 5000);
-
+    }, 4000);
     return () => clearInterval(interval);
-  }, [meetingId, supabase, status, onCompleted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId, status, applyUpdate]);
 
-  // Xác định trạng thái của từng step
-  const getStepState = (stepKey: string) => {
-    const stepIndex = PIPELINE_STEPS.findIndex((s) => s.key === stepKey);
-    const currentIndex = PIPELINE_STEPS.findIndex((s) => s.key === status);
-
-    if (status === "ready" || status === "completed") return "done";
-    if (status === "failed" || status === "cancelled") {
-      const percentMap: Record<number, string> = {
-        2: "uploading",
-        10: "transcribing",
-      };
-      
-      const failedStepKey = percentMap[progress?.percent || 0];
-      const failedStepIndex = failedStepKey ? PIPELINE_STEPS.findIndex((s) => s.key === failedStepKey) : 0;
-      
-      if (stepIndex < failedStepIndex) return "done";
-      if (stepIndex === failedStepIndex) return status === "failed" ? "failed" : "cancelled";
-      return "pending";
+  // ---- Trạng thái từng bước ----
+  const currentStepIndex = STEPS.findIndex((s) => s.key === stage);
+  const getStepState = (idx: number) => {
+    if (isDone) return "done";
+    if (idx < currentStepIndex) return "done";
+    if (idx === currentStepIndex) {
+      if (status === "failed") return "failed";
+      if (status === "cancelled") return "cancelled";
+      return "active";
     }
-    if (stepIndex < currentIndex) return "done";
-    if (stepIndex === currentIndex) return "active";
     return "pending";
   };
 
-  // Tính phần trăm tổng thể
-  const getOverallPercent = () => {
-    if (status === "ready" || status === "completed") return 100;
-    if (status === "queued") return 0;
-
-    const currentIndex = PIPELINE_STEPS.findIndex((s) => s.key === status);
-    if (currentIndex === -1) return 0;
-
-    const stepPercent = progress?.percent || 0;
-    const totalSteps = PIPELINE_STEPS.length;
-    const basePercent = (currentIndex / totalSteps) * 100;
-    const stepWeight = (1 / totalSteps) * 100;
-
-    return Math.round(basePercent + (stepPercent / 100) * stepWeight);
-  };
-
+  // ---- Actions ----
   const handleCancel = async () => {
     setIsCancelling(true);
+    setActionError(null);
     try {
       const res = await fetch("/api/meetings/cancel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ meeting_id: meetingId }),
       });
-      if (!res.ok) throw new Error("Failed to cancel");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Không thể hủy xử lý.");
       onCancel();
-    } catch (err) {
-      console.error("Cancel error:", err);
+    } catch (err: any) {
+      setActionError(String(err.message || err));
     } finally {
       setIsCancelling(false);
     }
@@ -167,56 +238,78 @@ export default function PipelineProgress({
 
   const handleResume = async () => {
     setIsResuming(true);
+    setActionError(null);
     try {
       const res = await fetch("/api/meetings/resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ meeting_id: meetingId }),
       });
-      if (!res.ok) throw new Error("Failed to resume");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Không thể xử lý lại.");
+      samplesRef.current = [];
       onResume();
-    } catch (err) {
-      console.error("Resume error:", err);
+    } catch (err: any) {
+      setActionError(String(err.message || err));
     } finally {
       setIsResuming(false);
     }
   };
 
-  const overallPercent = getOverallPercent();
-  const isProcessing = !["ready", "completed", "failed", "cancelled", "queued"].includes(status);
-  const isTerminal = ["ready", "completed", "failed", "cancelled"].includes(status);
+  const shownPercent = isDone ? 100 : Math.round(displayPercent);
+  const barColor = status === "failed"
+    ? "bg-red-500"
+    : status === "cancelled"
+    ? "bg-amber-500"
+    : isDone
+    ? "bg-emerald-500"
+    : "bg-blue-500";
+
+  const canCancel = !TERMINAL_STATUSES.includes(status);
 
   return (
     <div className="w-full max-w-xl mx-auto">
-      {/* Overall progress bar */}
+      {/* Overall progress bar — % THẬT từ backend + creep mượt trong giai đoạn */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
             Tiến trình xử lý
           </span>
+          <span className={`text-sm font-black font-mono ${
+            status === "failed" ? "text-red-500" : status === "cancelled" ? "text-amber-500" : isDone ? "text-emerald-500" : "text-blue-600 dark:text-blue-400"
+          }`}>
+            {shownPercent}%
+          </span>
         </div>
-        <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden relative">
-          {status === "failed" ? (
-            <div className="h-full rounded-full bg-red-500 w-full" />
-          ) : status === "cancelled" ? (
-            <div className="h-full rounded-full bg-amber-500 w-full" />
-          ) : (status === "ready" || status === "completed") ? (
-            <div className="h-full rounded-full bg-emerald-500 w-full" />
-          ) : (
-            <div className="h-full bg-blue-500 w-full animate-pulse" />
-          )}
+        <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ease-out ${barColor}`}
+            style={{ width: `${shownPercent}%` }}
+          />
         </div>
+        {/* ETA */}
+        {!isDone && !isTerminalFail && (
+          <div className="mt-2 flex items-center justify-end gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <Clock className="w-3.5 h-3.5" />
+            <span>{etaText || "Đang ước tính thời gian còn lại..."}</span>
+          </div>
+        )}
       </div>
 
       {/* Steps checklist */}
       <div className="space-y-1">
-        {PIPELINE_STEPS.map((step) => {
-          const state = getStepState(step.key);
+        {STEPS.map((step, idx) => {
+          const state = getStepState(idx);
           const Icon = step.icon;
           const isActive = state === "active";
-          const isDone = state === "done";
+          const isStepDone = state === "done";
           const isFailed = state === "failed";
           const isCancelled = state === "cancelled";
+
+          // % nội bộ của bước đang chạy (từ % toàn cục)
+          const stepInnerPercent = isActive
+            ? Math.max(0, Math.min(100, Math.round(((displayPercent - step.from) / (step.to - step.from)) * 100)))
+            : null;
 
           return (
             <div
@@ -228,42 +321,30 @@ export default function PipelineProgress({
                   ? "bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800"
                   : isCancelled
                   ? "bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800"
-                  : isDone
+                  : isStepDone
                   ? "bg-slate-50 dark:bg-slate-900/50"
                   : "opacity-50"
               }`}
             >
-              {/* Status icon */}
               <div className="shrink-0">
-                {isDone && (
-                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                )}
-                {isActive && (
-                  <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                )}
-                {isFailed && (
-                  <XCircle className="w-5 h-5 text-red-500" />
-                )}
-                {isCancelled && (
-                  <Ban className="w-5 h-5 text-amber-500" />
-                )}
-                {state === "pending" && (
-                  <Circle className="w-5 h-5 text-slate-300 dark:text-slate-600" />
-                )}
+                {isStepDone && <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+                {isActive && <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />}
+                {isFailed && <XCircle className="w-5 h-5 text-red-500" />}
+                {isCancelled && <Ban className="w-5 h-5 text-amber-500" />}
+                {state === "pending" && <Circle className="w-5 h-5 text-slate-300 dark:text-slate-600" />}
               </div>
 
-              {/* Step info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <Icon className={`w-4 h-4 ${
-                    isDone ? "text-emerald-500" : 
-                    isActive ? "text-blue-500" : 
-                    isFailed ? "text-red-500" : 
+                    isStepDone ? "text-emerald-500" :
+                    isActive ? "text-blue-500" :
+                    isFailed ? "text-red-500" :
                     "text-slate-400 dark:text-slate-500"
                   }`} />
                   <span className={`text-sm font-semibold ${
-                    isDone ? "text-emerald-700 dark:text-emerald-400" : 
-                    isActive ? "text-blue-700 dark:text-blue-300" : 
+                    isStepDone ? "text-emerald-700 dark:text-emerald-400" :
+                    isActive ? "text-blue-700 dark:text-blue-300" :
                     isFailed ? "text-red-700 dark:text-red-400" :
                     isCancelled ? "text-amber-700 dark:text-amber-400" :
                     "text-slate-500 dark:text-slate-400"
@@ -273,80 +354,93 @@ export default function PipelineProgress({
                 </div>
               </div>
 
-              {/* Progress detail */}
               <div className="shrink-0 text-right">
                 {isActive && (
                   <div className="flex flex-col items-end">
-                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
-                      Đang xử lý...
+                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-mono">
+                      {stepInnerPercent}%
                     </span>
+                    {step.key === "process" && progress?.chunk_total ? (
+                      <span className="text-[10px] text-slate-400">
+                        phần {progress.chunk_current || 0}/{progress.chunk_total}
+                      </span>
+                    ) : null}
                   </div>
                 )}
-                {isDone && (
-                  <span className="text-xs text-emerald-500">✓</span>
-                )}
+                {isStepDone && <span className="text-xs text-emerald-500">✓</span>}
               </div>
             </div>
           );
         })}
       </div>
 
-      {/* Status message */}
-      {progress?.message && status !== "completed" && (
-        <div className={`mt-4 text-center text-sm ${status === "failed" ? "text-red-500 font-semibold dark:text-red-400" : "text-slate-500 dark:text-slate-400"}`}>
+      {/* Status message từ backend */}
+      {progress?.message && !isDone && (
+        <div className={`mt-4 text-center text-sm ${
+          status === "failed" ? "text-red-500 font-semibold dark:text-red-400" : "text-slate-500 dark:text-slate-400"
+        }`}>
           {progress.message}
+        </div>
+      )}
+
+      {/* Lỗi thao tác (hủy / xử lý lại) */}
+      {actionError && (
+        <div className="mt-3 flex items-center justify-center gap-2 text-sm text-red-500 dark:text-red-400">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>{actionError}</span>
         </div>
       )}
 
       {/* Action buttons */}
       <div className="mt-6 flex items-center justify-center gap-3">
-        {isProcessing && (
+        {canCancel && (
           <button
             onClick={handleCancel}
             disabled={isCancelling}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50 border border-red-200 dark:border-red-800 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
           >
-            {isCancelling ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Ban className="w-4 h-4" />
-            )}
+            {isCancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
             Hủy xử lý
           </button>
         )}
 
-        {(status === "failed" || status === "cancelled") && (
+        {status === "failed" && (
+          <button
+            onClick={handleResume}
+            disabled={isResuming}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-all disabled:opacity-50 cursor-pointer shadow-sm"
+          >
+            {isResuming ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+            Xử lý lại
+          </button>
+        )}
+
+        {status === "cancelled" && (
           <button
             onClick={handleResume}
             disabled={isResuming}
             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
           >
-            {isResuming ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Play className="w-4 h-4" />
-            )}
+            {isResuming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             Tiếp tục xử lý
           </button>
         )}
-
-        {status === "failed" && (
-          <div className="flex items-center gap-2 text-sm text-red-500 dark:text-red-400">
-            <AlertTriangle className="w-4 h-4" />
-            <span>Đã xảy ra lỗi. Bấm "Tiếp tục" để thử lại.</span>
-          </div>
-        )}
-
-        {status === "cancelled" && (
-          <div className="flex items-center gap-2 text-sm text-amber-500 dark:text-amber-400">
-            <Ban className="w-4 h-4" />
-            <span>Đã hủy. Bấm "Tiếp tục" để xử lý tiếp.</span>
-          </div>
-        )}
       </div>
 
-      {/* Completed celebration */}
-      {(status === "ready" || status === "completed") && (
+      {/* Trạng thái terminal */}
+      {status === "failed" && !actionError && (
+        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-red-500 dark:text-red-400">
+          <AlertTriangle className="w-4 h-4" />
+          <span>Xử lý thất bại. Bấm "Xử lý lại" để chạy tiếp từ chỗ dừng.</span>
+        </div>
+      )}
+      {status === "cancelled" && !actionError && (
+        <div className="mt-4 flex items-center justify-center gap-2 text-sm text-amber-500 dark:text-amber-400">
+          <Ban className="w-4 h-4" />
+          <span>Đã hủy. Bấm "Tiếp tục xử lý" để chạy tiếp từ chỗ dừng.</span>
+        </div>
+      )}
+      {isDone && (
         <div className="mt-6 text-center">
           <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800">
             <CheckCircle2 className="w-5 h-5" />

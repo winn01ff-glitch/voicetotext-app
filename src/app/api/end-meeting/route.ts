@@ -8,6 +8,8 @@ import { runAIJobsQueue } from "@/lib/ai/queueWorker";
 import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
 
 export async function POST(request: Request) {
+  // Giữ meeting_id ngoài try: body chỉ đọc được một lần, catch không thể json() lại.
+  let meetingIdForError: string | null = null;
   try {
     const body = await request.json();
     const { meeting_id, duration_ms, transcripts, raw_transcript } = body;
@@ -15,6 +17,7 @@ export async function POST(request: Request) {
     if (!meeting_id) {
       return NextResponse.json({ error: "Missing meeting_id" }, { status: 400 });
     }
+    meetingIdForError = meeting_id;
 
 
     const supabase = await createServerSupabaseClient();
@@ -199,11 +202,10 @@ export async function POST(request: Request) {
     console.error("End meeting error:", error);
     // Attempt to set meeting status to failed on database in case of severe exception
     try {
-      const body = await request.json().catch(() => ({}));
-      if (body.meeting_id) {
+      if (meetingIdForError) {
         const supabase = await createServerSupabaseClient();
-        await supabase.from("meetings").update({ status: "failed" }).eq("id", body.meeting_id);
-        await supabase.from("ai_summaries").update({ status: "Draft" }).eq("meeting_id", body.meeting_id);
+        await supabase.from("meetings").update({ status: "failed" }).eq("id", meetingIdForError);
+        await supabase.from("ai_summaries").update({ status: "Draft" }).eq("meeting_id", meetingIdForError);
       }
     } catch {}
 

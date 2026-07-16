@@ -1,16 +1,13 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { runPipeline, PipelineConfig } from "@/lib/ai/pipeline";
-import { enqueueAiJobs } from "@/lib/ai/enqueueAiJobs";
-import { runAIJobsQueue } from "@/lib/ai/queueWorker";
+import { PipelineConfig } from "@/lib/ai/pipeline";
+import { runYoutubePipeline } from "@/lib/ai/youtubePipeline";
 
 /**
  * Xử lý YouTube URL
  * Tạo meeting → return meetingId → after() tải audio + chạy pipeline
- * 
- * Lưu ý: Cần cài thêm @distube/ytdl-core để tải audio từ YouTube
- * npm install @distube/ytdl-core
+ * (logic tải + xử lý nằm ở lib/ai/youtubePipeline.ts — dùng chung với route resume)
  */
 export async function POST(request: Request) {
   try {
@@ -113,137 +110,8 @@ export async function POST(request: Request) {
       glossary: glossary || [],
     };
 
-    // Background: tải audio từ YouTube rồi chạy pipeline
-    after(async () => {
-      try {
-        const { updateProgress } = await import("@/lib/ai/pipeline");
-
-        await updateProgress(meetingId, "uploading");
-
-        const { execFile, spawn } = require("child_process");
-        const path = require("path");
-        const util = require("util");
-        const execFilePromise = util.promisify(execFile);
-        const ytDlpPath = path.join(process.cwd(), "yt-dlp.exe");
-
-        // Lấy thông tin video bằng yt-dlp
-        let videoTitle = title || "YouTube Video";
-        let durationSeconds = 0;
-        try {
-          const { stdout: jsonStdout } = await execFilePromise(ytDlpPath, [
-            "--dump-json",
-            youtube_url
-          ]);
-          const info = JSON.parse(jsonStdout);
-          videoTitle = info.title || videoTitle;
-          durationSeconds = Math.round(info.duration || 0);
-
-          // Cập nhật metadata
-          await supabase
-            .from("meeting_metadata")
-            .update({
-              duration_seconds: durationSeconds,
-              youtube_title: videoTitle,
-              youtube_thumbnail_url: info.thumbnail || info.thumbnails?.[0]?.url,
-            })
-            .eq("meeting_id", meetingId);
-
-          // Cập nhật title nếu chưa có
-          if (!title) {
-            await supabase
-              .from("meetings")
-              .update({ title: videoTitle })
-              .eq("id", meetingId);
-          }
-
-          // Kiểm tra duration (max 4 giờ)
-          if (durationSeconds > 4 * 60 * 60) {
-            throw new Error(`Video quá dài (${Math.round(durationSeconds / 60)} phút). Giới hạn tối đa là 4 giờ.`);
-          }
-        } catch (infoError: any) {
-          if (infoError.message.includes("quá dài")) throw infoError;
-          console.warn("Cannot get video info via yt-dlp:", infoError.message);
-        }
-
-        // Tải audio stream qua stdout bằng yt-dlp
-        const child = spawn(ytDlpPath, [
-          "-f", "ba", // Tải định dạng audio tốt nhất
-          "-o", "-",  // Output trực tiếp ra stdout
-          youtube_url
-        ]);
-
-        const chunks: Buffer[] = [];
-        child.stdout.on("data", (chunk: Buffer) => {
-          chunks.push(chunk);
-        });
-
-        const audioBuffer = await new Promise<Buffer>((resolve, reject) => {
-          child.on("close", (code: number) => {
-            if (code === 0) {
-              resolve(Buffer.concat(chunks));
-            } else {
-              reject(new Error(`Tải audio thất bại, mã thoát: ${code}`));
-            }
-          });
-          child.on("error", (err: Error) => {
-            reject(err);
-          });
-        });
-
-        // Cập nhật file size
-        await supabase
-          .from("meeting_metadata")
-          .update({ file_size_bytes: audioBuffer.length })
-          .eq("meeting_id", meetingId);
-
-        // Lưu cache âm thanh YouTube vào thư mục public/audio để client tải về phát lại
-        try {
-          const fs = require("fs");
-          const audioDir = path.join(process.cwd(), "public", "audio");
-          if (!fs.existsSync(audioDir)) {
-            fs.mkdirSync(audioDir, { recursive: true });
-          }
-          const audioPath = path.join(audioDir, `${meetingId}.webm`);
-          fs.writeFileSync(audioPath, audioBuffer);
-          console.log(`[YouTube Process] Saved audio cache to: ${audioPath}`);
-        } catch (saveErr) {
-          console.error("[YouTube Process] Failed to save audio file to disk:", saveErr);
-        }
-
-        // Bóc băng → RAW blob, rồi xử lý AI hợp nhất + tóm tắt.
-        await runPipeline(meetingId, audioBuffer, pipelineConfig);
-        await enqueueAiJobs(meetingId, ["process", "summary"]);
-        await runAIJobsQueue(meetingId);
-      } catch (error: any) {
-        console.error(`[YouTube Pipeline Error] Meeting ${meetingId}:`, error);
-        
-        let friendlyMessage = "Lỗi khi tải hoặc xử lý video YouTube.";
-        const errMsg = error?.message || "";
-        
-        if (
-          errMsg.includes("403") || 
-          errMsg.includes("decipher") || 
-          errMsg.includes("transform") || 
-          errMsg.includes("player-script") ||
-          errMsg.includes("status code")
-        ) {
-          friendlyMessage = "Không thể tải video từ YouTube (YouTube chặn kết nối tự động. Vui lòng tải file âm thanh lên trực tiếp).";
-        } else if (errMsg.includes("length") || errMsg.includes("quá dài") || errMsg.includes("Tải audio thất bại")) {
-          friendlyMessage = errMsg;
-        } else if (errMsg) {
-          friendlyMessage = `Lỗi xử lý: ${errMsg}`;
-        }
-
-        const supabase2 = await createServerSupabaseClient();
-        await supabase2
-          .from("meetings")
-          .update({
-            status: "failed",
-            progress: { percent: 0, message: friendlyMessage },
-          })
-          .eq("id", meetingId);
-      }
-    });
+    // Background: tải audio từ YouTube rồi chạy pipeline (tự xử lý lỗi bên trong)
+    after(() => runYoutubePipeline(meetingId, youtube_url, pipelineConfig, title || null));
 
     return NextResponse.json({
       status: "success",

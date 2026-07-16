@@ -48,7 +48,7 @@ export default function Dashboard() {
 
   const handleCloseCreateModal = () => {
     setIsCreateModalVisible(false);
-    setTimeout(() => setIsCreateModalMounted(false), 300);
+    setTimeout(() => setIsCreateModalMounted(false), 500);
   };
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingContext, setMeetingContext] = useState("general");
@@ -280,6 +280,37 @@ export default function Dashboard() {
 
     return () => clearInterval(interval);
   }, [meetings, supabase]);
+
+  // Realtime: patch status/progress của card ngay khi backend ghi DB — % trên
+  // card nhảy theo từng mốc thật (từng chunk AI xong), không đợi polling 4s.
+  useEffect(() => {
+    const channel = supabase
+      .channel("dashboard-meetings-progress")
+      .on(
+        "postgres_changes" as any,
+        { event: "UPDATE", schema: "public", table: "meetings" },
+        (payload: any) => {
+          setMeetings((prev) =>
+            prev.map((m) =>
+              m.id === payload.new.id
+                ? {
+                    ...m,
+                    status: payload.new.status,
+                    progress: payload.new.progress,
+                    title: payload.new.title ?? m.title,
+                    duration_ms: payload.new.duration_ms ?? m.duration_ms,
+                  }
+                : m
+            )
+          );
+        }
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Save speakers & glossary to cache when updated
   useEffect(() => {
@@ -1928,12 +1959,12 @@ export default function Dashboard() {
       {isCreateModalMounted && (
         <div 
           onClick={() => handleCloseCreateModal()}
-          className={`fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/40 backdrop-blur-sm transition-opacity duration-300 ease-out ${isCreateModalVisible ? "opacity-100" : "opacity-0"}`}
+          className={`fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/50 backdrop-blur-sm modal-backdrop-smooth ${isCreateModalVisible ? "opacity-100 modal-backdrop-open" : "opacity-0"}`}
         >
           {/* Main Modal Container - Bento Edition */}
           <div 
             onClick={(e) => e.stopPropagation()}
-            className={`max-w-6xl w-full h-full sm:h-[715px] max-h-screen sm:max-h-[95vh] flex flex-col bg-white dark:bg-slate-900 border-0 shadow-none sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-none sm:rounded-[2rem] overflow-hidden transition-all duration-300 ease-out ${isCreateModalVisible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-4"}`}
+            className={`max-w-6xl w-full h-full sm:h-[715px] max-h-screen sm:max-h-[95vh] flex flex-col bg-white dark:bg-slate-900 border-0 shadow-none sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.15)] dark:sm:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] rounded-none sm:rounded-[2rem] overflow-hidden modal-container-smooth will-change-[transform,opacity] ${isCreateModalVisible ? "modal-open modal-container-open" : "modal-closed"}`}
           >
             
             {/* Header */}

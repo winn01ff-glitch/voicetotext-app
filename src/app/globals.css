@@ -251,3 +251,56 @@ svg.lucide {
   -ms-overflow-style: none !important; /* IE and Edge */
   scrollbar-width: none !important; /* Firefox */
 }
+
+/* Premium Modal Transitions */
+.modal-backdrop-smooth {
+  transition: opacity 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-backdrop-open {
+  transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Modal states using standard transform property for perfect cross-browser transitions */
+.modal-container-smooth {
+  transition: transform 380ms cubic-bezier(0.16, 1, 0.3, 1), 
+              opacity 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-container-open {
+  transition: transform 500ms cubic-bezier(0.34, 1.15, 0.64, 1), 
+              opacity 450ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-closed {
+  transform: scale(0.92) translateY(100%);
+  opacity: 0;
+}
+
+@media (min-width: 640px) {
+  .modal-closed {
+    transform: scale(0.92) translateY(64px);
+  }
+}
+
+.modal-open {
+  transform: scale(1) translateY(0);
+  opacity: 1;
+}
+
+/* Drawer states */
+.drawer-container-smooth {
+  transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1), 
+              opacity 400ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.drawer-closed {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+.drawer-open {
+  transform: translateY(0);
+  opacity: 1;
+}
+
