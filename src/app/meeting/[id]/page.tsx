@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useDeepgramLive } from "@/hooks/useDeepgramLive";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import PipelineProgress from "@/components/PipelineProgress";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle, Play,
   Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff, ChevronUp,
@@ -172,6 +173,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [activeSpeech, setActiveSpeech] = useState<{ id: string; type: "original" | "translated" } | null>(null);
   const [lastSavedTime, setLastSavedTime] = useState<string>("");
   const [isFinishing, setIsFinishing] = useState(false);
+  const hasNavigatedToHistoryRef = useRef(false);
 
   // Load browser speechSynthesis voices
   useEffect(() => {
@@ -653,8 +655,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         return;
       }
 
-      // 2. If final: clear interim (khung "Nghe trực tiếp" được append qua
-      // onRawFinal — nguyên văn transcript của Deepgram, không dựng từ words)
+      // 2. Final speaker-runs only feed the diarized blocks. Raw listening text
+      // is appended once through handleRawFinal to avoid one copy per run.
       setLiveInterimText("");
       setRealtimeText(null);
 
@@ -699,6 +701,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     },
     [speakers, meeting, endpointing]
   );
+
+  const handleRawFinal = useCallback((text: string) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    setLiveTranscriptText((prev) => prev ? `${prev} ${normalized}` : normalized);
+  }, []);
 
   // Chỉ cho phép MỘT batch Gemini chạy tại một thời điểm; các lời gọi chồng chéo
   // được xếp hàng tuần tự — hai batch song song sẽ cùng merge vào một block cuối
@@ -850,13 +858,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       );
     }
   };
-
-  // Khung "Nghe trực tiếp": bản STT thô 100% — nguyên văn transcript từng final
-  // của Deepgram (đã có dấu câu), không qua bất kỳ bước lọc/dựng text nào.
-  const handleRawFinal = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setLiveTranscriptText((prev) => (prev ? prev + " " + text : text));
-  }, []);
 
   const handleMicError = (err: string) => {
     addToast("Lỗi ghi âm", err, "error");
@@ -1175,9 +1176,32 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
+  const handlePipelineCompleted = useCallback(() => {
+    if (hasNavigatedToHistoryRef.current) return;
+    hasNavigatedToHistoryRef.current = true;
+    router.replace(`/history/${meetingId}`);
+  }, [meetingId, router]);
+
   // End meeting & save audio
   const handleEndMeeting = async () => {
     setIsFinishing(true);
+    // Chuẩn bị route đích trong lúc pipeline chạy để lần chuyển duy nhất sau
+    // khi hoàn tất không phải chờ tải bundle của trang chi tiết.
+    router.prefetch(`/history/${meetingId}`);
+
+    // Đánh dấu status "uploading" sớm để màn "Đang xử lý âm thanh" (PipelineProgress)
+    // và card ngoài dashboard hiển thị nhất quán ngay từ bước tải audio.
+    try {
+      await supabase
+        .from("meetings")
+        .update({
+          status: "uploading",
+          progress: { percent: 5, stage: "upload", message: "Đang lưu cuộc họp & tải âm thanh lên máy chủ...", updated_at: new Date().toISOString() },
+        })
+        .eq("id", meetingId);
+    } catch (statusErr) {
+      console.warn("[EndMeeting] Failed to set uploading status:", statusErr);
+    }
 
     try {
       // 1. Dừng ghi và nhận blob audio hoàn chỉnh NGAY trong RAM (stopRecording đã
@@ -1250,12 +1274,19 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
       localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
 
-      // Redirect to history details. Uses replace (not push) so the now-dead
-      // live-recording URL is removed from browser history.
-      router.replace(`/history/${meetingId}`);
+      // Không chuyển route ở đây. PipelineProgress tiếp tục theo dõi toàn bộ
+      // upload -> Deepgram -> AI -> summary trên cùng một màn hình và chỉ điều
+      // hướng sang trang chi tiết khi meeting thực sự completed/ready.
     } catch (err) {
       console.error(err);
       addToast("Lỗi kết thúc", "Không thể tạo tóm tắt cuộc họp.", "error");
+      // Revert status về "recording" để người dùng quay lại phòng họp và thử Kết thúc lại.
+      try {
+        await supabase
+          .from("meetings")
+          .update({ status: "recording", progress: null })
+          .eq("id", meetingId);
+      } catch { /* ignore */ }
       setIsFinishing(false);
       setStatus("completed");
     }
@@ -1403,21 +1434,41 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // If finishing, render Loading Page
   if (isFinishing) {
+    // Cùng một màn "Đang xử lý âm thanh" (PipelineProgress 4 bước) với trang lịch sử —
+    // giai đoạn client lưu/upload audio hiển thị là bước "Tải âm thanh" đang chạy,
+    // và giữ nguyên tại đây cho tới khi bóc băng → phân vai → tóm tắt hoàn tất.
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 px-6 select-none animate-in fade-in duration-300">
-        <div className="max-w-md w-full space-y-4 text-center flex flex-col items-center">
-          <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-2">
-            <RefreshCw className="w-5 h-5 text-blue-500 animate-spin" />
+      <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
+        <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center gap-3">
+            <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>
+              {meeting?.title || "Cuộc họp"}
+            </h1>
           </div>
-          <div className="space-y-1.5 w-full">
-            <h3 className="font-bold text-lg text-slate-900 dark:text-slate-100">
-              Đang lưu cuộc họp...
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-[320px] mx-auto leading-relaxed">
-              Dữ liệu âm thanh đang được tải lên máy chủ. Bạn sẽ tự động được chuyển hướng đến trang lịch sử.
-            </p>
+        </header>
+        <main className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-xl">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 shadow-sm">
+              <div className="text-center mb-8">
+                <div className="w-16 h-16 mx-auto bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mb-4">
+                  <Sparkles className="w-8 h-8" />
+                </div>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Đang hoàn tất cuộc họp</h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Hệ thống đang chuẩn bị bản ghi và nội dung cuộc họp. Bạn có thể rời trang và quay lại sau.
+                </p>
+              </div>
+              <PipelineProgress
+                meetingId={meetingId}
+                initialStatus="uploading"
+                initialProgress={{ percent: 5, stage: "upload", message: "Đang lưu cuộc họp & tải âm thanh lên máy chủ..." }}
+                onCompleted={handlePipelineCompleted}
+                onCancel={() => router.replace(`/history/${meetingId}`)}
+                onResume={() => {}}
+              />
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }

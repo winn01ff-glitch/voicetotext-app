@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { 
@@ -16,7 +16,18 @@ import { putAudio, deleteAudio } from "@/lib/audio-cache";
 
 export default function Dashboard() {
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
+  const isMountedRef = useRef(false);
+  const pendingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  const scheduleMountedUpdate = (callback: () => void, delay: number) => {
+    const timeout = setTimeout(() => {
+      pendingTimeoutsRef.current.delete(timeout);
+      if (isMountedRef.current) callback();
+    }, delay);
+    pendingTimeoutsRef.current.add(timeout);
+    return timeout;
+  };
 
   // Theme state
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -43,12 +54,12 @@ export default function Dashboard() {
 
   const handleOpenCreateModal = () => {
     setIsCreateModalMounted(true);
-    setTimeout(() => setIsCreateModalVisible(true), 10);
+    scheduleMountedUpdate(() => setIsCreateModalVisible(true), 10);
   };
 
   const handleCloseCreateModal = () => {
     setIsCreateModalVisible(false);
-    setTimeout(() => setIsCreateModalMounted(false), 500);
+    scheduleMountedUpdate(() => setIsCreateModalMounted(false), 500);
   };
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingContext, setMeetingContext] = useState("general");
@@ -94,7 +105,7 @@ export default function Dashboard() {
 
   const removeToast = (id: number) => {
     setToasts((prev) => prev.map((t) => (t.id === id ? { ...t, closing: true } : t)));
-    setTimeout(() => {
+    scheduleMountedUpdate(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 300);
   };
@@ -103,7 +114,7 @@ export default function Dashboard() {
     return new Promise<void>((resolve) => {
       const id = nextToastId.current++;
       setToasts((prev) => [...prev, { id, title, desc: message, type }]);
-      setTimeout(() => {
+      scheduleMountedUpdate(() => {
         removeToast(id);
         resolve();
       }, 4700);
@@ -120,14 +131,14 @@ export default function Dashboard() {
         type: "confirm",
         onConfirm: () => {
           setModalConfig((prev) => ({ ...prev, isClosing: true }));
-          setTimeout(() => {
+          scheduleMountedUpdate(() => {
             setModalConfig((prev) => ({ ...prev, isOpen: false, isClosing: false }));
             resolve(true);
           }, 200);
         },
         onCancel: () => {
           setModalConfig((prev) => ({ ...prev, isClosing: true }));
-          setTimeout(() => {
+          scheduleMountedUpdate(() => {
             setModalConfig((prev) => ({ ...prev, isOpen: false, isClosing: false }));
             resolve(false);
           }, 200);
@@ -157,6 +168,7 @@ export default function Dashboard() {
 
   // Initialize Theme and Fetch Data
   useEffect(() => {
+    isMountedRef.current = true;
     // Check pending toast from other pages
     const pendingToast = sessionStorage.getItem("pending_toast");
     if (pendingToast) {
@@ -245,6 +257,9 @@ export default function Dashboard() {
     }
 
     return () => {
+      isMountedRef.current = false;
+      pendingTimeoutsRef.current.forEach(clearTimeout);
+      pendingTimeoutsRef.current.clear();
       stopChunkSizeChange();
     };
   }, []);
@@ -270,7 +285,7 @@ export default function Dashboard() {
           `)
           .order("created_at", { ascending: false });
 
-        if (!error && data) {
+        if (isMountedRef.current && !error && data) {
           setMeetings(data);
         }
       } catch (err) {
@@ -346,8 +361,10 @@ export default function Dashboard() {
 
   // Enumerate devices when modal opens
   useEffect(() => {
+    let cancelled = false;
     if (isCreateModalMounted) {
       navigator.mediaDevices.enumerateDevices().then((devices) => {
+        if (cancelled || !isMountedRef.current) return;
         const audioInputs = devices.filter((d) => d.kind === "audioinput");
         setAudioDevices(audioInputs);
         if (audioInputs.length > 0) {
@@ -366,6 +383,9 @@ export default function Dashboard() {
     } else {
       stopMicTest();
     }
+    return () => {
+      cancelled = true;
+    };
   }, [isCreateModalMounted]);
 
   // Prevent background scrolling when modal is open
@@ -465,11 +485,11 @@ export default function Dashboard() {
         return new Date(m.created_at) >= sevenDaysAgo;
       });
 
-      setMeetings(filtered);
+      if (isMountedRef.current) setMeetings(filtered);
     } catch (err) {
       console.error("Fetch meetings error:", err);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   };
 
@@ -484,7 +504,7 @@ export default function Dashboard() {
           .eq("id", unfinishedMeetingId)
           .single();
 
-        if (!error && data && (data.status === "recording" || data.status === "processing")) {
+        if (isMountedRef.current && !error && data && (data.status === "recording" || data.status === "processing")) {
           setRecoveryMeeting(data);
         }
       } catch (err) {
@@ -609,7 +629,7 @@ export default function Dashboard() {
         }
       });
 
-      setGlobalSearchResults(Object.values(grouped));
+      if (isMountedRef.current) setGlobalSearchResults(Object.values(grouped));
     } catch (err) {
       console.error("Global search error:", err);
     }

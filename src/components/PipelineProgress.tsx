@@ -12,10 +12,10 @@ import {
 // meetings.progress: upload 0-5 → transcribe 5-35 → process 35-85 → summary 85-100
 // ================================================================
 const STEPS = [
-  { key: "upload", label: "Tải âm thanh", icon: Upload, from: 0, to: 5 },
-  { key: "transcribe", label: "Bóc băng giọng nói (Deepgram)", icon: Mic, from: 5, to: 35 },
-  { key: "process", label: "Phân vai & dịch (AI)", icon: Languages, from: 35, to: 85 },
-  { key: "summary", label: "Tóm tắt & công việc (AI)", icon: ListChecks, from: 85, to: 100 },
+  { key: "upload", label: "Tải bản ghi", icon: Upload, from: 0, to: 5 },
+  { key: "transcribe", label: "Tạo bản ghi văn bản", icon: Mic, from: 5, to: 35 },
+  { key: "process", label: "Phân vai & dịch", icon: Languages, from: 35, to: 85 },
+  { key: "summary", label: "Tóm tắt & công việc", icon: ListChecks, from: 85, to: 100 },
 ] as const;
 
 type StepKey = (typeof STEPS)[number]["key"];
@@ -78,6 +78,12 @@ export default function PipelineProgress({
   const [isCancelling, setIsCancelling] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const completionHandledRef = useRef(false);
+  const onCompletedRef = useRef(onCompleted);
+
+  useEffect(() => {
+    onCompletedRef.current = onCompleted;
+  }, [onCompleted]);
 
   const serverPercent = deriveServerPercent(status, progress);
   const isTerminalFail = status === "failed" || status === "cancelled";
@@ -163,12 +169,18 @@ export default function PipelineProgress({
     (newStatus: string, newProgress: ProgressData | null) => {
       setStatus(newStatus);
       if (newProgress) setProgress(newProgress);
-      if (newStatus === "ready" || newStatus === "completed") {
-        setTimeout(() => onCompleted(), 1200);
-      }
     },
-    [onCompleted]
+    []
   );
+
+  // Chỉ hoàn tất navigation một lần. Realtime và polling có thể cùng nhận bản
+  // ghi terminal; nếu lên lịch trong applyUpdate, cả hai nguồn sẽ cùng redirect.
+  useEffect(() => {
+    if (!isDone || completionHandledRef.current) return;
+    completionHandledRef.current = true;
+    const timer = setTimeout(() => onCompletedRef.current(), 450);
+    return () => clearTimeout(timer);
+  }, [isDone]);
 
   useEffect(() => {
     const channel = supabase
@@ -287,13 +299,15 @@ export default function PipelineProgress({
             style={{ width: `${shownPercent}%` }}
           />
         </div>
-        {/* ETA */}
-        {!isDone && !isTerminalFail && (
-          <div className="mt-2 flex items-center justify-end gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <Clock className="w-3.5 h-3.5" />
-            <span>{etaText || "Đang ước tính thời gian còn lại..."}</span>
-          </div>
-        )}
+        {/* Reserve one fixed row so completion never shifts the card vertically. */}
+        <div className="mt-2 h-5 flex items-center justify-end">
+          {!isDone && !isTerminalFail && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+              <Clock className="w-3.5 h-3.5" />
+              <span>{etaText || "Đang ước tính thời gian còn lại..."}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Steps checklist */}
@@ -306,15 +320,10 @@ export default function PipelineProgress({
           const isFailed = state === "failed";
           const isCancelled = state === "cancelled";
 
-          // % nội bộ của bước đang chạy (từ % toàn cục)
-          const stepInnerPercent = isActive
-            ? Math.max(0, Math.min(100, Math.round(((displayPercent - step.from) / (step.to - step.from)) * 100)))
-            : null;
-
           return (
             <div
               key={step.key}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 ${
+              className={`h-[52px] flex items-center gap-2.5 sm:gap-3 px-3 sm:px-4 rounded-xl box-border transition-colors duration-300 ${
                 isActive
                   ? "bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800"
                   : isFailed
@@ -336,13 +345,13 @@ export default function PipelineProgress({
 
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <Icon className={`w-4 h-4 ${
+                  <Icon className={`w-4 h-4 shrink-0 ${
                     isStepDone ? "text-emerald-500" :
                     isActive ? "text-blue-500" :
                     isFailed ? "text-red-500" :
                     "text-slate-400 dark:text-slate-500"
                   }`} />
-                  <span className={`text-sm font-semibold ${
+                  <span className={`min-w-0 truncate whitespace-nowrap text-xs sm:text-sm font-semibold ${
                     isStepDone ? "text-emerald-700 dark:text-emerald-400" :
                     isActive ? "text-blue-700 dark:text-blue-300" :
                     isFailed ? "text-red-700 dark:text-red-400" :
@@ -356,13 +365,13 @@ export default function PipelineProgress({
 
               <div className="shrink-0 text-right">
                 {isActive && (
-                  <div className="flex flex-col items-end">
-                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-mono">
-                      {stepInnerPercent}%
+                  <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                    <span className="text-[11px] sm:text-xs font-semibold text-blue-600 dark:text-blue-400">
+                      Đang xử lý
                     </span>
                     {step.key === "process" && progress?.chunk_total ? (
-                      <span className="text-[10px] text-slate-400">
-                        phần {progress.chunk_current || 0}/{progress.chunk_total}
+                      <span className="inline-flex h-5 items-center rounded-md bg-blue-100/80 dark:bg-blue-900/50 px-1.5 font-mono text-[10px] font-semibold leading-none text-blue-600 dark:text-blue-300">
+                        {progress.chunk_current || 0}/{progress.chunk_total}
                       </span>
                     ) : null}
                   </div>
@@ -374,11 +383,10 @@ export default function PipelineProgress({
         })}
       </div>
 
-      {/* Status message từ backend */}
-      {progress?.message && !isDone && (
-        <div className={`mt-4 text-center text-sm ${
-          status === "failed" ? "text-red-500 font-semibold dark:text-red-400" : "text-slate-500 dark:text-slate-400"
-        }`}>
+      {/* Chỉ hiện thông báo backend khi có lỗi; trạng thái bình thường đã được
+          thể hiện đầy đủ trong checklist, tránh lặp thông tin trước nút hủy. */}
+      {progress?.message && status === "failed" && (
+        <div className="mt-4 text-center text-sm text-red-500 font-semibold dark:text-red-400">
           {progress.message}
         </div>
       )}
@@ -392,7 +400,7 @@ export default function PipelineProgress({
       )}
 
       {/* Action buttons */}
-      <div className="mt-6 flex items-center justify-center gap-3">
+      <div className="mt-6 min-h-[42px] flex items-center justify-center gap-3">
         {canCancel && (
           <button
             onClick={handleCancel}
@@ -425,6 +433,13 @@ export default function PipelineProgress({
             Tiếp tục xử lý
           </button>
         )}
+
+        {isDone && (
+          <div className="h-[42px] inline-flex items-center gap-2 px-5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800">
+            <CheckCircle2 className="w-5 h-5" />
+            <span className="font-bold text-sm">Hoàn thành! Đang mở kết quả...</span>
+          </div>
+        )}
       </div>
 
       {/* Trạng thái terminal */}
@@ -438,14 +453,6 @@ export default function PipelineProgress({
         <div className="mt-4 flex items-center justify-center gap-2 text-sm text-amber-500 dark:text-amber-400">
           <Ban className="w-4 h-4" />
           <span>Đã hủy. Bấm "Tiếp tục xử lý" để chạy tiếp từ chỗ dừng.</span>
-        </div>
-      )}
-      {isDone && (
-        <div className="mt-6 text-center">
-          <div className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 rounded-xl border border-emerald-200 dark:border-emerald-800">
-            <CheckCircle2 className="w-5 h-5" />
-            <span className="font-bold text-sm">Hoàn thành! Đang tải kết quả...</span>
-          </div>
         </div>
       )}
     </div>

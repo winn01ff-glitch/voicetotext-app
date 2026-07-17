@@ -122,10 +122,10 @@ export async function runYoutubePipeline(
       chunks.push(chunk);
     });
 
-    // Giữ đuôi stderr để báo lỗi có ngữ cảnh thay vì chỉ "mã thoát: 1"
+    // Giữ đuôi stderr — exit code chỉ nói "có lỗi", lý do thật nằm ở đây
     let stderrTail = "";
     child.stderr.on("data", (chunk: Buffer) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-500);
+      stderrTail = (stderrTail + chunk.toString()).slice(-2000);
     });
 
     const audioBuffer = await new Promise<Buffer>((resolve, reject) => {
@@ -133,12 +133,9 @@ export async function runYoutubePipeline(
         if (code === 0) {
           resolve(Buffer.concat(chunks));
         } else {
-          const errLine = stderrTail
-            .split("\n")
-            .map((l) => l.trim())
-            .filter((l) => l.startsWith("ERROR"))
-            .pop();
-          reject(new Error(`Tải audio thất bại (mã thoát ${code})${errLine ? `: ${errLine}` : ""}`));
+          // Log stderr đầy đủ cho dev; user nhận thông báo tiếng Việt dễ hiểu
+          console.error(`[YouTube Process] yt-dlp exited ${code}. stderr tail:\n${stderrTail}`);
+          reject(new Error(friendlyYtdlpError(stderrTail)));
         }
       });
       child.on("error", (err: Error) => {
@@ -172,22 +169,16 @@ export async function runYoutubePipeline(
   } catch (error: any) {
     console.error(`[YouTube Pipeline Error] Meeting ${meetingId}:`, error);
 
-    let friendlyMessage = "Lỗi khi tải hoặc xử lý video YouTube.";
-    const errMsg = error?.message || "";
-
-    if (
-      errMsg.includes("403") ||
-      errMsg.includes("decipher") ||
-      errMsg.includes("transform") ||
-      errMsg.includes("player-script") ||
-      errMsg.includes("status code")
-    ) {
-      friendlyMessage = "Không thể tải video từ YouTube (YouTube chặn kết nối tự động. Vui lòng tải file âm thanh lên trực tiếp).";
-    } else if (errMsg.includes("length") || errMsg.includes("quá dài") || errMsg.includes("Tải audio thất bại")) {
-      friendlyMessage = errMsg;
-    } else if (errMsg) {
-      friendlyMessage = `Lỗi xử lý: ${errMsg}`;
-    }
+    // Lỗi từ bước tải yt-dlp đã được dịch sẵn sang tiếng Việt (friendlyYtdlpError)
+    // → hiển thị nguyên văn. Các lỗi khác (info, DB, pipeline) hiếm gặp, giữ message
+    // gốc kèm tiền tố để còn truy được nguyên nhân.
+    const errMsg: string = error?.message || "";
+    const isPreTranslated = /[àảãáạăâđèẻẽéẹêìỉĩíịòỏõóọôơùủũúụưỳỷỹýỵ]/i.test(errMsg);
+    const friendlyMessage = !errMsg
+      ? "Lỗi khi tải hoặc xử lý video YouTube."
+      : isPreTranslated
+      ? errMsg
+      : `Lỗi xử lý: ${errMsg.slice(0, 180)}`;
 
     await supabase
       .from("meetings")

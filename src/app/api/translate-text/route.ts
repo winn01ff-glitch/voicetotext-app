@@ -1,6 +1,41 @@
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { getGeminiClient, runWithGeminiClient } from "@/lib/ai/geminiClient";
+import { runWithGeminiClient } from "@/lib/ai/geminiClient";
+
+const TRANSLATION_CONCURRENCY = 3;
+const TRANSLATION_RETRIES = 2;
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
+async function withTranslationRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= TRANSLATION_RETRIES; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < TRANSLATION_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
 
 export async function POST(request: Request) {
   try {
@@ -66,8 +101,7 @@ ${JSON.stringify(sections)}
         chunks.push(texts.slice(i, i + chunkSize));
       }
 
-      const translatedTexts: string[] = [];
-      for (const chunk of chunks) {
+      const translatedChunks = await mapWithConcurrency(chunks, TRANSLATION_CONCURRENCY, async (chunk) => {
         const prompt = `
 You are a professional and natural translator.
 Task: Translate the following JSON array of strings from "${sourceLang || "auto"}" to "${targetLang || "Vietnamese"}".
@@ -81,30 +115,26 @@ JSON to translate:
 ${JSON.stringify(chunk)}
 `;
 
-        const rawText = await runWithGeminiClient(async (client) => {
-          const model = client.getGenerativeModel({ model: translationModelName });
-          const result = await model.generateContent(prompt);
-          return result.response.text().trim();
-        });
+        return withTranslationRetry(async () => {
+          const rawText = await runWithGeminiClient(async (client) => {
+            const model = client.getGenerativeModel({ model: translationModelName });
+            const result = await model.generateContent(prompt);
+            return result.response.text().trim();
+          });
 
-        let rawResponse = rawText;
-        // Strip markdown code block if present
-        if (rawResponse.startsWith("```")) {
-          rawResponse = rawResponse.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/```$/, "").trim();
-        }
-        try {
-          const parsed = JSON.parse(rawResponse);
-          if (Array.isArray(parsed)) {
-            translatedTexts.push(...parsed);
-          } else {
-            throw new Error("Response is not an array");
+          let rawResponse = rawText;
+          if (rawResponse.startsWith("```")) {
+            rawResponse = rawResponse.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/```$/, "").trim();
           }
-        } catch (e) {
-          console.error("Failed to parse batch translation response:", rawResponse, e);
-          // Fallback: if JSON parse fails, use original texts
-          translatedTexts.push(...chunk);
-        }
-      }
+          const parsed = JSON.parse(rawResponse);
+          if (!Array.isArray(parsed) || parsed.length !== chunk.length) {
+            throw new Error(`Translation response length mismatch: expected ${chunk.length}`);
+          }
+          return parsed.map((value) => String(value || "").trim());
+        });
+      });
+
+      const translatedTexts = translatedChunks.flat();
 
       return NextResponse.json({ translatedTexts });
     } else {
@@ -129,8 +159,11 @@ Text to translate:
 
       return NextResponse.json({ translatedText });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("Translation API error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Translation failed" },
+      { status: 500 }
+    );
   }
 }

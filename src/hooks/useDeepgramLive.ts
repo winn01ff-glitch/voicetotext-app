@@ -35,9 +35,8 @@ interface UseDeepgramLiveProps {
     endMs: number;
     confidence: number;
   }) => void;
-  // Bản STT thô 100% cho mỗi final: nguyên văn field `transcript` của Deepgram
-  // (đã có dấu câu từ smart_format, KHÔNG dựng lại từ words nên không dính
-  // artifact trùng lặp) — dùng cho khung "Nghe trực tiếp".
+  // Raw transcript is emitted once per accepted Deepgram final, independently
+  // from the word-level speaker runs used by the diarization UI.
   onRawFinal?: (text: string) => void;
   onActionItemDetected?: (item: { description: string; owner: string; deadline: string | null }) => void;
   onError: (err: string) => void;
@@ -51,6 +50,85 @@ export interface RecordingResult {
 
 const ARCHIVE_TIMESLICE_MS = 1000;
 const MAX_RECONNECTS = 5;
+
+interface DeepgramLiveWord {
+  word?: string;
+  punctuated_word?: string;
+  speaker?: number;
+  start?: number;
+  end?: number;
+  confidence?: number;
+}
+
+interface SpeakerRun {
+  speaker: number;
+  words: DeepgramLiveWord[];
+}
+
+function wordStart(word: DeepgramLiveWord): number {
+  return typeof word.start === "number" ? word.start : 0;
+}
+
+function wordEnd(word: DeepgramLiveWord): number {
+  return typeof word.end === "number" ? word.end : wordStart(word);
+}
+
+function mergeAdjacentSpeakerRuns(runs: SpeakerRun[]): SpeakerRun[] {
+  const merged: SpeakerRun[] = [];
+  for (const run of runs) {
+    const previous = merged[merged.length - 1];
+    if (previous?.speaker === run.speaker) previous.words.push(...run.words);
+    else merged.push({ speaker: run.speaker, words: [...run.words] });
+  }
+  return merged;
+}
+
+/**
+ * Deepgram diarization is word-level and can briefly flip A -> B -> A inside
+ * one uninterrupted sentence. Treat only a single ultra-short, gapless word
+ * as noise. Short replies must remain valid speaker turns.
+ * A real short reply is preserved when it has an audible boundary or when the
+ * speakers on its two sides are different.
+ */
+function stabilizeSpeakerRuns(runs: SpeakerRun[]): SpeakerRun[] {
+  let stable = mergeAdjacentSpeakerRuns(runs);
+  let changed = true;
+
+  while (changed && stable.length >= 3) {
+    changed = false;
+    for (let index = 1; index < stable.length - 1; index += 1) {
+      const previous = stable[index - 1];
+      const current = stable[index];
+      const next = stable[index + 1];
+      if (previous.speaker !== next.speaker || current.speaker === previous.speaker) continue;
+
+      const duration = wordEnd(current.words[current.words.length - 1]) - wordStart(current.words[0]);
+      const gapBefore = wordStart(current.words[0]) - wordEnd(previous.words[previous.words.length - 1]);
+      const gapAfter = wordStart(next.words[0]) - wordEnd(current.words[current.words.length - 1]);
+      // Keep this deliberately conservative. Japanese replies are commonly
+      // only 1-3 words, so word count alone must never collapse a turn.
+      const isShortIsland = current.words.length === 1 && duration <= 0.35;
+      const isContinuousSpeech = gapBefore <= 0.08 && gapAfter <= 0.08;
+
+      if (isShortIsland && isContinuousSpeech) {
+        current.speaker = previous.speaker;
+        stable = mergeAdjacentSpeakerRuns(stable);
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  return stable;
+}
+
+function wordsToTranscript(words: DeepgramLiveWord[], language: string): string {
+  const tokens = words.map((w) => w.punctuated_word || w.word || "").filter(Boolean);
+  const isCjk = language === "ja" || language === "zh" || language === "ko" ||
+    tokens.some((token) => /[\u3040-\u30ff\u3400-\u9fff]/u.test(token));
+  if (isCjk) return tokens.join("").trim();
+  return tokens.join(" ").replace(/\s+([.,!?;:])/g, "$1").trim();
+}
 
 export function useDeepgramLive({
   meetingId,
@@ -86,8 +164,6 @@ export function useDeepgramLive({
 
   const reconnectCountRef = useRef<number>(0);
   const isIntentionalStop = useRef<boolean>(true);
-  // Mốc KẾT THÚC (giây, timestamp thô của connection hiện tại) của từ cuối cùng
-  // đã phát ra — dùng để lọc các final bị Deepgram re-emit chồng lấn.
   const lastFinalWordEndRef = useRef<number>(-1);
 
   // Đồng hồ audio: tổng ms đã ghi của các đoạn trước + đoạn đang chạy.
@@ -381,112 +457,101 @@ export function useDeepgramLive({
       }
       webSocketRef.current = ws;
 
+      // Xử lý MẶC ĐỊNH của Deepgram — passthrough thuần, không thêm cơ chế nào:
+      // dùng nguyên field transcript và nhãn diarization Deepgram trả về.
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        const transcript = data.channel?.alternatives?.[0]?.transcript;
+        const alt = data.channel?.alternatives?.[0];
+        const transcript = alt?.transcript;
         if (!transcript) return;
 
-        const isFinal = data.is_final;
-        const words = data.channel.alternatives[0].words || [];
-        const confidence = data.channel.alternatives[0].confidence || 1.0;
-        const speechFinal = data.speech_final || false;
-        // Cộng offset để timeline liên tục qua pause/resume/reconnect
+        const words: DeepgramLiveWord[] = alt.words || [];
+        // baseMs: offset hạ tầng để timestamp liên tục qua pause/resume.
         const baseMs = streamBaseMsRef.current;
-        // ja, zh, ko không dùng dấu cách làm phân tách từ
-        const isNoSpaceLang = ["ja", "zh", "ko"].includes(sourceLanguage || "");
-        const joinChar = isNoSpaceLang ? "" : " ";
 
-        // ---- INTERIM (hoặc final không có words): chỉ hiển thị text xám tạm thời,
-        // nhãn speaker chưa ổn định nên lấy speaker đa số là đủ ----
-        if (!isFinal || words.length === 0) {
-          let speakerTag = "speaker_1";
-          const speakerCounts: Record<number, number> = {};
-          let maxCount = 0;
-          for (const word of words) {
-            if (typeof word.speaker === "number") {
-              speakerCounts[word.speaker] = (speakerCounts[word.speaker] || 0) + 1;
-              if (speakerCounts[word.speaker] > maxCount) {
-                maxCount = speakerCounts[word.speaker];
-                speakerTag = `speaker_${word.speaker + 1}`;
-              }
-            }
-          }
-          const startMs = words.length > 0 ? baseMs + Math.round(words[0].start * 1000) : baseMs;
-          const endMs = words.length > 0 ? baseMs + Math.round(words[words.length - 1].end * 1000) : baseMs;
+        // Interim chỉ phục vụ preview, giữ nguyên transcript để tránh UI nhảy qua
+        // lại giữa nhiều speaker khi Deepgram còn đang sửa giả thuyết.
+        if (!data.is_final || words.length === 0) {
+          const speaker = typeof words[0]?.speaker === "number" ? words[0].speaker : 0;
+          const lastWord = words[words.length - 1];
           onTranscriptRef.current({
             text: transcript,
-            isFinal,
-            speechFinal,
-            speakerTag,
-            startMs,
-            endMs,
-            confidence,
+            isFinal: !!data.is_final,
+            speechFinal: !!data.speech_final,
+            speakerTag: `speaker_${speaker + 1}`,
+            startMs: typeof words[0]?.start === "number" ? baseMs + Math.round(words[0].start * 1000) : baseMs,
+            endMs: typeof lastWord?.end === "number" ? baseMs + Math.round(lastWord.end * 1000) : baseMs,
+            confidence: alt.confidence || 1.0,
           });
           return;
         }
 
-        // ---- FINAL ----
-        // 1) Loại "mega-word" artifact: với diarize + smart_format trên audio nhiễu
-        // (mic thu qua loa), Deepgram đôi khi chèn một "word" mà punctuated_word chứa
-        // NGUYÊN CẢ CÂU (vd 20 ký tự trong 0.08s) → dựng text từ words sẽ bị nhân đôi
-        // câu. Nhận diện bằng mật độ ký tự phi lý (>50 ký tự/giây và dài >8 ký tự).
-        const cleanWords = words.filter((w: any) => {
-          const wText = String(w.punctuated_word || w.word || "");
-          const dur = Math.max(0.01, (Number(w.end) || 0) - (Number(w.start) || 0));
-          return !(wText.length > 8 && wText.length / dur > 50);
+        // Deepgram đôi khi chèn một word chứa nguyên cả câu trong vài chục ms.
+        // Nếu dựng text từ word đó, câu sẽ bị nhân đôi. Loại artifact có mật độ
+        // ký tự phi lý trước khi tách speaker runs.
+        const cleanWords = words.filter((word) => {
+          const wordText = String(word.punctuated_word || word.word || "");
+          const duration = Math.max(0.01, (Number(word.end) || 0) - (Number(word.start) || 0));
+          return !(wordText.length > 8 && wordText.length / duration > 50);
         });
 
-        // 2) Lọc re-emission: Deepgram có thể re-emit final chồng lấn lên đoạn đã
-        // phát ra trước đó. Từ nào bắt đầu trước mốc KẾT THÚC của từ cuối đã xử lý
-        // (trừ dung sai 0.1s cho ranh giới từ) là re-emission → bỏ.
-        const filteredWords = cleanWords.filter(
-          (w: any) => w.start > lastFinalWordEndRef.current - 0.1
-        );
-        if (cleanWords.length > 0 && filteredWords.length === 0) {
-          // Toàn bộ từ trong segment này đã được xử lý trước đó → cả message là
-          // re-emission, bỏ qua (không phát raw để tránh trùng khung nghe trực tiếp)
-          return;
-        }
-
-        // 3) Bản thô 100% cho khung "Nghe trực tiếp": nguyên văn field transcript
-        // (sạch, có dấu câu) — KHÔNG dựng lại từ words.
-        onRawFinalRef.current?.(transcript);
-
+        // Final/correction có thể chồng lên final đã phát trước đó. Chỉ giữ các
+        // word nằm sau mốc cuối đã chấp nhận; nếu cả message là re-emission thì
+        // bỏ hoàn toàn, bao gồm cả raw transcript.
+        const filteredWords = cleanWords.filter((word) => {
+          if (lastFinalWordEndRef.current < 0) return true;
+          if (typeof word.end === "number") return word.end > lastFinalWordEndRef.current + 0.02;
+          return typeof word.start !== "number" || word.start > lastFinalWordEndRef.current + 0.02;
+        });
+        if (cleanWords.length > 0 && filteredWords.length === 0) return;
         if (filteredWords.length === 0) return;
-        const maxEnd = Math.max(...filteredWords.map((w: any) => w.end));
-        lastFinalWordEndRef.current = Math.max(lastFinalWordEndRef.current, maxEnd);
 
-        // Một segment final có thể chứa NHIỀU người nói. Cách cũ gán cả segment cho
-        // speaker "đa số" khiến lời người này lẫn vào block người kia. Chuẩn xử lý
-        // diarization streaming của Deepgram: duyệt words[], cắt thành các RUN liên
-        // tiếp cùng word.speaker, mỗi run là một lời thoại riêng.
-        // (diarize=false → word không có field speaker → cả segment là 1 run,
-        // giữ nguyên hành vi cũ.)
-        const runs: { speaker: number; words: any[] }[] = [];
-        for (const w of filteredWords) {
-          const spk = typeof w.speaker === "number" ? w.speaker : 0;
-          const lastRun = runs[runs.length - 1];
-          if (lastRun && lastRun.speaker === spk) {
-            lastRun.words.push(w);
-          } else {
-            runs.push({ speaker: spk, words: [w] });
-          }
+        const finalEnds = filteredWords
+          .map((word) => word.end)
+          .filter((value): value is number => typeof value === "number");
+        if (finalEnds.length > 0) {
+          lastFinalWordEndRef.current = Math.max(lastFinalWordEndRef.current, ...finalEnds);
         }
 
-        runs.forEach((run, idx) => {
-          const text = run.words
-            .map((w: any) => w.punctuated_word || w.word)
-            .join(joinChar);
-          if (!text.trim()) return;
+        // Raw is emitted exactly once per accepted final. Speaker-run callbacks
+        // below must never append to the raw listening panel themselves.
+        const rawText = filteredWords.length === cleanWords.length
+          ? transcript
+          : wordsToTranscript(filteredWords, sourceLanguage);
+        if (rawText) onRawFinalRef.current?.(rawText);
+
+        // Một final result có thể chứa NHIỀU người nói. Trước đây toàn bộ result
+        // bị gán theo words[0].speaker, làm câu trả lời của người sau dính sang
+        // người trước. Tách thành các run liên tiếp theo word.speaker và giữ
+        // timestamp thật của từng run trước khi đưa sang UI/Gemini.
+        const rawRuns: SpeakerRun[] = [];
+        for (const word of filteredWords) {
+          const speaker = typeof word.speaker === "number"
+            ? word.speaker
+            : (rawRuns[rawRuns.length - 1]?.speaker ?? 0);
+          const current = rawRuns[rawRuns.length - 1];
+          if (current && current.speaker === speaker) current.words.push(word);
+          else rawRuns.push({ speaker, words: [word] });
+        }
+
+        const runs = stabilizeSpeakerRuns(rawRuns);
+
+        runs.forEach((run, index) => {
+          const runText = wordsToTranscript(run.words, sourceLanguage);
+          if (!runText) return;
+          const confidences = run.words
+            .map((word) => word.confidence)
+            .filter((value): value is number => typeof value === "number");
           onTranscriptRef.current({
-            text,
+            text: runText,
             isFinal: true,
-            // speech_final đánh dấu điểm kết thúc của cả segment → chỉ gắn vào run cuối
-            speechFinal: speechFinal && idx === runs.length - 1,
+            speechFinal: !!data.speech_final && index === runs.length - 1,
             speakerTag: `speaker_${run.speaker + 1}`,
-            startMs: baseMs + Math.round(run.words[0].start * 1000),
-            endMs: baseMs + Math.round(run.words[run.words.length - 1].end * 1000),
-            confidence,
+            startMs: baseMs + Math.round((run.words[0].start || 0) * 1000),
+            endMs: baseMs + Math.round((run.words[run.words.length - 1].end || 0) * 1000),
+            confidence: confidences.length > 0
+              ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+              : (alt.confidence || 1.0),
           });
         });
       };

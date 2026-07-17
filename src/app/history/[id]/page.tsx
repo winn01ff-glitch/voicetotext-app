@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import { useState, useEffect, use, Fragment, useMemo, useRef, useCallback, useDeferredValue } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { getRawTranslationCache, putRawTranslationCache } from "@/lib/translation-cache";
 import { exportToDocx } from "@/lib/docx-helper";
 import { exportToPdf } from "@/lib/pdf-helper";
 import PipelineProgress from "@/components/PipelineProgress";
@@ -91,6 +92,17 @@ function splitSentences(text: string): string[] {
     .split(/(?<=[。．！？!?])\s*/u)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+const RAW_TRANSLATION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function textFingerprint(text: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${text.length}:${hash >>> 0}`;
 }
 
 interface HistoryDetailProps {
@@ -212,6 +224,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [activeEditingMode, setActiveEditingMode] = useState<string | null>(null);
   const [isRewritingRaw, setIsRewritingRaw] = useState(false);
   const [rawLangMode, setRawLangMode] = useState<"original" | "translated">("original");
+  const [offlineRawTranslations, setOfflineRawTranslations] = useState<string[]>([]);
+  const [offlineTranslationSource, setOfflineTranslationSource] = useState("");
+  const [isTranslatingRaw, setIsTranslatingRaw] = useState(false);
+  const rawScrollContainerRef = useRef<HTMLDivElement>(null);
   // Bản gốc: cách hiển thị blob thô. "split" = tách dòng theo câu (mặc định, thuần frontend),
   // "flat" = thô 100% nguyên khối, "shortened" = bản rút gọn AI tạm thời (KHÔNG lưu DB).
   const [rawViewMode, setRawViewMode] = useState<"split" | "flat" | "shortened">("split");
@@ -960,6 +976,48 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, []);
+
+  // Với nguồn YouTube, trang tiến trình được giữ nguyên khi pipeline chạy nên lần
+  // tải audio lúc mount có thể xảy ra trước khi server kịp ghi file. Khi meeting
+  // chuyển sang trạng thái hoàn tất, thử nạp lại audio mà không hard reload trang.
+  useEffect(() => {
+    if (!meeting || audioBlobUrl) return;
+    if (["queued", "uploading", "transcribing", "processing"].includes(meeting.status)) return;
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const loadCompletedAudio = async () => {
+      try {
+        let url = await getAudioUrl(meetingId);
+        if (!url) {
+          const response = await fetch(`/api/meetings/${meetingId}/audio`, { cache: "no-store" });
+          if (!response.ok) return;
+
+          const blob = await response.blob();
+          const { putAudio } = await import("@/lib/audio-cache");
+          await putAudio(meetingId, blob);
+          url = await getAudioUrl(meetingId);
+        }
+
+        if (!url) return;
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        objectUrl = url;
+        setAudioBlobUrl(url);
+      } catch (error) {
+        console.warn("Không thể nạp audio sau khi hoàn tất pipeline:", error);
+      }
+    };
+
+    void loadCompletedAudio();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [meetingId, meeting?.status]);
 
   // Ghi cache chi tiết vào localStorage mỗi khi dữ liệu cốt lõi thay đổi (sau khi fetch,
   // refresh ngầm, hoặc sau khi user chỉnh sửa). Bọc try/catch để nếu vượt quota thì bỏ qua
@@ -1808,7 +1866,107 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return transcripts.some((t) => t.translatedText && t.translatedText.trim());
   }, [transcripts]);
 
-  const [isTranslatingRaw, setIsTranslatingRaw] = useState(false);
+  // raw_transcript is produced by the offline audio pipeline (live recording,
+  // YouTube and uploaded files all converge here). Line splitting is display-only.
+  const offlineRawSentences = useMemo(
+    () => splitSentences(meeting?.raw_transcript || ""),
+    [meeting?.raw_transcript]
+  );
+
+  const offlineRawRows = useMemo(() => {
+    const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+    return offlineRawSentences
+      .map((original, index) => ({ original, translated: offlineRawTranslations[index] || "" }))
+      .filter((row) =>
+        !normalizedQuery ||
+        row.original.toLocaleLowerCase().includes(normalizedQuery) ||
+        row.translated.toLocaleLowerCase().includes(normalizedQuery)
+      );
+  }, [offlineRawSentences, offlineRawTranslations, searchQuery]);
+
+  const hasOfflineRawTranslation =
+    offlineRawSentences.length > 0 &&
+    offlineRawTranslations.length === offlineRawSentences.length &&
+    offlineTranslationSource === (meeting?.raw_transcript || "");
+
+  const handleSelectRawTranslation = async () => {
+    setRawLangMode("translated");
+    const source = meeting?.raw_transcript || "";
+    const hasCurrentTranslation =
+      offlineRawSentences.length > 0 &&
+      offlineRawTranslations.length === offlineRawSentences.length &&
+      offlineTranslationSource === source;
+    const resetEmptyTranslationScroll = () => {
+      if (rawScrollContainerRef.current) rawScrollContainerRef.current.scrollTop = 0;
+    };
+    try {
+      const cached = await getRawTranslationCache(meetingId);
+      const isValid =
+        cached?.sourceFingerprint === textFingerprint(source) &&
+        cached?.targetLanguage === meeting?.target_language &&
+        Array.isArray(cached?.translations) &&
+        cached.translations.length === offlineRawSentences.length;
+      if (!isValid) {
+        if (!hasCurrentTranslation) {
+          setOfflineRawTranslations([]);
+          setOfflineTranslationSource("");
+          resetEmptyTranslationScroll();
+        }
+        return;
+      }
+      setOfflineRawTranslations(cached.translations);
+      setOfflineTranslationSource(source);
+    } catch (error) {
+      console.warn("Unable to read raw translation cache", error);
+      if (!hasCurrentTranslation) {
+        setOfflineRawTranslations([]);
+        setOfflineTranslationSource("");
+        resetEmptyTranslationScroll();
+      }
+    }
+  };
+
+  const handleTranslateRaw = async () => {
+    if (offlineRawSentences.length === 0 || isTranslatingRaw) return;
+    setIsTranslatingRaw(true);
+    try {
+      const res = await fetch("/api/translate-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          texts: offlineRawSentences,
+          sourceLang: meeting?.source_language || "auto",
+          targetLang: meeting?.target_language || "vi",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.translatedTexts) || data.translatedTexts.length !== offlineRawSentences.length) {
+        throw new Error("Raw translation alignment failed");
+      }
+      const source = meeting?.raw_transcript || "";
+      setOfflineRawTranslations(data.translatedTexts);
+      setOfflineTranslationSource(source);
+      try {
+        await putRawTranslationCache(meetingId, {
+          sourceFingerprint: textFingerprint(source),
+          targetLanguage: meeting?.target_language || "vi",
+          translations: data.translatedTexts,
+          expiresAt: Date.now() + RAW_TRANSLATION_CACHE_TTL_MS,
+        });
+      } catch (error) {
+        console.warn("Unable to persist raw translation cache", error);
+        addToast(
+          "Không thể lưu bản dịch",
+          "Bản dịch vẫn dùng được trong phiên này.",
+          "warning"
+        );
+      }
+    } catch {
+      addToast("Không thể dịch", "Vui lòng thử lại sau.", "error");
+    } finally {
+      setIsTranslatingRaw(false);
+    }
+  };
 
   // Phân vai NHẸ: chỉ gán lại người nói trên transcript đã có (đổi nhãn / tách độc thoại / AI),
   // GIỮ nguyên nội dung + bản dịch. Chạy đồng bộ qua /rediarize (nhanh, không dịch lại).
@@ -1882,26 +2040,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
   };
 
-  const handleQuickTranslate = async () => {
-    setIsTranslatingRaw(true);
-    try {
-      const res = await fetch("/api/meetings/reprocess/run-queue", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId, jobTypes: ["process"], isFromReprocess: true }),
-      });
-      if (res.ok) {
-        refreshMeetingDataSilently();
-      } else {
-        addToast("Lỗi", "Không thể bắt đầu dịch.", "error");
-      }
-    } catch (e) {
-      addToast("Lỗi", "Đã xảy ra lỗi khi kết nối.", "error");
-    } finally {
-      setIsTranslatingRaw(false);
-    }
-  };
-
   const filteredReprocessedTranscripts = reprocessedTranscripts.filter((t) => {
     if (!searchQuery.trim()) return true;
     const norm = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/đ/g, "d");
@@ -1970,17 +2108,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // Pipeline processing statuses
   const processingStatuses = [
-    "queued", "uploading", "transcribing",
+    "queued", "uploading", "transcribing", "processing",
   ];
-  // Upload/YouTube: chưa có nội dung gì để xem cho tới khi AI xử lý xong → ở lại
-  // màn tiến trình suốt cả giai đoạn "processing" (job process + summary), tạo
-  // một hành trình % liền mạch 0→100. Live meeting: đã có transcript để đọc nên
-  // giai đoạn "processing" vẫn vào thẳng trang nội dung như cũ.
-  const isInPipeline = meeting && (
-    processingStatuses.includes(meeting.status) ||
-    (meeting.status === "processing" && meeting.source_type !== "live")
-  );
-  const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status) && meeting.source_type !== "live";
+  // Mọi nguồn (kể cả live) ở lại màn tiến trình cho tới khi pipeline hoàn tất.
+  // Nhờ vậy nếu người dùng rời trang rồi mở lại, UI không lộ trang chi tiết sớm.
+  const isInPipeline = meeting && processingStatuses.includes(meeting.status);
+  const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status);
 
   // Show processing UI for pipeline meetings
   if (isInPipeline || isPipelineTerminal) {
@@ -2015,9 +2148,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <div className="w-16 h-16 mx-auto bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-2xl flex items-center justify-center mb-4">
                   <Sparkles className="w-8 h-8" />
                 </div>
-                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Đang xử lý âm thanh</h2>
+                <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">Đang hoàn tất cuộc họp</h2>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                  AI đang phân tích và xử lý file của bạn. Bạn có thể rời trang và quay lại sau.
+                  Hệ thống đang chuẩn bị bản ghi và nội dung cuộc họp. Bạn có thể rời trang và quay lại sau.
                 </p>
               </div>
               <PipelineProgress
@@ -2025,8 +2158,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 initialStatus={meeting.status}
                 initialProgress={meeting.progress}
                 onCompleted={() => {
-                  // Reload page to show full results
-                  window.location.reload();
+                  // Nạp dữ liệu hoàn tất vào state hiện tại; hard reload sẽ làm
+                  // splash "Đang tải cuộc họp" xuất hiện lại và gây nháy UI.
+                  void refreshMeetingDataSilently();
                 }}
                 onCancel={() => {
                   // Status will update via Realtime
@@ -3294,21 +3428,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         <FileText className="w-4.5 h-4.5 text-indigo-500" />
                         <span>Bản ghi gốc</span>
                       </div>
-                      <span className="text-[10px] sm:text-xs font-normal opacity-60 pl-6 sm:pl-0">({filteredTranscripts.length} đoạn)</span>
+                      <span className="text-[10px] sm:text-xs font-normal opacity-60 pl-6 sm:pl-0">({offlineRawSentences.length} đoạn)</span>
                     </div>
                     
                     <div className="flex items-center space-x-3">
-                      {!hasTranslation && (
-                        <button
-                          onClick={handleQuickTranslate}
-                          disabled={isTranslatingRaw}
-                          className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg border border-indigo-200 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400 bg-indigo-50/50 dark:bg-indigo-950/20 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:border-indigo-300 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                        >
-                          <Languages className={`w-3.5 h-3.5 ${isTranslatingRaw ? "animate-spin" : ""}`} />
-                          {isTranslatingRaw ? "Đang dịch..." : "Dịch nhanh"}
-                        </button>
-                      )}
-                      
                       <div className="relative flex bg-slate-100 dark:bg-slate-800/80 p-0.5 rounded-full border border-slate-200/50 dark:border-slate-700/50 shadow-inner w-36 select-none">
                         {/* Sliding Background */}
                         <div
@@ -3328,7 +3451,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           Bản gốc
                         </button>
                         <button
-                          onClick={() => setRawLangMode("translated")}
+                          onClick={handleSelectRawTranslation}
                           className={`relative z-10 flex-1 text-center py-1 text-xs font-semibold rounded-full transition-colors duration-200 cursor-pointer ${
                             rawLangMode === "translated"
                               ? "text-indigo-600 dark:text-indigo-400"
@@ -3366,10 +3489,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     <button
                       onClick={() => {
                         const textToCopy = rawLangMode === "original"
-                          ? splitSentences(meeting.raw_transcript).join("\n")
-                          : filteredTranscripts
-                              .map((t) => t.translatedText || t.correctedText || t.originalText || "")
-                              .join("\n");
+                          ? offlineRawSentences.join("\n")
+                          : offlineRawTranslations.join("\n");
                         handleCopyText(textToCopy, "raw_blob");
                       }}
                       className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded transition-colors cursor-pointer shrink-0"
@@ -3379,10 +3500,15 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </button>
                   </div>
 
-                  <div className="relative w-full overflow-hidden min-h-[100px]">
+                  <div className="relative w-full h-[calc(100vh-360px)] min-h-[360px] max-h-[720px] overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50/30 shadow-inner dark:border-slate-800 dark:bg-slate-950/20">
+                    <div ref={rawScrollContainerRef} className={`relative h-full overflow-x-hidden p-4 ${
+                      rawLangMode === "translated" && !hasOfflineRawTranslation
+                        ? "overflow-y-hidden"
+                        : "overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+                    }`}>
                     {/* Slide 1: Original */}
                     <div
-                      className="w-full"
+                      className="w-full min-h-full"
                       style={{
                         position: rawLangMode === "original" ? "relative" : "absolute",
                         top: 0,
@@ -3396,8 +3522,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                       ) : (
                         <div className="space-y-3">
                           <div className="space-y-1.5">
-                            {splitSentences(meeting.raw_transcript).map((s, i) => (
-                              <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(s, searchQuery)}</p>
+                            {offlineRawRows.map((row, i) => (
+                              <p key={i} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">{highlightText(row.original, searchQuery)}</p>
                             ))}
                           </div>
                         </div>
@@ -3406,7 +3532,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
                     {/* Slide 2: Translated */}
                     <div
-                      className="w-full"
+                      className="w-full min-h-full"
                       style={{
                         position: rawLangMode === "translated" ? "relative" : "absolute",
                         top: 0,
@@ -3415,53 +3541,35 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         pointerEvents: rawLangMode === "translated" ? "auto" : "none",
                       }}
                     >
-                      {rawLangMode === "translated" && !hasTranslation ? (
-                        <div className="py-12 text-center space-y-3 bg-slate-50/50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 my-2">
+                      {rawLangMode === "translated" && !hasOfflineRawTranslation ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-center space-y-3 px-6">
                           <Languages className="w-8 h-8 text-indigo-400 dark:text-indigo-600 mx-auto" />
                           <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Bản dịch tiếng Việt chưa được tạo</p>
                           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                            Hãy bấm vào nút <strong>"Dịch nhanh"</strong> ở góc trên bên phải để AI bắt đầu dịch tự động toàn bộ bản ghi cuộc họp.
+                            Dịch từng dòng từ bản bóc băng gốc để dễ đối chiếu.
                           </p>
+                          <button
+                            type="button"
+                            onClick={handleTranslateRaw}
+                            disabled={isTranslatingRaw}
+                            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            <Languages className={`w-4 h-4 ${isTranslatingRaw ? "animate-spin" : ""}`} />
+                            {isTranslatingRaw ? "Đang dịch bản gốc..." : "Dịch bản gốc"}
+                          </button>
                         </div>
-                      ) : groupedParagraphs.length > 0 ? (
-                        <div className="space-y-4 divide-y divide-slate-100 dark:divide-slate-800/30">
-                          {groupedParagraphs.map((p, pIdx) => {
-                            const isUnknownSpeaker = p.speakerTag === "unknown" || 
-                                                     p.speakerName.toLowerCase().includes("unknown") || 
-                                                     p.speakerName.toLowerCase() === "unknown";
-                            
-                            return (
-                              <div key={pIdx} className="pt-3.5 first:pt-0 pb-1 flex flex-col sm:flex-row items-start gap-2.5">
-                                {!isUnknownSpeaker && (
-                                  <span 
-                                    style={{ color: p.speakerColor, borderColor: p.speakerColor + '40', backgroundColor: p.speakerColor + '08' }} 
-                                    className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-lg border select-none sm:w-28 text-center truncate mt-0.5"
-                                  >
-                                    {p.speakerName}
-                                  </span>
-                                )}
-                                <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 flex-1 space-y-1.5">
-                                  {p.segments.map((t) => {
-                                    const isUntranslated = !t.translatedText;
-                                    const text = t.translatedText || t.correctedText || t.originalText || "";
-                                    
-                                    return (
-                                      <p 
-                                        key={t.id} 
-                                        className={`${isUntranslated ? "text-slate-400/70 italic text-xs" : ""}`}
-                                      >
-                                        {highlightText(text, searchQuery)}
-                                      </p>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            );
-                          })}
+                      ) : offlineRawRows.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {offlineRawRows.map((row, index) => (
+                            <p key={index} className="text-sm leading-relaxed text-slate-700 dark:text-slate-300">
+                              {highlightText(row.translated, searchQuery)}
+                            </p>
+                          ))}
                         </div>
                       ) : (
                         <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung nào khớp với từ khóa tìm kiếm.</p>
                       )}
+                    </div>
                     </div>
                   </div>
                 </div>
