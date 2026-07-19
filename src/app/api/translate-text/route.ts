@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { runWithGeminiClient } from "@/lib/ai/geminiClient";
 
-const TRANSLATION_CONCURRENCY = 3;
+const TRANSLATION_CONCURRENCY = 5;
 const TRANSLATION_RETRIES = 2;
 
 async function mapWithConcurrency<T, R>(

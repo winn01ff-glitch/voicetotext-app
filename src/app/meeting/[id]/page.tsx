@@ -10,13 +10,90 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import PipelineProgress from "@/components/PipelineProgress";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle, Play,
-  Maximize2, Minimize2, Edit, AlertCircle, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff, ChevronUp,
-  Moon, Sun, Plus, ChevronDown
+  Maximize2, Minimize2, Edit, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff, ChevronUp,
+  Moon, Sun, Plus, ChevronDown, Radio
 } from "lucide-react";
 
 interface MeetingRoomProps {
   params: Promise<{ id: string }>;
 }
+
+// ================================================================
+// Gom câu cho màn hình live: dòng = một câu trọn. Ranh giới CHÍNH là dấu kết
+// câu; nghỉ nhịp (LINE_FLUSH_GAP_MS) và speech_final là ranh giới CHỐT; quá
+// LINE_MAX_CHARS không thấy dấu câu thì cắt cưỡng bức để dòng không phình.
+// ================================================================
+const LINE_FLUSH_GAP_MS = 1200;
+const LINE_MAX_CHARS = 120;
+// Số câu gom vào một request dịch. Hạn mức free của Gemini chặn theo request/ngày
+// nên gộp giúp chạy được nhiều cuộc hơn hẳn; token cũng giảm vì prompt dùng chung.
+const TRANSLATE_BATCH_SIZE = 4;
+// Chờ tối đa bấy nhiêu ms cho đủ nhóm rồi bắn luôn dù chưa đủ.
+const TRANSLATE_BATCH_WAIT_MS = 3000;
+
+// Dấu kết câu: full-width CJK luôn cắt; chấm half-width chỉ cắt khi theo sau là
+// khoảng trắng/hết chuỗi (tránh cắt số thập phân "1.5"). Scan tay thay vì regex
+// global: regex bỏ qua đoạn không khớp → rơi mất chữ, điều tuyệt đối cấm ở đây.
+const CJK_SENTENCE_END = "。．！？";
+const ANY_SENTENCE_PUNCT = "。．！？!?.";
+
+// Rút `chars` ký tự đầu khỏi danh sách span và trả về speaker chiếm nhiều ký tự
+// nhất trong phần rút ra. Span bị cắt dở thì phần còn lại ở nguyên đầu danh sách.
+// Độ dài span chỉ xấp xỉ (text bị trim khi cắt câu) — đủ chính xác cho việc gán
+// nhãn, và luôn fail-safe: hết span thì trả null để caller dùng nhãn hiện tại.
+function takeDominantSpeaker(
+  spans: { tag: string; name: string; len: number }[],
+  chars: number
+): { tag: string; name: string } | null {
+  const tally = new Map<string, { name: string; len: number }>();
+  let remaining = chars;
+  while (remaining > 0 && spans.length > 0) {
+    const span = spans[0];
+    const used = Math.min(span.len, remaining);
+    const entry = tally.get(span.tag) || { name: span.name, len: 0 };
+    entry.len += used;
+    tally.set(span.tag, entry);
+    remaining -= used;
+    if (used >= span.len) spans.shift();
+    else span.len -= used;
+  }
+  let best: { tag: string; name: string } | null = null;
+  let bestLen = -1;
+  for (const [tag, entry] of tally) {
+    if (entry.len > bestLen) {
+      bestLen = entry.len;
+      best = { tag, name: entry.name };
+    }
+  }
+  return best;
+}
+
+function splitCompleteSentences(text: string): { complete: string[]; rest: string } {
+  const complete: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const next = i + 1 < text.length ? text[i + 1] : "";
+    const isEnd =
+      CJK_SENTENCE_END.includes(ch) ||
+      ch === "!" || ch === "?" ||
+      (ch === "." && (next === "" || /\s/.test(next)));
+    if (!isEnd) continue;
+    // Nuốt trọn cụm dấu liên tiếp (？！, ?!, ...) rồi cắt sau cụm.
+    let end = i + 1;
+    while (end < text.length && ANY_SENTENCE_PUNCT.includes(text[end])) end += 1;
+    const piece = text.slice(start, end).trim();
+    if (piece) complete.push(piece);
+    start = end;
+    i = end - 1;
+  }
+  return { complete, rest: text.slice(start).trim() };
+}
+
+// Id do client sinh trong lúc live (dòng transcript, speaker "temp-") không phải
+// uuid; ghi thẳng vào Postgres sẽ lỗi cú pháp uuid và trả về object rỗng {}.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (value: unknown): boolean => typeof value === "string" && UUID_RE.test(value);
 
 const getVisualLength = (str: string) => {
   let len = 0;
@@ -98,8 +175,22 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const liveTranscriptTextRef = useRef<string>("");
   liveTranscriptTextRef.current = liveTranscriptText;
   const [liveInterimText, setLiveInterimText] = useState<string>("");
+  // Buffer câu đang gom (chưa gặp dấu kết câu / nghỉ nhịp). Ref là nguồn chuẩn,
+  // state chỉ để render panel "Nghe trực tiếp".
+  const lineBufRef = useRef<{
+    text: string;
+    startMs: number;
+    endMs: number;
+    speakerTag: string;
+    speakerName: string;
+    confidence: number;
+    // Ai đóng góp đoạn nào trong buffer, theo thứ tự. Một câu có thể trải qua
+    // nhiều speaker run của Deepgram → khi cắt câu, gán cho người chiếm nhiều
+    // ký tự nhất trong CHÍNH câu đó thay vì người mở đầu buffer.
+    spans: { tag: string; name: string; len: number }[];
+  } | null>(null);
+  const [pendingLineText, setPendingLineText] = useState<string>("");
   const [copiedLive, setCopiedLive] = useState(false);
-  const [copiedDrafts, setCopiedDrafts] = useState(false);
   const liveScrollRef = useRef<HTMLDivElement>(null);
 
   // Custom Modal state
@@ -218,6 +309,11 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [chunkSize, setChunkSize] = useState(250);
   const [endpointing, setEndpointing] = useState(3000);
   const [translationDelay, setTranslationDelay] = useState(5000);
+  // Nghỉ nhịp bao lâu thì chốt dòng đang gom dở. Dấu kết câu vẫn là ranh giới
+  // chính; giá trị này chỉ quyết định lúc người nói dừng giữa chừng.
+  const [lineFlushGap, setLineFlushGap] = useState(LINE_FLUSH_GAP_MS);
+  const lineFlushGapRef = useRef(LINE_FLUSH_GAP_MS);
+  lineFlushGapRef.current = lineFlushGap;
   const [diarizationEnabled, setDiarizationEnabled] = useState(true);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [isMobileSettingsMounted, setIsMobileSettingsMounted] = useState(false);
@@ -245,6 +341,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Speaker mapping & merge states
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [showEndConfirmationModal, setShowEndConfirmationModal] = useState(false);
+  // Giữ modal lại thêm một nhịp để chạy hiệu ứng đóng trước khi gỡ khỏi DOM.
+  const [endModalClosing, setEndModalClosing] = useState(false);
+  const closeEndModal = useCallback((then?: () => void) => {
+    setEndModalClosing(true);
+    setTimeout(() => {
+      setShowEndConfirmationModal(false);
+      setEndModalClosing(false);
+      then?.();
+    }, 150);
+  }, []);
+  // Escape đóng modal — khớp hành vi với modal "Dừng xử lý".
+  useEffect(() => {
+    if (!showEndConfirmationModal) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeEndModal();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [showEndConfirmationModal, closeEndModal]);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [speakerToMergeSrc, setSpeakerToMergeSrc] = useState("");
   const [speakerToMergeDest, setSpeakerToMergeDest] = useState("");
@@ -254,7 +369,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
   // Refs for auto-scroll
   const parentRef = useRef<HTMLDivElement>(null);
-  const draftsContainerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const transcriptStartTimes = useRef<number>(0);
   const activeSpeakerTimeouts = useRef<Record<string, NodeJS.Timeout>>({});
@@ -285,6 +399,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     setChunkSize(parseInt(localStorage.getItem("meeting_chunk_size") || "100"));
     setEndpointing(parseInt(localStorage.getItem("meeting_endpointing") || "3000"));
     setTranslationDelay(parseInt(localStorage.getItem("meeting_translation_delay") || "5000"));
+    setLineFlushGap(parseInt(localStorage.getItem("meeting_line_flush_gap") || String(LINE_FLUSH_GAP_MS)));
     setDiarizationEnabled(true);
 
     fetchMeetingDetails();
@@ -350,12 +465,26 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         try {
           const parsed = JSON.parse(cachedTx);
           if (Array.isArray(parsed)) {
-            // Reset stuck "processing" status back to "draft" on reload
-            const cleaned = parsed.map((t) =>
-              t.status === "processing" ? { ...t, status: "draft" } : t
-            );
+            // Dòng kẹt "processing"/"draft" từ phiên trước (crash/reload giữa
+            // chừng): đưa lại vào hàng đợi dịch-từng-dòng thay vì batch phân
+            // vai cũ. Dòng đã có bản dịch thì coi như xong.
+            const cleaned = parsed.map((t) => {
+              if (t.status !== "processing" && t.status !== "draft") return t;
+              return t.translatedText
+                ? { ...t, status: "completed" }
+                : { ...t, status: "processing" };
+            });
             setTranscripts(cleaned);
-            console.log("Recovered transcripts from localStorage cache and cleaned processing states");
+            // Dồn thành từng nhóm TRANSLATE_BATCH_SIZE thay vì mỗi dòng một
+            // request — phiên crash giữa cuộc dài có thể còn hàng chục dòng dở.
+            const unfinished = cleaned.filter((t) => t.status === "processing");
+            for (let i = 0; i < unfinished.length; i += TRANSLATE_BATCH_SIZE) {
+              const group = unfinished.slice(i, i + TRANSLATE_BATCH_SIZE);
+              lineChainRef.current = lineChainRef.current
+                .then(() => runLineAIRef.current(group))
+                .catch(() => {});
+            }
+            console.log(`Recovered transcripts from localStorage cache, re-queued ${unfinished.length} unfinished lines`);
           }
         } catch (e) {
           console.error("Failed to parse cached transcripts:", e);
@@ -408,7 +537,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   };
 
-  // Re-scroll to bottom on new transcripts (only when a new card is added to prevent layout thrashing)
+  // Cuộn xuống cuối khi có dòng MỚI. Điều kiện phải khớp đúng bộ lọc đang render
+  // ở khung hội thoại (status !== "draft"); trước đây effect loại thêm
+  // "processing" nên dòng mới hiện ra rồi mà phải đợi dịch xong mới cuộn.
   useEffect(() => {
     if (messagesEndRef.current && !isFullScreen) {
       const timer = setTimeout(() => {
@@ -417,7 +548,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       return () => clearTimeout(timer);
     }
   }, [
-    transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").length,
+    transcripts.filter((t) => t.status !== "draft").length,
     isFullScreen
   ]);
 
@@ -616,32 +747,145 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     }
   }, [meeting, meetingId, speakers]);
 
+  // ================================================================
+  // AI cho màn hình live: sửa lỗi ASR + dịch, KHÔNG phân vai.
+  // Gom TRANSLATE_BATCH_SIZE câu rồi gọi một lần. Lý do là hạn mức free của
+  // Gemini chặn theo REQUEST/ngày (500/project) chứ không theo token: gọi từng
+  // câu thì một cuộc 35 phút ngốn ~305 request, gộp 4 chỉ còn ~77 — và token
+  // cũng giảm vì prompt dùng chung thay vì lặp lại mỗi dòng.
+  // TRANSLATE_BATCH_WAIT_MS đảm bảo câu cuối trước khoảng lặng không bị treo
+  // chờ cho đủ nhóm.
+  // ================================================================
+  const lineChainRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingBatchRef = useRef<any[]>([]);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runLineAI = async (blocks: any[]) => {
+    if (blocks.length === 0) return;
+    try {
+      const res = await fetch("/api/translate-line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lines: blocks.map((b) => b.text),
+          source_language: meeting?.source_language || "auto",
+          target_language: selectedTargetLang,
+          glossary: glossary.map((g: any) => ({ source: g.source, target: g.target })),
+        }),
+      });
+      if (!res.ok) throw new Error(`translate-line ${res.status}`);
+      const data = await res.json();
+      const results: any[] = Array.isArray(data.results) ? data.results : [];
+      // Ghép theo vị trí — route đã bảo đảm số phần tử khớp, thiếu thì fallback
+      // về nguyên văn cho đúng dòng đó thay vì lệch cả nhóm.
+      const byId = new Map(blocks.map((b, i) => [b.id, results[i]]));
+      setTranscripts((prev) =>
+        prev.map((t) => {
+          if (!byId.has(t.id)) return t;
+          const r = byId.get(t.id);
+          return {
+            ...t,
+            correctedText: r?.corrected_text || t.text,
+            translatedText: r?.translated_text || "",
+            status: "completed",
+          };
+        })
+      );
+    } catch (err) {
+      console.error("[translate-line] error:", err);
+      // Fail-soft: giữ nguyên văn, đánh completed để không kẹt "Đang dịch...".
+      const ids = new Set(blocks.map((b) => b.id));
+      setTranscripts((prev) =>
+        prev.map((t) => (ids.has(t.id) ? { ...t, correctedText: t.text, status: "completed" } : t))
+      );
+    }
+  };
+  // Ref luôn trỏ bản mới nhất — closure trong hàng đợi không bị stale state
+  // (selectedTargetLang/glossary có thể đổi giữa chừng).
+  const runLineAIRef = useRef(runLineAI);
+  runLineAIRef.current = runLineAI;
+
+  const emitLine = (text: string, buf: { startMs: number; endMs: number; speakerTag: string; speakerName: string; confidence: number }) => {
+    const newBlock = {
+      id: Math.random().toString(36).substr(2, 9),
+      text,
+      interimText: "",
+      correctedText: "",
+      translatedText: "",
+      speakerTag: buf.speakerTag,
+      speakerName: buf.speakerName,
+      startMs: buf.startMs,
+      endMs: buf.endMs,
+      confidence: buf.confidence,
+      status: "processing" as any,
+      createdAt: new Date().toISOString(),
+    };
+    setTranscripts((prev) => [...prev, newBlock]);
+    queueForTranslation(newBlock);
+  };
+
+  // Gom câu vào nhóm; bắn khi đủ TRANSLATE_BATCH_SIZE hoặc hết
+  // TRANSLATE_BATCH_WAIT_MS kể từ câu gần nhất (câu cuối trước khoảng lặng
+  // không phải chờ cho đủ nhóm).
+  const dispatchBatch = () => {
+    if (batchTimerRef.current) {
+      clearTimeout(batchTimerRef.current);
+      batchTimerRef.current = null;
+    }
+    const batch = pendingBatchRef.current;
+    if (batch.length === 0) return;
+    pendingBatchRef.current = [];
+    lineChainRef.current = lineChainRef.current
+      .then(() => runLineAIRef.current(batch))
+      .catch(() => {});
+  };
+  const dispatchBatchRef = useRef(dispatchBatch);
+  dispatchBatchRef.current = dispatchBatch;
+
+  const queueForTranslation = (block: any) => {
+    pendingBatchRef.current.push(block);
+    if (pendingBatchRef.current.length >= TRANSLATE_BATCH_SIZE) {
+      dispatchBatchRef.current();
+      return;
+    }
+    if (batchTimerRef.current) clearTimeout(batchTimerRef.current);
+    batchTimerRef.current = setTimeout(() => dispatchBatchRef.current(), TRANSLATE_BATCH_WAIT_MS);
+  };
+
+  const flushPendingLine = () => {
+    const buf = lineBufRef.current;
+    if (buf && buf.text.trim()) {
+      const text = buf.text.trim();
+      const dominant = takeDominantSpeaker(buf.spans, text.length);
+      if (dominant) {
+        buf.speakerTag = dominant.tag;
+        buf.speakerName = dominant.name;
+      }
+      emitLine(text, buf);
+    }
+    lineBufRef.current = null;
+    setPendingLineText("");
+  };
+  const flushPendingLineRef = useRef(flushPendingLine);
+  flushPendingLineRef.current = flushPendingLine;
+
   const handleTranscript = useCallback(
     async (dgData: { text: string; isFinal: boolean; speechFinal: boolean; speakerTag: string; startMs: number; endMs: number; confidence: number }) => {
       if (!dgData.text.trim()) return;
 
-      // Helper: ensure speaker color & display name exist
-      const ensureSpeaker = (tag: string) => {
-        if (tag && !speakerColorsRef.current[tag]) {
-          const colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
-          const existingCount = Object.keys(speakerColorsRef.current).length;
-          speakerColorsRef.current[tag] = colors[existingCount % colors.length];
-        }
+      // Chỉ TRA tên, KHÔNG đăng ký vào sidebar. Deepgram phát ra nhiều mẩu ngắn
+      // (speaker_3, speaker_4...) không bao giờ thắng "chiếm đa số" nên không
+      // thành dòng nào — đăng ký ở đây sẽ khiến sidebar liệt kê người không có
+      // trong khung hội thoại. Việc đăng ký do useEffect đồng bộ từ `transcripts`
+      // đảm nhiệm, nên sidebar luôn khớp đúng những gì đang hiển thị.
+      const resolveSpeakerName = (tag: string) => {
         const sp = speakers.find((s) => s.speaker_tag === tag);
-        const name = sp ? sp.display_name : tag.replace("speaker_", "Speaker ");
-        if (!sp && tag) {
-          const newColor = speakerColorsRef.current[tag] || "#cbd5e1";
-          setSpeakers((prev) => {
-            if (prev.some((s) => s.speaker_tag === tag)) return prev;
-            return [...prev, { id: `temp-${tag}`, speaker_tag: tag, display_name: name, color_hex: newColor }];
-          });
-        }
-        return name;
+        return sp ? sp.display_name : tag.replace("speaker_", "Speaker ");
       };
 
       // Get speaker tag from Deepgram
       const speakerTag = dgData.speakerTag || "speaker_1";
-      const speakerName = ensureSpeaker(speakerTag);
+      const speakerName = resolveSpeakerName(speakerTag);
 
       // 1. If interim (not final): update interim text for live area & fullscreen
       if (!dgData.isFinal) {
@@ -660,46 +904,69 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       setLiveInterimText("");
       setRealtimeText(null);
 
-      // 3. Create draft block
-      const currentTranscripts = transcriptsRef.current;
-      const lastBlock = currentTranscripts.length > 0 ? currentTranscripts[currentTranscripts.length - 1] : null;
-      const timeGap = lastBlock ? (dgData.startMs - lastBlock.endMs) : 0;
-      
-      const isSameSpeaker = lastBlock && lastBlock.speakerTag === speakerTag;
-      const isDraft = lastBlock && lastBlock.status === "draft";
-      const isRecent = timeGap < endpointing;
+      // 3. Gom CÂU thay vì gom theo speaker. Live không phân vai bằng AI nữa —
+      //    nhãn speaker lấy thẳng tag thô Deepgram (nhanh, 0 chi phí); phân vai
+      //    chuẩn thuộc pipeline hậu kỳ. Mỗi câu chốt → 1 call sửa lỗi + dịch.
+      const isJp = meeting?.source_language === "ja" || meeting?.source_language === "auto";
+      const joinChar = isJp ? "" : " ";
+      const incoming = dgData.text.trim();
+      const startMs = typeof dgData.startMs === "number" ? dgData.startMs : 0;
+      const endMs = typeof dgData.endMs === "number" ? dgData.endMs : 0;
 
-      if (isSameSpeaker && isDraft && isRecent) {
-        const isJp = meeting?.source_language === "ja" || meeting?.source_language === "auto";
-        const joinChar = isJp ? "" : " ";
-        const updatedText = (lastBlock.text + joinChar + dgData.text.trim()).trim();
+      // Nghỉ nhịp giữa buffer đang dở và final mới → chốt dòng dang dở trước.
+      if (lineBufRef.current && startMs - lineBufRef.current.endMs > lineFlushGapRef.current) {
+        flushPendingLine();
+      }
 
-        setTranscripts((prev) =>
-          prev.map((t) =>
-            t.id === lastBlock.id
-              ? { ...t, text: updatedText, endMs: dgData.endMs }
-              : t
-          )
-        );
-      } else {
-        const newBlock = {
-          id: Math.random().toString(36).substr(2, 9),
-          text: dgData.text.trim(),
-          interimText: "",
-          correctedText: "",
-          translatedText: "",
+      if (!lineBufRef.current) {
+        lineBufRef.current = {
+          text: incoming,
+          startMs,
+          endMs,
           speakerTag,
           speakerName,
-          startMs: typeof dgData.startMs === "number" ? dgData.startMs : 0,
-          endMs: typeof dgData.endMs === "number" ? dgData.endMs : 0,
           confidence: dgData.confidence,
-          status: "draft" as any,
-          createdAt: new Date().toISOString(),
+          spans: [{ tag: speakerTag, name: speakerName, len: incoming.length }],
         };
-        setTranscripts((prev) => [...prev, newBlock]);
+      } else {
+        const buf = lineBufRef.current;
+        buf.text = (buf.text + joinChar + incoming).trim();
+        buf.endMs = endMs;
+        // Gộp vào span cuối nếu cùng người, tránh danh sách phình vô hạn.
+        const tail = buf.spans[buf.spans.length - 1];
+        if (tail && tail.tag === speakerTag) tail.len += incoming.length;
+        else buf.spans.push({ tag: speakerTag, name: speakerName, len: incoming.length });
       }
+
+      // Cắt các câu trọn (theo dấu kết câu) ra khỏi buffer. Mỗi câu được gán cho
+      // người nói chiếm nhiều ký tự nhất TRONG CÂU ĐÓ — nhãn thô của Deepgram,
+      // không qua AI. Câu trải nhiều người vẫn giữ nguyên một dòng (không cắt
+      // vụn giữa từ như hành vi gom-theo-speaker trước đây).
+      const buf = lineBufRef.current;
+      const { complete, rest } = splitCompleteSentences(buf.text);
+      for (const sentence of complete) {
+        const dominant = takeDominantSpeaker(buf.spans, sentence.length);
+        if (dominant) {
+          buf.speakerTag = dominant.tag;
+          buf.speakerName = dominant.name;
+        }
+        emitLine(sentence, buf);
+        buf.startMs = buf.endMs;
+      }
+      buf.text = rest;
+      // Phần dở còn lại thuộc về người đang nói hiện tại.
+      if (buf.spans.length === 0) {
+        buf.spans = rest ? [{ tag: speakerTag, name: speakerName, len: rest.length }] : [];
+        buf.speakerTag = speakerTag;
+        buf.speakerName = speakerName;
+      }
+
+      if (dgData.speechFinal || buf.text.length > LINE_MAX_CHARS) {
+        flushPendingLine();
+      }
+      setPendingLineText(lineBufRef.current?.text || "");
     },
-    [speakers, meeting, endpointing]
+    [speakers, meeting]
   );
 
   const handleRawFinal = useCallback((text: string) => {
@@ -866,12 +1133,14 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const handleResetSettings = () => {
     setEndpointing(3000);
     setTranslationDelay(5000);
+    setLineFlushGap(LINE_FLUSH_GAP_MS);
     setEchoCancellation(true);
     setNoiseSuppression(true);
     setAutoGainControl(true);
     setDiarizationEnabled(true);
     localStorage.setItem("meeting_endpointing", "3000");
     localStorage.setItem("meeting_translation_delay", "5000");
+    localStorage.setItem("meeting_line_flush_gap", String(LINE_FLUSH_GAP_MS));
     localStorage.setItem("meeting_echo_cancellation", "true");
     localStorage.setItem("meeting_noise_suppression", "true");
     localStorage.setItem("meeting_auto_gain_control", "true");
@@ -944,6 +1213,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     if (status !== "recording") {
       setRealtimeText(null);
       setLiveInterimText("");
+      // Chốt câu đang gom dở, rồi bắn ngay nhóm còn treo — dừng ghi thì không
+      // có lý do đợi cho đủ TRANSLATE_BATCH_SIZE nữa.
+      flushPendingLineRef.current();
+      dispatchBatchRef.current();
       processDraftsBatch();
     }
   }, [status]);
@@ -953,7 +1226,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     if (liveScrollRef.current) {
       liveScrollRef.current.scrollTop = liveScrollRef.current.scrollHeight;
     }
-  }, [liveTranscriptText, liveInterimText]);
+  }, [liveTranscriptText, liveInterimText, pendingLineText, transcripts.length]);
 
   // Synchronize new speakers from transcripts to speakers state & database
   useEffect(() => {
@@ -982,13 +1255,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     });
   }, [transcripts, speakers, loading, meetingId]);
 
-  // Auto-process drafts when silence is detected & Auto-scroll drafts
+  // Lưới an toàn: luồng live mới không sinh block "draft" nữa (mỗi câu vào thẳng
+  // hàng đợi dịch), nhưng dữ liệu cũ hoặc phiên phục hồi vẫn có thể còn sót.
   useEffect(() => {
-    // Auto-scroll drafts container to bottom
-    if (draftsContainerRef.current) {
-      draftsContainerRef.current.scrollTop = draftsContainerRef.current.scrollHeight;
-    }
-
     const drafts = transcripts.filter((t) => t.status === "draft");
     if (drafts.length === 0) return;
 
@@ -1128,51 +1397,82 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   };
 
   const handleUpdateBubbleSpeaker = async (blockId: string, newSpeakerTag: string) => {
-    try {
-      const targetSpeaker = speakers.find((s) => s.speaker_tag === newSpeakerTag);
-      if (!targetSpeaker) return;
+    const targetSpeaker = speakers.find((s) => s.speaker_tag === newSpeakerTag);
+    if (!targetSpeaker) return;
 
-      // Update in Supabase
+    // Đổi trên UI trước — thao tác này luôn hợp lệ dù dòng đã vào DB hay chưa.
+    setTranscripts((prev) =>
+      prev.map((t) =>
+        t.id === blockId
+          ? { ...t, speakerTag: targetSpeaker.speaker_tag, speakerName: targetSpeaker.display_name }
+          : t
+      )
+    );
+
+    // Lúc đang họp, dòng transcript chỉ tồn tại trong state (id ngẫu nhiên phía
+    // client) và speaker có thể mang id giả "temp-"; cả hai đều không phải uuid
+    // nên ghi DB sẽ lỗi cú pháp. Các dòng này được end-meeting lưu sau, kèm
+    // speaker_tag đã đổi — nên bỏ qua ghi DB thay vì báo lỗi giả.
+    if (!isUuid(blockId) || !isUuid(targetSpeaker.id)) return;
+
+    try {
       const { error } = await supabase
         .from("transcripts")
         .update({ speaker_id: targetSpeaker.id })
         .eq("id", blockId);
-
       if (error) throw error;
-
-      // Update local state
-      setTranscripts((prev) =>
-        prev.map((t) =>
-          t.id === blockId
-            ? { ...t, speakerTag: targetSpeaker.speaker_tag, speakerName: targetSpeaker.display_name }
-            : t
-        )
-      );
     } catch (err) {
       console.error("Failed to update bubble speaker:", err);
-      addToast("Lỗi đổi vai", "Không thể chuyển vai người nói.", "error");
+      addToast("Lỗi đổi vai", "Đã đổi trên màn hình nhưng chưa lưu được.", "error");
     }
   };
 
   // Dynamic speaker name updates
   const handleRenameSpeaker = async (speakerTag: string, newName: string) => {
+    const sp = speakers.find((s) => s.speaker_tag === speakerTag);
+    if (!sp) return;
+
+    // Cập nhật UI trước để việc đổi tên luôn mượt, kể cả khi ghi DB hỏng.
+    setSpeakers((prev) =>
+      prev.map((s) => (s.speaker_tag === speakerTag ? { ...s, display_name: newName } : s))
+    );
+    setTranscripts((prev) =>
+      prev.map((t) => (t.speakerTag === speakerTag ? { ...t, speakerName: newName } : t))
+    );
+
     try {
-      const sp = speakers.find((s) => s.speaker_tag === speakerTag);
-      if (!sp) return;
-
-      const { error } = await supabase
-        .from("speakers")
-        .update({ display_name: newName })
-        .eq("id", sp.id);
-
-      if (error) throw error;
-
-      setSpeakers(speakers.map((s) => (s.speaker_tag === speakerTag ? { ...s, display_name: newName } : s)));
-      setTranscripts((prev) =>
-        prev.map((t) => (t.speakerTag === speakerTag ? { ...t, speakerName: newName } : t))
-      );
+      // Speaker sinh phía client (từ nhãn thô Deepgram) mang id giả "temp-<tag>"
+      // và CHƯA có trong DB. Cột speakers.id là uuid nên .eq("id", "temp-...")
+      // làm Postgres báo lỗi cú pháp uuid — chính là object rỗng {} in ra console
+      // trước đây. Trường hợp này phải INSERT chứ không phải UPDATE.
+      if (String(sp.id).startsWith("temp-")) {
+        const { data, error } = await supabase
+          .from("speakers")
+          .insert({
+            meeting_id: meetingId,
+            speaker_tag: speakerTag,
+            display_name: newName,
+            color_hex: speakerColorsRef.current[speakerTag] || "#cbd5e1",
+          })
+          .select("id")
+          .single();
+        if (error) throw error;
+        // Thay id giả bằng id thật để lần đổi tên sau đi nhánh UPDATE.
+        if (data?.id) {
+          setSpeakers((prev) =>
+            prev.map((s) => (s.speaker_tag === speakerTag ? { ...s, id: data.id } : s))
+          );
+        }
+      } else {
+        const { error } = await supabase
+          .from("speakers")
+          .update({ display_name: newName })
+          .eq("id", sp.id);
+        if (error) throw error;
+      }
     } catch (err) {
-      console.error(err);
+      console.error("Failed to rename speaker:", err);
+      addToast("Lỗi đổi tên", "Tên đã đổi trên màn hình nhưng chưa lưu được.", "error");
     }
   };
 
@@ -1440,10 +1740,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     return (
       <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
         <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/80 backdrop-blur-md">
-          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center gap-3">
+          <div className="max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 h-14 sm:h-16 flex items-center gap-2 sm:gap-3">
+            {/* Xử lý chạy nền ở server — rời trang không huỷ tiến trình, nên cho
+                phép quay lại danh sách như màn xử lý ở trang lịch sử. */}
+            <button
+              onClick={() => router.push("/")}
+              className="p-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-md hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors cursor-pointer shrink-0"
+              title="Quay lại danh sách"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
             <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>
               {meeting?.title || "Cuộc họp"}
             </h1>
+            {/* Badge loại nguồn — dùng chung style với trang lịch sử để ba luồng
+                (trực tiếp / tải lên / YouTube) nhìn nhất quán ở màn xử lý. */}
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 border-blue-200 bg-blue-50 text-blue-600 dark:border-blue-900/30 dark:bg-blue-950/40 dark:text-blue-400">
+              <Radio className="w-3 h-3" />
+              <span>Trực tiếp</span>
+            </span>
           </div>
         </header>
         <main className="flex-1 flex items-center justify-center p-6">
@@ -1463,7 +1778,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 initialStatus="uploading"
                 initialProgress={{ percent: 5, stage: "upload", message: "Đang lưu cuộc họp & tải âm thanh lên máy chủ..." }}
                 onCompleted={handlePipelineCompleted}
-                onCancel={() => router.replace(`/history/${meetingId}`)}
+                onCancel={() => router.replace("/")}
                 onResume={() => {}}
               />
             </div>
@@ -1849,34 +2164,32 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </p>
                 </div>
 
-                {/* Silence timeout (AI Translation Delay) */}
+                {/* Ngưỡng nghỉ nhịp để chốt dòng đang gom dở */}
                 <div className="space-y-1.5">
                   <div className={`flex justify-between items-center text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>
-                    <span>Thời gian tự động dịch (AI)</span>
-                    <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(translationDelay / 1000).toFixed(1)}s</span>
+                    <span>Độ dài dòng (nghỉ nhịp)</span>
+                    <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(lineFlushGap / 1000).toFixed(1)}s</span>
                   </div>
                   <div className="relative w-full">
                     <select
-                      value={translationDelay}
+                      value={lineFlushGap}
                       onChange={(e) => {
                         const val = parseInt(e.target.value);
-                        setTranslationDelay(val);
-                        localStorage.setItem("meeting_translation_delay", String(val));
+                        setLineFlushGap(val);
+                        localStorage.setItem("meeting_line_flush_gap", String(val));
                       }}
-                      disabled={status === "recording"}
-                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
                     >
-                      <option value="1000">Tức thì (1.0s)</option>
-                      <option value="2000">Rất nhanh (2.0s)</option>
-                      <option value="3000">Tiêu chuẩn (3.0s)</option>
-                      <option value="4000">Vừa phải (4.0s)</option>
-                      <option value="5000">Mặc định (5.0s)</option>
-                      <option value="10000">Cực chậm (10.0s)</option>
+                      <option value="600">Dòng rất ngắn (0.6s)</option>
+                      <option value="900">Dòng ngắn (0.9s)</option>
+                      <option value="1200">Mặc định (1.2s)</option>
+                      <option value="1800">Dòng dài (1.8s)</option>
+                      <option value="2500">Dòng rất dài (2.5s)</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                   </div>
                   <p className="text-[10px] text-slate-400 leading-normal">
-                    Thời gian im lặng để AI gom câu lại và thực hiện dịch đồng bộ.
+                    Câu kết thúc bằng dấu chấm luôn được tách ngay. Giá trị này chỉ áp dụng khi người nói dừng giữa chừng: nghỉ lâu hơn mức này thì phần đang dở được chốt và dịch. Đổi được cả khi đang ghi âm.
                   </p>
                 </div>
 
@@ -2015,11 +2328,12 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           ) : (
             <div
               ref={parentRef}
-              className="flex-1 overflow-y-auto custom-scrollbar pr-3 pb-4 space-y-4"
+              className="flex-1 overflow-y-auto custom-scrollbar pr-3 pb-1 space-y-4"
             >
             <div className="flex flex-col gap-2">
-              {transcripts.filter((t) => t.status !== "draft" && t.status !== "processing").map((t) => {
-                const needsReview = t.confidence < 0.8;
+              {/* Hiện cả block "processing": dòng xuất hiện NGAY với text thô,
+                  bản sửa + dịch thay vào ~1-2s sau (ba chấm nhảy ở khối dịch). */}
+              {transcripts.filter((t) => t.status !== "draft").map((t) => {
                 const isDraft = t.status === "draft";
                 const isProcessing = t.status === "processing";
                 const isError = t.status === "Dịch lỗi - Thử lại";
@@ -2056,9 +2370,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                               ))}
                             </select>
                           </div>
-                          <span className="text-[10px] text-slate-400 font-bold bg-slate-50 dark:bg-slate-800/50 px-2 py-0.5 rounded-full" title="Giờ hiện tại">
-                            {t.createdAt ? new Date(t.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}
-                          </span>
                           <span className="text-[10px] text-blue-500 dark:text-blue-400 font-extrabold bg-blue-50/60 dark:bg-blue-900/20 px-2 py-0.5 rounded-full" title="Thời gian từ lúc bắt đầu họp">
                             {(() => {
                               const elapsedSec = Math.round((t.startMs || 0) / 1000);
@@ -2069,14 +2380,10 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                           </span>
                         </div>
 
-                        {/* Status (Right side of the Header) */}
+                        {/* Status (Right side of the Header) — KHÔNG còn nhãn
+                            "Đang dịch": ba chấm nhảy ở khối bản dịch đã thể hiện
+                            đủ, hai chỉ báo cùng lúc là thừa. */}
                         <div className="flex items-center space-x-2">
-                          {needsReview && (
-                            <span className="flex items-center space-x-1 text-[10px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-0.5 rounded-full border border-amber-100 dark:border-amber-900/30 shadow-sm" title="Độ tin cậy nhận diện thấp">
-                              <AlertCircle className="w-3 h-3" />
-                              <span>Cần soát lại</span>
-                            </span>
-                          )}
                           {isError ? (
                             <button
                               onClick={() => handleRetryAI(t)}
@@ -2085,15 +2392,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                               <RefreshCw className="w-2.5 h-2.5" />
                               <span>Thử lại</span>
                             </button>
-                          ) : isProcessing ? (
-                            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-bold px-2.5 py-0.5 bg-blue-50/60 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/40 rounded-full shadow-sm inline-flex items-center">
-                              <span>Đang dịch</span>
-                              <span className="inline-flex ml-0.5 w-4 text-left">
-                                <span className="animate-pulse">.</span>
-                                <span className="animate-pulse [animation-delay:200ms]">.</span>
-                                <span className="animate-pulse [animation-delay:400ms]">.</span>
-                              </span>
-                            </span>
                           ) : isDraft ? (
                             <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold px-2.5 py-0.5 bg-slate-50/60 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-full shadow-sm inline-flex items-center">
                               <span>Đang nghe</span>
@@ -2113,13 +2411,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                         <div className="text-slate-800 dark:text-slate-100 text-sm font-semibold leading-relaxed whitespace-pre-wrap group/orig relative">
                           <div className="relative inline-flex items-center mr-2">
                             <span className="whitespace-pre-wrap">
-                              {needsReview ? (
-                                <span className="bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-200 dark:border-amber-900/30 inline">
-                                  {t.correctedText || t.text}
-                                </span>
-                              ) : (
-                                t.correctedText || t.text
-                              )}
+                              {t.correctedText || t.text}
                             </span>
                             <button
                               onClick={() => {
@@ -2144,8 +2436,29 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                           </div>
                         </div>
 
-                        {/* Separator & Translated Text Block */}
-                        {t.translatedText && (
+                        {/* Khối bản dịch — hiện NGAY cả khi chưa có nội dung, với ba
+                            chấm nhảy báo đang dịch. Nhờ vậy thẻ có đủ chiều cao từ
+                            đầu, không bị giãn ra sau khi dịch xong làm hụt cuộn. */}
+                        {!t.translatedText && isProcessing ? (
+                          <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-700/80">
+                            <span
+                              className="inline-flex items-center gap-1 h-[19px]"
+                              title="Đang dịch..."
+                              aria-label="Đang dịch"
+                            >
+                              {[0, 1, 2].map((i) => (
+                                <span
+                                  key={i}
+                                  className="w-1.5 h-1.5 rounded-full bg-emerald-500/70 dark:bg-emerald-400/70"
+                                  style={{
+                                    animation: "translating-dot 1s ease-in-out infinite",
+                                    animationDelay: `${i * 0.16}s`,
+                                  }}
+                                />
+                              ))}
+                            </span>
+                          </div>
+                        ) : t.translatedText ? (
                           <div className="mt-1.5 pt-1.5 border-t border-dashed border-slate-200 dark:border-slate-700/80 group/trans relative">
                             <div className="text-emerald-700 dark:text-emerald-400 text-[13px] leading-relaxed font-medium relative inline-flex items-center mr-2">
                               <span className="whitespace-pre-wrap">{t.translatedText}</span>
@@ -2166,14 +2479,16 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                               </button>
                             </div>
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   </div>
                 );
               })}
-              {/* Scroll anchor */}
-              <div ref={messagesEndRef} className="h-2" />
+              {/* Neo cuộn. Giữ mỏng để thẻ cuối nằm sát đường ngăn cách — thẻ đã
+                  có đủ chiều cao ngay từ đầu (khối bản dịch hiện luôn với ba chấm)
+                  nên không cần đệm thêm để tránh bị cắt. */}
+              <div ref={messagesEndRef} className="h-1 shrink-0" />
             </div>
             </div>
           )}
@@ -2181,7 +2496,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           {/* Separator Divider */}
           <div className="mr-3 h-[2px] bg-gradient-to-r from-blue-500/20 via-indigo-500/40 to-emerald-400/20 my-3 shrink-0 shadow-sm"></div>
 
-          {/* Continuous Live Transcript Area — 4 lines: title + interim + 2 scrollable */}
+          {/* Nghe trực tiếp — chiếm luôn chỗ của khung "Dịch trực tiếp" đã gỡ.
+              Bản dịch giờ hiện thẳng trong khung hội thoại chính nên khung dịch
+              riêng là thừa. */}
           <div className="shrink-0 bg-slate-50/40 dark:bg-slate-900/30 backdrop-blur-md border border-dashed border-slate-200 dark:border-slate-800/80 rounded-xl px-4 py-2 mr-3 flex flex-col shadow-sm transition-all duration-300">
             {/* Line 1: Fixed title + icons */}
             <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
@@ -2209,18 +2526,27 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 </div>
               )}
             </div>
-            {/* Body: 3 scrollable lines with accumulated transcript */}
-            <div 
+            {/* Body: mỗi câu một dòng (raw, tức thời) + dòng đang nói ở cuối */}
+            <div
               ref={liveScrollRef}
-              className="h-[54px] overflow-y-auto no-scrollbar mt-1"
+              className="h-[124px] overflow-y-auto no-scrollbar mt-1"
             >
-              {liveTranscriptText || liveInterimText ? (
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-[18px]">
-                  {liveTranscriptText}
-                  {liveInterimText && (
-                    <span className="text-slate-400 dark:text-slate-500 italic font-medium">{liveInterimText}...</span>
+              {transcripts.length > 0 || pendingLineText || liveInterimText ? (
+                <div className="space-y-0.5">
+                  {transcripts.slice(-12).map((t) => (
+                    <p key={t.id} className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-[18px]">
+                      {t.text}
+                    </p>
+                  ))}
+                  {(pendingLineText || liveInterimText) && (
+                    <p className="text-xs font-semibold text-slate-700 dark:text-slate-200 leading-[18px]">
+                      {pendingLineText}
+                      {liveInterimText && (
+                        <span className="text-slate-400 dark:text-slate-500 italic font-medium"> {liveInterimText}...</span>
+                      )}
+                    </p>
                   )}
-                </p>
+                </div>
               ) : (
                 <div className="flex items-center h-full">
                   <span className="text-slate-300 dark:text-slate-700 text-xs font-medium">Đang chờ âm thanh phát biểu...</span>
@@ -2229,109 +2555,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             </div>
           </div>
 
-          {/* Speaker Classification Box — same height as live box */}
-          <div className="mt-1.5 shrink-0 rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/30 bg-slate-50/10 dark:bg-slate-950/5 px-4 py-2 mr-3 flex flex-col shadow-sm">
-            {/* Header */}
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider text-slate-400 dark:text-slate-500 uppercase shrink-0">
-              {/* Left Side: Status, Title, and Auto 5s Badge */}
-              <div className="flex items-center space-x-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${transcripts.some((t) => t.status === "processing") ? "bg-emerald-500 animate-ping" : transcripts.some((t) => t.status === "draft") ? "bg-amber-400 animate-pulse" : "bg-slate-300 dark:bg-slate-700"}`}></span>
-                {transcripts.some((t) => t.status === "processing") ? (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
-                    Đang phân vai...
-                  </span>
-                ) : (
-                  <span className="text-slate-500 dark:text-slate-400 font-extrabold">Phân vai người nói</span>
-                )}
-                {transcripts.some((t) => t.status === "draft") && !transcripts.some((t) => t.status === "processing") && (
-                  <span className="hidden sm:inline-flex items-center text-[8px] text-slate-400 dark:text-slate-550 font-bold bg-slate-100/80 dark:bg-slate-800/80 px-1 h-3.5 rounded normal-case ml-1.5 shadow-sm leading-none">
-                    Auto {(translationDelay / 1000).toFixed(0)}s
-                  </span>
-                )}
-              </div>
-              {/* Right Side: Phân vai ngay + Separator | + Copy + Delete */}
-              {transcripts.length > 0 && (
-                <div className="flex items-center space-x-1">
-                  {transcripts.some((t) => t.status === "draft") && !transcripts.some((t) => t.status === "processing") && (
-                    <>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          processDraftsBatch();
-                        }}
-                        disabled={isProcessingBatch}
-                        className="flex items-center space-x-1 text-[9px] text-blue-600 dark:text-blue-400 font-extrabold bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all active:scale-95 shadow-sm cursor-pointer normal-case mr-1"
-                        title="Phân vai ngay lập tức"
-                      >
-                        <Sparkles className="w-2.5 h-2.5 animate-pulse" />
-                        <span>Phân vai ngay</span>
-                      </button>
-                      <span className="text-slate-200 dark:text-slate-800 mx-1.5 font-normal select-none">|</span>
-                    </>
-                  )}
-                  <button
-                    onClick={() => {
-                      const textToCopy = transcripts.map((d) => `${d.speakerName}: ${d.text}`).join("\n");
-                      navigator.clipboard.writeText(textToCopy);
-                      setCopiedDrafts(true);
-                      setTimeout(() => setCopiedDrafts(false), 1500);
-                    }}
-                    className={`p-1 rounded transition-all cursor-pointer ${
-                      copiedDrafts 
-                        ? "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 scale-110" 
-                        : "text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                    }`}
-                    title={copiedDrafts ? "Đã sao chép!" : "Sao chép toàn bộ hội thoại gốc"}
-                  >
-                    {copiedDrafts ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              )}
-            </div>
-            {/* Body: 3-line scrollable draft list */}
-            <div 
-              ref={draftsContainerRef}
-              className="h-[54px] overflow-y-auto no-scrollbar mt-1"
-            >
-              {(() => {
-                const draftItems = transcripts.slice(-20);
-                if (draftItems.length === 0) {
-                  return (
-                    <div className="flex items-center h-full">
-                      <span className="text-[10px] text-slate-350 dark:text-slate-650 font-medium italic">Không có đoạn chờ phân vai</span>
-                    </div>
-                  );
-                }
-                return draftItems.map((draft) => {
-                  const speakerColor = speakerColorsRef.current[draft.speakerTag] || "#cbd5e1";
-                  const isProcessing = draft.status === "processing";
-                  const isDraft = draft.status === "draft";
-                  const isCompleted = !isProcessing && !isDraft;
-                  return (
-                    <div 
-                      key={draft.id}
-                      className={`leading-[18px] ${isProcessing ? "animate-pulse opacity-50" : ""} ${isCompleted ? "opacity-75" : ""}`}
-                    >
-                      <p className="text-xs text-slate-700 dark:text-slate-200 leading-[18px]">
-                        <span className="font-extrabold" style={{ color: speakerColor }}>
-                          {draft.speakerName}:
-                        </span>
-                        <span className="font-semibold ml-1">{draft.text}</span>
-                        {isCompleted && (
-                          <span className="text-[10px] text-emerald-500 ml-1.5 font-bold" title="Đã phân vai và dịch">✓</span>
-                        )}
-                      </p>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-          </div>
         </main>
       </div>
 
       {/* TOASTS NOTIFICATIONS PANEL */}
       <style>{`
+        @keyframes modalFadeIn  { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes modalFadeOut { from { opacity: 1 } to { opacity: 0 } }
+        @keyframes modalPopIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.96) }
+          to   { opacity: 1; transform: translateY(0) scale(1) }
+        }
+        @keyframes modalPopOut {
+          from { opacity: 1; transform: translateY(0) scale(1) }
+          to   { opacity: 0; transform: translateY(4px) scale(0.97) }
+        }
+        @keyframes translating-dot {
+          0%, 60%, 100% { transform: translateY(0); opacity: .45; }
+          30%           { transform: translateY(-3px); opacity: 1; }
+        }
         @keyframes toast-circle-progress {
           from { stroke-dashoffset: 0; }
           to { stroke-dashoffset: 62.83; }
@@ -2524,13 +2766,23 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
       {/* END MEETING CONFIRMATION MODAL */}
       {showEndConfirmationModal && (
-        <div 
-          onClick={() => setShowEndConfirmationModal(false)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-default"
+        <div
+          onClick={() => closeEndModal()}
+          className={`fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 dark:bg-slate-950/70 backdrop-blur-sm cursor-default ${
+            endModalClosing
+              ? "animate-[modalFadeOut_0.15s_ease-in_forwards]"
+              : "animate-[modalFadeIn_0.15s_ease-out]"
+          }`}
+          role="dialog"
+          aria-modal="true"
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
-            className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-xl shadow-2xl animate-in zoom-in-95 duration-200 cursor-default"
+            className={`relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 rounded-2xl shadow-2xl cursor-default ${
+              endModalClosing
+                ? "animate-[modalPopOut_0.15s_ease-in_forwards]"
+                : "animate-[modalPopIn_0.2s_cubic-bezier(0.34,1.56,0.64,1)]"
+            }`}
           >
             {/* Header with Aligned Close Button */}
             <div className="flex items-center justify-between mb-4">
@@ -2540,7 +2792,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               </h3>
               
               <button
-                onClick={() => setShowEndConfirmationModal(false)}
+                onClick={() => closeEndModal()}
                 className="p-1.5 rounded-lg border border-transparent hover:border-slate-200 dark:hover:border-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
                 title="Đóng"
               >
@@ -2554,25 +2806,19 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
 
             <div className="flex flex-col sm:flex-row justify-end gap-2">
               <button
-                onClick={() => setShowEndConfirmationModal(false)}
+                onClick={() => closeEndModal()}
                 className="px-4 h-9 border border-slate-200 dark:border-slate-800 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 rounded-md cursor-pointer order-3 sm:order-1 hover:border-slate-350 dark:hover:border-slate-650"
               >
                 Hủy
               </button>
               <button
-                onClick={() => {
-                  setShowEndConfirmationModal(false);
-                  handleRestartMeeting();
-                }}
+                onClick={() => closeEndModal(handleRestartMeeting)}
                 className="px-4 h-9 bg-amber-50 hover:bg-amber-100 text-amber-600 border border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-900/50 text-xs font-semibold rounded-md shadow-sm cursor-pointer order-2 hover:border-amber-300 dark:hover:border-amber-700"
               >
                 Bắt đầu lại
               </button>
               <button
-                onClick={() => {
-                  setShowEndConfirmationModal(false);
-                  handleEndMeeting();
-                }}
+                onClick={() => closeEndModal(handleEndMeeting)}
                 className="px-4 h-9 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-md shadow-sm cursor-pointer order-1 sm:order-3 dark:bg-red-700 dark:hover:bg-red-600 border border-transparent hover:border-red-700"
               >
                 Tiếp theo
@@ -2672,34 +2918,32 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 </p>
               </div>
 
-              {/* Silence timeout (AI Translation Delay) */}
+              {/* Ngưỡng nghỉ nhịp để chốt dòng đang gom dở */}
               <div className="space-y-1.5">
                 <div className={`flex justify-between items-center text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>
-                  <span>Thời gian tự động dịch (AI)</span>
-                  <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(translationDelay / 1000).toFixed(1)}s</span>
+                  <span>Độ dài dòng (nghỉ nhịp)</span>
+                  <span className={`${status === "recording" ? "text-blue-400 dark:text-blue-500" : "text-blue-500"} font-mono`}>{(lineFlushGap / 1000).toFixed(1)}s</span>
                 </div>
                 <div className="relative w-full">
                   <select
-                    value={translationDelay}
+                    value={lineFlushGap}
                     onChange={(e) => {
                       const val = parseInt(e.target.value);
-                      setTranslationDelay(val);
-                      localStorage.setItem("meeting_translation_delay", String(val));
+                      setLineFlushGap(val);
+                      localStorage.setItem("meeting_line_flush_gap", String(val));
                     }}
-                    disabled={status === "recording"}
-                    className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full h-9 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none cursor-pointer"
                   >
-                    <option value="1000">Tức thì (1.0s)</option>
-                    <option value="2000">Rất nhanh (2.0s)</option>
-                    <option value="3000">Tiêu chuẩn (3.0s)</option>
-                    <option value="4000">Vừa phải (4.0s)</option>
-                    <option value="5000">Mặc định (5.0s)</option>
-                    <option value="10000">Cực chậm (10.0s)</option>
+                    <option value="600">Dòng rất ngắn (0.6s)</option>
+                    <option value="900">Dòng ngắn (0.9s)</option>
+                    <option value="1200">Mặc định (1.2s)</option>
+                    <option value="1800">Dòng dài (1.8s)</option>
+                    <option value="2500">Dòng rất dài (2.5s)</option>
                   </select>
                   <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
                 </div>
                 <p className="text-[10px] text-slate-400 leading-normal">
-                  Thời gian im lặng để AI gom câu lại và thực hiện dịch đồng bộ.
+                  Câu kết thúc bằng dấu chấm luôn được tách ngay. Giá trị này chỉ áp dụng khi người nói dừng giữa chừng. Đổi được cả khi đang ghi âm.
                 </p>
               </div>
 

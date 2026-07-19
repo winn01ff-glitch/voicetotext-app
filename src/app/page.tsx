@@ -968,7 +968,9 @@ export default function Dashboard() {
       // Cache file audio để phát lại ở trang history (sống qua reload, mất khi đóng trình duyệt)
       await putAudio(data.meeting_id, uploadFile);
 
-      router.push(`/history/${data.meeting_id}`);
+      // ?processing=1: báo trang chi tiết hiển thị NGAY màn tiến trình, bỏ qua splash
+      // "Đang tải cuộc họp" (ta đã biết chắc cuộc họp vừa tạo đang trong pipeline).
+      router.push(`/history/${data.meeting_id}?processing=1`);
     } catch (err) {
       console.error("Upload meeting error:", err);
       await showCustomAlert(`Không thể xử lý file: ${String(err)}`, "error");
@@ -1016,7 +1018,8 @@ export default function Dashboard() {
         throw new Error(data.error || "Gặp lỗi khi xử lý YouTube.");
       }
 
-      router.push(`/history/${data.meeting_id}`);
+      // Vào thẳng màn tiến trình, không qua splash "Đang tải cuộc họp".
+      router.push(`/history/${data.meeting_id}?processing=1`);
     } catch (err) {
       console.error("YouTube meeting error:", err);
       await showCustomAlert(`Không thể xử lý YouTube: ${String(err)}`, "error");

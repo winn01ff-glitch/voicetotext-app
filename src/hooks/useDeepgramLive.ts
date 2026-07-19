@@ -49,6 +49,8 @@ export interface RecordingResult {
 }
 
 const ARCHIVE_TIMESLICE_MS = 1000;
+// Cố định bitrate archive thay vì nhận default (khác nhau giữa các trình duyệt).
+const ARCHIVE_BITRATE_BPS = 128000;
 const MAX_RECONNECTS = 5;
 
 interface DeepgramLiveWord {
@@ -155,6 +157,10 @@ export function useDeepgramLive({
   const streamRecorderRef = useRef<MediaRecorder | null>(null);
   const webSocketRef = useRef<WebSocket | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  // Stream RIÊNG cho archive: tắt echoCancellation/noiseSuppression/AGC để Deepgram
+  // batch nhận audio chưa qua WebRTC APM. Null nếu không mở được → archive dùng
+  // chung audioStreamRef (hành vi cũ).
+  const archiveStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -204,23 +210,35 @@ export function useDeepgramLive({
     }
   }, [selectedDeviceId]);
 
-  // Request initial mic permission and check status
+  // Kiểm tra quyền mic mà KHÔNG mở mic. getUserMedia dù stop() ngay vẫn bật đèn
+  // ghi âm của trình duyệt — người dùng chưa bấm "Bắt đầu" thì không được đụng vào
+  // mic. Permissions API chỉ đọc trạng thái quyền, không mở thiết bị.
+  // Đánh đổi: khi quyền chưa được cấp, enumerateDevices trả về label rỗng nên danh
+  // sách thiết bị trống cho tới lần ghi âm đầu tiên (startRecording refresh lại).
   const checkMicPermission = useCallback(async () => {
     setStatus("checking_permission");
     onStatusChange("checking_permission");
+
+    let granted = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Permission granted, release stream immediately
-      stream.getTracks().forEach((track) => track.stop());
-      setStatus("preparing");
-      onStatusChange("preparing");
-      await refreshDevices();
-    } catch (err) {
-      setStatus("failed");
-      onStatusChange("failed");
-      onError("Không có quyền truy cập Microphone hoặc thiết bị ghi âm lỗi.");
+      const perm = await navigator.permissions.query({
+        name: "microphone" as PermissionName,
+      });
+      granted = perm.state === "granted";
+    } catch {
+      // Safari/trình duyệt cũ không hỗ trợ query 'microphone' — bỏ qua, quyền sẽ
+      // được xin đúng lúc bấm "Bắt đầu".
     }
-  }, [refreshDevices, onStatusChange, onError]);
+
+    if (granted) {
+      await refreshDevices();
+    }
+
+    // "denied" cũng vào preparing thay vì failed: báo lỗi lúc này là báo cho một
+    // hành động người dùng chưa yêu cầu. startRecording đã có nhánh lỗi riêng.
+    setStatus("preparing");
+    onStatusChange("preparing");
+  }, [refreshDevices, onStatusChange]);
 
   // 2. Microphone Level Visualizer
   const startVolumeAnalysis = useCallback((stream: MediaStream) => {
@@ -303,6 +321,10 @@ export function useDeepgramLive({
     if (audioStreamRef.current) {
       audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
+    }
+    if (archiveStreamRef.current) {
+      archiveStreamRef.current.getTracks().forEach((track) => track.stop());
+      archiveStreamRef.current = null;
     }
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(() => {});
@@ -607,6 +629,10 @@ export function useDeepgramLive({
         };
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         audioStreamRef.current = stream;
+        // Lần đầu được cấp quyền: giờ enumerateDevices mới trả về label thật.
+        if (inputDevices.length === 0) {
+          refreshDevices().catch(() => {});
+        }
       } catch (err) {
         console.error("[MediaRecorder] Microphone access failed:", err);
         setStatus("failed");
@@ -617,6 +643,37 @@ export function useDeepgramLive({
     }
     stream!.getAudioTracks().forEach((t) => (t.enabled = true));
     startVolumeAnalysis(stream!);
+
+    // 1b. Stream RAW cho archive — cùng mic, nhưng tắt toàn bộ xử lý của trình duyệt.
+    // Noise suppression hay cắt cụt phụ âm xát (s/sh/f/th) và AGC làm méo khi nhiều
+    // người nói chồng; Deepgram nova-3 tự khử nhiễu tốt hơn trên audio chưa xử lý.
+    // Không mở được (thiết bị không cho mở 2 capture session) → fallback dùng chung
+    // stream đã xử lý, đúng như hành vi trước đây.
+    let archiveStream = archiveStreamRef.current;
+    const archiveAlive =
+      !!archiveStream && archiveStream.getAudioTracks().some((t) => t.readyState === "live");
+    if (!archiveAlive) {
+      try {
+        archiveStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+        archiveStreamRef.current = archiveStream;
+      } catch (err) {
+        console.warn(
+          "[MediaRecorder] Raw archive stream unavailable, falling back to the processed stream:",
+          err
+        );
+        archiveStream = null;
+        archiveStreamRef.current = null;
+      }
+    }
+    const archiveSource = archiveStream ?? stream!;
+    archiveSource.getAudioTracks().forEach((t) => (t.enabled = true));
 
     // 2. Archive recorder — MỘT file webm liên tục cho cả cuộc họp
     try {
@@ -633,9 +690,12 @@ export function useDeepgramLive({
         // giữ lại — file sẽ đa-segment (degraded) nhưng không mất audio.
         let recorder: MediaRecorder;
         try {
-          recorder = new MediaRecorder(stream!, { mimeType: "audio/webm;codecs=opus" });
+          recorder = new MediaRecorder(archiveSource, {
+            mimeType: "audio/webm;codecs=opus",
+            audioBitsPerSecond: ARCHIVE_BITRATE_BPS,
+          });
         } catch (e) {
-          recorder = new MediaRecorder(stream!);
+          recorder = new MediaRecorder(archiveSource);
         }
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -657,7 +717,7 @@ export function useDeepgramLive({
     // 3. Streaming lên Deepgram (recorder riêng)
     console.log("[Deepgram WS] Establishing Deepgram connection in background...");
     startStreaming();
-  }, [meetingId, selectedDeviceId, echoCancellation, noiseSuppression, autoGainControl, startVolumeAnalysis, startStreaming, onStatusChange, onError]);
+  }, [meetingId, selectedDeviceId, echoCancellation, noiseSuppression, autoGainControl, inputDevices.length, refreshDevices, startVolumeAnalysis, startStreaming, onStatusChange, onError]);
 
   // 6. Pause recording
   const pauseRecording = useCallback(() => {
@@ -677,6 +737,9 @@ export function useDeepgramLive({
     // giữ trong lúc tạm dừng (track disabled → không thu âm thanh).
     if (audioStreamRef.current) {
       audioStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
+    }
+    if (archiveStreamRef.current) {
+      archiveStreamRef.current.getAudioTracks().forEach((t) => (t.enabled = false));
     }
     stopVolumeAnalysis();
 
@@ -793,12 +856,26 @@ export function useDeepgramLive({
       }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach((track) => track.stop());
+        audioStreamRef.current = null;
+      }
+      if (archiveStreamRef.current) {
+        archiveStreamRef.current.getTracks().forEach((track) => track.stop());
+        archiveStreamRef.current = null;
       }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
       }
+      analyserRef.current = null;
+      // close() trên AudioContext đã đóng trả về promise bị reject → unhandled
+      // rejection ("Cannot close a closed AudioContext"). Chặn cả hai đầu: kiểm tra
+      // state trước, và catch phần còn lại. Null ref để lần mount sau không kế thừa
+      // context chết (Fast Refresh / StrictMode chạy cleanup rồi mount lại).
       if (audioContextRef.current) {
-        audioContextRef.current.close();
+        if (audioContextRef.current.state !== "closed") {
+          audioContextRef.current.close().catch(() => {});
+        }
+        audioContextRef.current = null;
       }
     };
   }, []);

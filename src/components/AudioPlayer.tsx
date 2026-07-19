@@ -9,21 +9,36 @@ interface AudioPlayerProps {
   activeTranscriptId: string | null;
   onTimeUpdate: (currentTimeMs: number) => void;
   onSeekToTranscript: (startMs: number) => void;
+  // Gọi khi nguồn audio lỗi (vd URL server 404) để caller chuyển sang fallback.
+  onError?: () => void;
 }
 
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+
+// Trạng thái bật/tắt tiếng dùng chung cho MỌI cuộc họp trong một phiên mở webapp.
+// sessionStorage: còn khi chuyển trang/mở cuộc họp khác, mất khi đóng tab → lần mở
+// webapp mới lại mặc định tắt tiếng.
+const MUTED_SESSION_KEY = "audio_player_muted";
 
 export default function AudioPlayer({
   blobUrl,
   transcripts,
   activeTranscriptId,
   onTimeUpdate,
+  onError,
 }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
+  // Giữ callback mới nhất mà không làm các handler seek bị tạo lại mỗi render.
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  useEffect(() => {
+    onTimeUpdateRef.current = onTimeUpdate;
+  }, [onTimeUpdate]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // true trong lúc đang tua tới cuối file để dò duration của webm thiếu metadata.
+  const isProbingDurationRef = useRef(false);
 
   // Fallback duration from transcripts
   const fallbackDuration = useMemo(() => {
@@ -32,10 +47,36 @@ export default function AudioPlayer({
     return maxEndMs / 1000;
   }, [transcripts]);
 
-  const effectiveDuration = duration > 0 && isFinite(duration) ? duration : (fallbackDuration > 0 ? fallbackDuration : 0);
+  const hasRealDuration = duration > 0 && isFinite(duration);
+
+  // Chờ audio báo duration thật. Trước đây hiển thị ngay fallbackDuration (mốc kết
+  // thúc dòng transcript cuối) nên tổng thời lượng hiện 34:52 rồi ~1s sau nhảy sang
+  // 35:59 — vì transcript kết thúc sớm hơn audio (đoạn cuối không có tiếng nói).
+  // Giờ chỉ dùng fallback khi audio thật sự không cấp được duration (file webm ghi
+  // live có thể thiếu metadata), sau một khoảng chờ ngắn.
+  const [metadataTimedOut, setMetadataTimedOut] = useState(false);
+  useEffect(() => {
+    setMetadataTimedOut(false);
+    const timer = setTimeout(() => setMetadataTimedOut(true), 4000);
+    return () => clearTimeout(timer);
+  }, [blobUrl]);
+
+  const effectiveDuration = hasRealDuration
+    ? duration
+    : (metadataTimedOut && fallbackDuration > 0 ? fallbackDuration : 0);
+  const durationKnown = hasRealDuration || (metadataTimedOut && fallbackDuration > 0);
 
   const [speed, setSpeed] = useState(1);
+  // Mặc định TẮT tiếng. Khởi tạo bằng true (không đọc storage ngay) để tránh lệch
+  // hydration; khôi phục lựa chọn của phiên ngay sau khi mount.
   const [isMuted, setIsMuted] = useState(true);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(MUTED_SESSION_KEY) === "false") setIsMuted(false);
+    } catch {
+      /* sessionStorage bị chặn → giữ mặc định tắt tiếng */
+    }
+  }, []);
   const [isDragging, setIsDragging] = useState(false);
 
   // Format time mm:ss
@@ -52,6 +93,11 @@ export default function AudioPlayer({
     if (!audio) return;
 
     const handleTimeUpdate = () => {
+      // Bỏ qua mọi cập nhật trong lúc đang dò duration: currentTime lúc đó đang bị
+      // đẩy tới cuối file, không phải vị trí phát thật. Nếu nhận, thanh progress
+      // nhảy lên 100% rồi về 0 (transition-all biến nó thành cú "quét" rất xấu) và
+      // dòng transcript được highlight cũng nhảy xuống dòng cuối.
+      if (isProbingDurationRef.current) return;
       if (!isDragging) {
         setCurrentTime(audio.currentTime);
         onTimeUpdate(audio.currentTime * 1000); // Convert to ms
@@ -63,14 +109,27 @@ export default function AudioPlayer({
     };
 
     const handleLoadedMetadata = () => {
+      // webm do MediaRecorder ghi thường thiếu metadata độ dài (duration = Infinity).
+      // Cách lấy độ dài thật: tua tới một mốc rất lớn để trình duyệt kẹp về cuối file,
+      // đọc duration, rồi tua về 0. Suốt quá trình này currentTime KHÔNG phản ánh vị
+      // trí phát, nên bật cờ để handleTimeUpdate bỏ qua.
       if (audio.duration === Infinity && audio.currentTime === 0 && audio.paused) {
+        if (isProbingDurationRef.current) return;
+        isProbingDurationRef.current = true;
         audio.currentTime = 1e101;
         audio.addEventListener("seeked", function tempSeeked() {
           audio.removeEventListener("seeked", tempSeeked);
-          audio.currentTime = 0;
           if (isFinite(audio.duration) && !isNaN(audio.duration)) {
             setDuration(audio.duration);
           }
+          // Tua về đầu rồi mới hạ cờ, ở đúng lần "seeked" kế tiếp — hạ sớm thì
+          // timeupdate của chính cú tua về vẫn lọt qua.
+          audio.addEventListener("seeked", function backToStart() {
+            audio.removeEventListener("seeked", backToStart);
+            isProbingDurationRef.current = false;
+            setCurrentTime(0);
+          }, { once: true });
+          audio.currentTime = 0;
         }, { once: true });
       } else if (isFinite(audio.duration) && !isNaN(audio.duration)) {
         setDuration(audio.duration);
@@ -132,8 +191,13 @@ export default function AudioPlayer({
 
     const rect = bar.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = ratio * effectiveDuration;
-    setCurrentTime(audio.currentTime);
+    const newTime = ratio * effectiveDuration;
+    audio.currentTime = newTime;
+    setCurrentTime(newTime);
+    // Cập nhật UI (dòng đang phát + auto-scroll) NGAY, không chờ sự kiện `timeupdate`.
+    // Khi stream qua HTTP Range, seek phải tải range mới từ server nên `timeupdate`
+    // đến trễ → nếu chờ nó thì giao diện bị khựng rồi mới nhảy.
+    onTimeUpdateRef.current(newTime * 1000);
   };
 
   // Seek to specific time (called from transcript click)
@@ -143,6 +207,7 @@ export default function AudioPlayer({
 
     audio.currentTime = timeMs / 1000;
     setCurrentTime(audio.currentTime);
+    onTimeUpdateRef.current(timeMs);
     if (!isPlaying) {
       try {
         const playPromise = audio.play();
@@ -190,8 +255,15 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) return;
 
-    audio.muted = !isMuted;
-    setIsMuted(!isMuted);
+    const next = !isMuted;
+    audio.muted = next;
+    setIsMuted(next);
+    // Ghi nhớ cho toàn bộ phiên: mở cuộc họp khác cũng giữ nguyên lựa chọn này.
+    try {
+      sessionStorage.setItem(MUTED_SESSION_KEY, String(next));
+    } catch {
+      /* bỏ qua nếu storage bị chặn */
+    }
   };
 
   // Skip forward/backward 10s
@@ -206,13 +278,20 @@ export default function AudioPlayer({
       audio.currentTime = Math.max(0, audio.currentTime + seconds);
     }
     setCurrentTime(audio.currentTime);
+    onTimeUpdateRef.current(audio.currentTime * 1000);
   };
 
   const progressPercent = effectiveDuration > 0 ? (currentTime / effectiveDuration) * 100 : 0;
 
   return (
     <>
-      <audio ref={audioRef} src={blobUrl} preload="metadata" muted={isMuted} />
+      <audio
+        ref={audioRef}
+        src={blobUrl}
+        preload="metadata"
+        muted={isMuted}
+        onError={() => onError?.()}
+      />
 
       {/* Sticky bottom player */}
       <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-[calc(1366px-2rem)] 2xl:max-w-[calc(1600px-2rem)] z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-x border-t border-slate-200 dark:border-slate-800 shadow-[0_-4px_20px_rgba(0,0,0,0.08)]">
@@ -238,7 +317,7 @@ export default function AudioPlayer({
           <div className="flex items-center gap-2 text-xs font-mono text-slate-500 dark:text-slate-400 w-24">
             <span>{formatTime(currentTime)}</span>
             <span>/</span>
-            <span>{formatTime(effectiveDuration)}</span>
+            <span>{durationKnown ? formatTime(effectiveDuration) : "--:--"}</span>
           </div>
 
           {/* Center: controls */}

@@ -37,6 +37,14 @@ yarn-error.log*
 # vercel
 .vercel
 
+# audio files
+public/audio/
+
+# codex
+.codex/
+.codex-dev.stderr.log
+.codex-dev.stdout.log
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -16,7 +16,7 @@ import {
   Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
   Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe, ChevronUp,
   AlignLeft, ListChecks, PenLine, Briefcase, Maximize2, Minimize2, LayoutList, RotateCcw, Eraser, Zap, Shield,
-  Users, UserCheck, GitMerge, Hash
+  Users, UserCheck, GitMerge, Hash, Loader2, MoreVertical, Upload, Radio, Video
 } from "lucide-react";
 
 // Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
@@ -107,13 +107,15 @@ function textFingerprint(text: string): string {
 
 interface HistoryDetailProps {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }
 
 // Biến toàn cục để theo dõi trạng thái Hydration của ứng dụng, tránh hydration mismatch
 let isAppHydrated = false;
 
-export default function HistoryDetail({ params }: HistoryDetailProps) {
+export default function HistoryDetail({ params, searchParams }: HistoryDetailProps) {
   const { id: meetingId } = use(params);
+  const query = use(searchParams);
   const router = useRouter();
   const supabase = createClient();
 
@@ -127,7 +129,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
         const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
         if (payload && payload.timestamp && (now - payload.timestamp < sevenDaysMs)) {
           const snap = payload.data;
-          if (snap && snap.meeting) {
+          // Chỉ dùng cache khi cuộc họp ĐÃ HOÀN TẤT (completed/ready). Nếu cache lưu
+          // status đang xử lý, đọc đồng bộ sẽ khiến màn "Đang hoàn tất cuộc họp" chớp
+          // lên 1 nhịp rồi mới vào chi tiết sau khi fetch xong.
+          if (snap && snap.meeting && (snap.meeting.status === "completed" || snap.meeting.status === "ready")) {
             return snap;
           }
         } else {
@@ -139,6 +144,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     }
     return null;
   })() : null;
+
+  // ?processing=1 (đặt khi vừa tạo cuộc họp upload/YouTube): hiển thị NGAY màn tiến
+  // trình thay vì splash "Đang tải cuộc họp" — ta đã biết chắc nó đang trong pipeline.
+  //
+  // Phải đọc từ prop searchParams chứ KHÔNG phải window.location: trên server
+  // `window` không tồn tại nên cờ này luôn false, server render ra splash rồi
+  // client hydrate xong mới đổi — đúng khoảng nháy ~1 giây trước khi vào màn xử lý.
+  const forceProcessingView = query?.processing === "1";
 
   // Meeting states
   const [meeting, setMeeting] = useState<any>(cachedData?.meeting || null);
@@ -176,6 +189,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
 
   const [loading, setLoading] = useState(() => {
+    // Vừa tạo cuộc họp → vào thẳng màn tiến trình, không hiện splash.
+    if (forceProcessingView) return false;
     if (typeof window !== "undefined" && isAppHydrated) {
       return !cachedData;
     }
@@ -227,6 +242,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [offlineRawTranslations, setOfflineRawTranslations] = useState<string[]>([]);
   const [offlineTranslationSource, setOfflineTranslationSource] = useState("");
   const [isTranslatingRaw, setIsTranslatingRaw] = useState(false);
+  // Tiến trình dịch bản gốc (số dòng đã xong / tổng) để hiển thị "Đang dịch x/N".
+  const [rawTranslateProgress, setRawTranslateProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  // true khi đang đọc bản dịch từ IndexedDB (preload). Chặn empty-state "chưa dịch"
+  // chớp lên trong lúc đọc cache async.
+  const [rawTranslationLoading, setRawTranslationLoading] = useState(true);
   const rawScrollContainerRef = useRef<HTMLDivElement>(null);
   // Bản gốc: cách hiển thị blob thô. "split" = tách dòng theo câu (mặc định, thuần frontend),
   // "flat" = thô 100% nguyên khối, "shortened" = bản rút gọn AI tạm thời (KHÔNG lưu DB).
@@ -235,6 +255,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [isShorteningRaw, setIsShorteningRaw] = useState(false);
   const [showSpeakerMenu, setShowSpeakerMenu] = useState(false);
   const speakerMenuRef = useRef<HTMLDivElement>(null);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const headerMenuRef = useRef<HTMLDivElement>(null);
   const [isRediarizing, setIsRediarizing] = useState(false);
   const [isReprocessingLocal, setIsReprocessingLocal] = useState(false);
   const [activeDiarizeMode, setActiveDiarizeMode] = useState<string | null>(() => {
@@ -402,6 +424,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showSpeakerMenu]);
+
+  useEffect(() => {
+    if (!showHeaderMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(e.target as Node)) {
+        setShowHeaderMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showHeaderMenu]);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedVoice, setSelectedVoice] = useState("");
@@ -463,17 +496,21 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const [processTargetLang, setProcessTargetLangState] = useState("vi");
   const processTargetLangInitRef = useRef(false);
 
-  // Editing state for transcripts lines
-  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
-  const [editingTextVal, setEditingTextVal] = useState("");
-
   // Refs for tracking initial values to detect changes for auto-save
-  const initialEditingTextRef = useRef("");
   const initialExecSummaryRef = useRef("");
   const initialDecisionsRef = useRef<string[]>([]);
 
   // Audio player state (chỉ tồn tại trong phiên upload)
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
+  // true nếu phát trực tiếp từ URL server thất bại → chuyển sang fallback blob (IndexedDB).
+  const [audioServerFailed, setAudioServerFailed] = useState(false);
+  // Nguồn audio cho player: ƯU TIÊN URL server (phát ngay khi tải nhờ streaming + tua
+  // được nhờ HTTP Range) → player hiện tức thì cùng trang. Blob IndexedDB chỉ dùng khi
+  // server lỗi/không có file (vd cuộc họp cũ, hoặc audio chỉ có local từ phiên ghi).
+  const audioHasServerFile = !!meeting && (meeting.status === "completed" || meeting.status === "ready");
+  const audioSrc = (!audioServerFailed && audioHasServerFile)
+    ? `/api/meetings/${meetingId}/audio`
+    : audioBlobUrl;
   const [activeAudioTranscriptId, setActiveAudioTranscriptId] = useState<string | null>(null);
 
   // Speaker rename state
@@ -483,7 +520,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
   // Ref cho auto-scroll transcript
   const transcriptContainerRef = useRef<HTMLDivElement>(null);
-  const [isSavingLine, setIsSavingLine] = useState(false);
 
   // Custom Modal state
   const [modalConfig, setModalConfig] = useState<{
@@ -540,6 +576,52 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     };
   }, [isTouchDevice]);
 
+  // Trang chi tiết là app-shell cố định theo viewport (root h-dvh + overflow-hidden).
+  // Khoá cuộn ở html/body để trang không thể vuốt dịch vài px do chênh lệch layout
+  // (vd body bị display:flex, offset của dev overlay...). Khôi phục khi rời trang.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.overflow;
+    const prevBody = body.style.overflow;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      body.style.overflow = prevBody;
+    };
+  }, []);
+
+  // Cuộn tới dòng transcript đang phát.
+  // Mỗi dòng được render Ở HAI NƠI: card cho mobile (`...-m-<id>`, ẩn từ breakpoint sm)
+  // và row bảng cho desktop (`...-d-<id>`, ẩn dưới sm). Trước đây cả hai dùng CHUNG một
+  // id nên getElementById luôn trả về card mobile — trên PC nó display:none khiến
+  // scrollIntoView không làm gì (PC không tự cuộn). Ở đây chọn đúng element ĐANG HIỂN THỊ.
+  const scrollToTranscriptRow = useCallback((lineId: string) => {
+    // Hoãn tới sau khi React commit xong (đổi dòng active khiến hàng trăm dòng
+    // re-render). Dùng setTimeout thay vì requestAnimationFrame vì rAF không chạy
+    // khi tab không được paint (nền/ẩn) — sẽ khiến cuộn im lặng không xảy ra.
+    setTimeout(() => {
+      const candidates = [
+        document.getElementById(`transcript-row-d-${lineId}`),
+        document.getElementById(`transcript-row-m-${lineId}`),
+      ];
+      const visible = candidates.find((el) => el && el.offsetParent !== null);
+      if (!visible) return;
+
+      // Nhảy xa (do seek trên thanh audio) → cuộn TỨC THÌ cho dứt khoát; đang phát
+      // tuần tự sang dòng kế → cuộn mượt cho dễ theo dõi.
+      const rect = visible.getBoundingClientRect();
+      const isFarJump =
+        rect.bottom < -window.innerHeight * 0.5 || rect.top > window.innerHeight * 1.5;
+
+      visible.scrollIntoView({
+        behavior: isFarJump ? "auto" : "smooth",
+        block: "center",
+      });
+    });
+  }, []);
+
   // Keyboard Shortcuts (Space to play/pause, ArrowUp/ArrowDown to switch lines)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -586,10 +668,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             (window as any).__audioPlayerSeekTo(targetLine.startMs);
           }
           setActiveAudioTranscriptId(targetLine.id);
-          const el = document.getElementById(`transcript-row-${targetLine.id}`);
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
+          scrollToTranscriptRow(targetLine.id);
         }
       }
     };
@@ -720,15 +799,14 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const handleSeekToLine = useCallback(
     (line: { id: string; startMs: number }) => {
       setActiveAudioTranscriptId(line.id);
-      if (audioBlobUrl && typeof (window as any).__audioPlayerSeekTo === "function") {
+      if (audioSrc && typeof (window as any).__audioPlayerSeekTo === "function") {
         (window as any).__audioPlayerSeekTo(line.startMs);
       } else {
-        // Không có audio cache -> vẫn cuộn tới dòng được chọn cho rõ ràng.
-        const el = document.getElementById(`transcript-row-${line.id}`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Không có audio -> vẫn cuộn tới dòng được chọn cho rõ ràng.
+        scrollToTranscriptRow(line.id);
       }
     },
-    [audioBlobUrl]
+    [audioSrc, scrollToTranscriptRow]
   );
 
   const [lineSummaries, setLineSummaries] = useState<Record<string, { originalSummary: string, translatedSummary: string, loading?: boolean }>>({});
@@ -930,125 +1008,91 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       fetchMeetingData();
     }
 
-    // Nạp audio đã cache (ghi âm/upload) từ IndexedDB. Cache sống qua reload và chỉ
-    // bị xóa khi đóng trình duyệt. getAudioUrl tạo một object URL mới từ Blob đã lưu;
-    // ta revoke nó khi unmount để tránh rò rỉ bộ nhớ.
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    getAudioUrl(meetingId)
-      .then((url) => {
-        if (url) {
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          objectUrl = url;
-          setAudioBlobUrl(url);
-        } else {
-          // If not cached in IndexedDB, try to fetch from server
-          const serverAudioUrl = `/api/meetings/${meetingId}/audio`;
-          fetch(serverAudioUrl)
-            .then(async (res) => {
-              if (res.ok && !cancelled) {
-                const blob = await res.blob();
-                const { putAudio } = await import("@/lib/audio-cache");
-                await putAudio(meetingId, blob);
-                
-                // Get the URL again to make sure it's consistent
-                const cachedUrl = await getAudioUrl(meetingId);
-                if (cachedUrl && !cancelled) {
-                  objectUrl = cachedUrl;
-                  setAudioBlobUrl(cachedUrl);
-                }
-              }
-            })
-            .catch((err) => {
-              console.warn("Không tìm thấy audio trên server hoặc lỗi tải file:", err);
-            });
-        }
-      })
-      .catch((err) => {
-        console.warn("Không thể nạp audio đã cache:", err);
-      });
-
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
+    // Không tải audio ở đây nữa — player phát trực tiếp (stream) từ URL server để
+    // hiện ngay. Blob IndexedDB chỉ nạp khi server thất bại (effect fallback bên dưới).
   }, []);
 
-  // Với nguồn YouTube, trang tiến trình được giữ nguyên khi pipeline chạy nên lần
-  // tải audio lúc mount có thể xảy ra trước khi server kịp ghi file. Khi meeting
-  // chuyển sang trạng thái hoàn tất, thử nạp lại audio mà không hard reload trang.
+  // Fallback: chỉ khi phát từ URL server lỗi (404/codec) mới nạp blob từ IndexedDB
+  // (nguồn local từ phiên ghi live, hoặc bản đã cache trước đó).
   useEffect(() => {
-    if (!meeting || audioBlobUrl) return;
-    if (["queued", "uploading", "transcribing", "processing"].includes(meeting.status)) return;
-
+    if (!audioServerFailed || audioBlobUrl) return;
     let cancelled = false;
     let objectUrl: string | null = null;
-
-    const loadCompletedAudio = async () => {
-      try {
-        let url = await getAudioUrl(meetingId);
-        if (!url) {
-          const response = await fetch(`/api/meetings/${meetingId}/audio`, { cache: "no-store" });
-          if (!response.ok) return;
-
-          const blob = await response.blob();
-          const { putAudio } = await import("@/lib/audio-cache");
-          await putAudio(meetingId, blob);
-          url = await getAudioUrl(meetingId);
-        }
-
-        if (!url) return;
+    getAudioUrl(meetingId)
+      .then((url) => {
         if (cancelled) {
-          URL.revokeObjectURL(url);
+          if (url) URL.revokeObjectURL(url);
           return;
         }
-        objectUrl = url;
-        setAudioBlobUrl(url);
-      } catch (error) {
-        console.warn("Không thể nạp audio sau khi hoàn tất pipeline:", error);
-      }
-    };
-
-    void loadCompletedAudio();
+        if (url) {
+          objectUrl = url;
+          setAudioBlobUrl(url);
+        }
+      })
+      .catch((err) => console.warn("Không thể nạp audio fallback:", err));
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [meetingId, meeting?.status]);
+  }, [audioServerFailed, audioBlobUrl, meetingId]);
 
   // Ghi cache chi tiết vào localStorage mỗi khi dữ liệu cốt lõi thay đổi (sau khi fetch,
   // refresh ngầm, hoặc sau khi user chỉnh sửa). Bọc try/catch để nếu vượt quota thì bỏ qua
   // — cache chỉ là tối ưu tốc độ mở lại, không bắt buộc phải thành công.
   useEffect(() => {
     if (loading || !meeting) return;
+    // Chỉ cache khi cuộc họp đã hoàn tất — không lưu status đang xử lý (processing/
+    // uploading/transcribing...) để lần mở lại không bị flash màn tiến trình.
+    if (meeting.status !== "completed" && meeting.status !== "ready") return;
+
+    // Loại raw_deepgram_result (JSON word-level thô, ~2MB) khỏi cache — client KHÔNG
+    // dùng field này, nó chiếm ~90% dung lượng. Nếu cache cả nó, localStorage (~5MB)
+    // đầy chỉ sau 2 cuộc họp → các cache sau ghi thất bại âm thầm (quota) → mở lại
+    // luôn phải load. Bỏ nó ra: mỗi cache ~200KB → chứa được nhiều cuộc họp.
+    const { raw_deepgram_result, ...meetingLite } = meeting;
+    const key = `meeting_detail_${meetingId}`;
+    const payload = JSON.stringify({
+      timestamp: Date.now(),
+      data: {
+        meeting: meetingLite,
+        speakers,
+        transcripts,
+        reprocessedTranscripts,
+        aiSummary,
+        actionItems,
+        aiJobs,
+        chatMessages,
+        activeSummaryMode,
+      },
+    });
+
     try {
-      localStorage.setItem(
-        `meeting_detail_${meetingId}`,
-        JSON.stringify({
-          timestamp: Date.now(),
-          data: {
-            meeting,
-            speakers,
-            transcripts,
-            reprocessedTranscripts,
-            aiSummary,
-            actionItems,
-            aiJobs,
-            chatMessages,
-            activeSummaryMode,
-          }
-        })
-      );
+      localStorage.setItem(key, payload);
     } catch {
-      // Bỏ qua (ví dụ vượt quota localStorage).
+      // Quota đầy → xóa các cache chi tiết CŨ nhất (trừ cache hiện tại) rồi thử lại,
+      // đảm bảo cuộc họp vừa xem luôn được cache (mở lại tức thì).
+      try {
+        const others: { k: string; ts: number }[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("meeting_detail_") && k !== key) {
+            let ts = 0;
+            try { ts = JSON.parse(localStorage.getItem(k) || "{}").timestamp || 0; } catch {}
+            others.push({ k, ts });
+          }
+        }
+        others.sort((a, b) => a.ts - b.ts); // cũ nhất trước
+        for (const o of others) {
+          localStorage.removeItem(o.k);
+          try { localStorage.setItem(key, payload); return; } catch { /* tiếp tục xóa */ }
+        }
+      } catch { /* bỏ qua */ }
     }
   }, [loading, meeting, speakers, transcripts, reprocessedTranscripts, aiSummary, actionItems, aiJobs, chatMessages, activeSummaryMode, meetingId]);
 
   const fetchMeetingData = async () => {
-    setLoading(true);
+    // Không bật lại splash khi đang cố tình hiển thị màn tiến trình.
+    if (!forceProcessingView) setLoading(true);
     try {
       // 1. Fetch meeting
       const { data: m, error: mErr } = await supabase
@@ -1481,26 +1525,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   };
 
 
-  // Edit transcript line text
-  const startEditingTranscript = (line: any) => {
-    setEditingTranscriptId(line.id);
-    const initialText = line.correctedText || line.originalText;
-    setEditingTextVal(initialText);
-    initialEditingTextRef.current = initialText;
-  };
-
-  // Auto-save for transcript lines (debounce 1.5s)
-  useEffect(() => {
-    if (!editingTranscriptId) return;
-    if (editingTextVal === initialEditingTextRef.current) return;
-
-    const delayDebounceFn = setTimeout(() => {
-      handleSaveTranscriptLine(editingTranscriptId, editingTextVal, true);
-    }, 1500);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [editingTextVal, editingTranscriptId]);
-
   // Auto-save for raw summary (debounce 1.5s)
   useEffect(() => {
     if (!isEditingSummary) return;
@@ -1516,65 +1540,6 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return () => clearTimeout(delayDebounceFn);
   }, [editedExecSummary, editedDecisions, isEditingSummary]);
 
-
-  const handleSaveTranscriptLine = async (lineId: string, textToSave?: string, keepEditingOpen = false) => {
-    const finalVal = textToSave !== undefined ? textToSave : editingTextVal;
-    if (!finalVal.trim()) return;
-    setIsSavingLine(true);
-    try {
-      // 1. Call translation API to re-translate the edited text
-      const translationRes = await fetch("/api/translate-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: finalVal,
-          sourceLang: meeting?.source_language,
-          targetLang: meeting?.target_language,
-        }),
-      });
-
-      let newTranslation = "";
-      if (translationRes.ok) {
-        const transData = await translationRes.json();
-        newTranslation = transData.translatedText || "";
-      }
-
-      // 2. Update transcripts in Database (model 2-bản: chỉ còn original_text/translated_text)
-      const updatePayload: any = {
-        original_text: finalVal,
-      };
-
-      if (newTranslation) {
-        updatePayload.translated_text = newTranslation;
-      }
-
-      const { error } = await supabase
-        .from("transcripts")
-        .update(updatePayload)
-        .eq("id", lineId);
-
-      if (error) throw error;
-
-      // 3. Update React States
-      const patchLine = (t: any) =>
-        t.id === lineId
-          ? { ...t, originalText: finalVal, correctedText: finalVal, translatedText: newTranslation || t.translatedText }
-          : t;
-      setTranscripts((prev) => prev.map(patchLine));
-      setReprocessedTranscripts((prev) => prev.map(patchLine));
-
-      initialEditingTextRef.current = finalVal;
-
-      if (!keepEditingOpen) {
-        setEditingTranscriptId(null);
-      }
-    } catch (err) {
-      console.error(err);
-      await showCustomAlert("Lỗi khi lưu dòng hội thoại.", "error");
-    } finally {
-      setIsSavingLine(false);
-    }
-  };
 
   // Download DOCX file
   const handleExportDocx = async () => {
@@ -1873,6 +1838,38 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     [meeting?.raw_transcript]
   );
 
+  // Preload bản dịch bản gốc từ IndexedDB ngay khi có raw_transcript — để khi người
+  // dùng bấm "Bản dịch" thì đã có sẵn trong state, không còn chớp "chưa dịch" 1 nhịp.
+  useEffect(() => {
+    let cancelled = false;
+    const source = meeting?.raw_transcript || "";
+    if (!source || offlineRawSentences.length === 0) {
+      setRawTranslationLoading(false);
+      return;
+    }
+    setRawTranslationLoading(true);
+    (async () => {
+      try {
+        const cached = await getRawTranslationCache(meetingId);
+        if (cancelled) return;
+        const isValid =
+          cached?.sourceFingerprint === textFingerprint(source) &&
+          cached?.targetLanguage === meeting?.target_language &&
+          Array.isArray(cached?.translations) &&
+          cached.translations.length === offlineRawSentences.length;
+        if (isValid) {
+          setOfflineRawTranslations(cached!.translations);
+          setOfflineTranslationSource(source);
+        }
+      } catch (error) {
+        console.warn("Preload raw translation cache failed", error);
+      } finally {
+        if (!cancelled) setRawTranslationLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [meetingId, meeting?.raw_transcript, meeting?.target_language, offlineRawSentences.length]);
+
   const offlineRawRows = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
     return offlineRawSentences
@@ -1929,35 +1926,85 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   const handleTranslateRaw = async () => {
     if (offlineRawSentences.length === 0 || isTranslatingRaw) return;
     setIsTranslatingRaw(true);
-    try {
-      const res = await fetch("/api/translate-text", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          texts: offlineRawSentences,
-          sourceLang: meeting?.source_language || "auto",
-          targetLang: meeting?.target_language || "vi",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !Array.isArray(data.translatedTexts) || data.translatedTexts.length !== offlineRawSentences.length) {
-        throw new Error("Raw translation alignment failed");
-      }
-      const source = meeting?.raw_transcript || "";
-      setOfflineRawTranslations(data.translatedTexts);
-      setOfflineTranslationSource(source);
+
+    const sentences = offlineRawSentences;
+    const total = sentences.length;
+    setRawTranslateProgress({ done: 0, total });
+
+    // Chia chunk 50 dòng, chạy song song 5 luồng ngay tại client → nhanh hơn & cập
+    // nhật tiến trình theo từng chunk. Chunk nào lỗi (sau retry của server) thì GIỮ
+    // NGUYÊN bản gốc cho các dòng đó thay vì vứt cả bài.
+    const CHUNK = 50;
+    const CONCURRENCY = 5;
+    const chunks: { start: number; texts: string[] }[] = [];
+    for (let i = 0; i < total; i += CHUNK) {
+      chunks.push({ start: i, texts: sentences.slice(i, i + CHUNK) });
+    }
+
+    const results = new Array<string>(total);
+    let done = 0;
+    let failedLines = 0;
+    let nextIdx = 0;
+
+    const runOne = async (chunk: { start: number; texts: string[] }) => {
+      let translated: string[] | null = null;
       try {
-        await putRawTranslationCache(meetingId, {
-          sourceFingerprint: textFingerprint(source),
-          targetLanguage: meeting?.target_language || "vi",
-          translations: data.translatedTexts,
-          expiresAt: Date.now() + RAW_TRANSLATION_CACHE_TTL_MS,
+        const res = await fetch("/api/translate-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            texts: chunk.texts,
+            sourceLang: meeting?.source_language || "auto",
+            targetLang: meeting?.target_language || "vi",
+          }),
         });
-      } catch (error) {
-        console.warn("Unable to persist raw translation cache", error);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.translatedTexts) && data.translatedTexts.length === chunk.texts.length) {
+          translated = data.translatedTexts;
+        }
+      } catch {
+        /* nuốt lỗi → fallback bên dưới */
+      }
+      for (let j = 0; j < chunk.texts.length; j++) {
+        // Lỗi → giữ nguyên bản gốc cho dòng đó
+        results[chunk.start + j] = translated ? translated[j] : chunk.texts[j];
+      }
+      if (!translated) failedLines += chunk.texts.length;
+      done += chunk.texts.length;
+      setRawTranslateProgress({ done, total });
+    };
+
+    try {
+      const runners = Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, async () => {
+        while (nextIdx < chunks.length) {
+          const idx = nextIdx++;
+          await runOne(chunks[idx]);
+        }
+      });
+      await Promise.all(runners);
+
+      const source = meeting?.raw_transcript || "";
+      setOfflineRawTranslations(results);
+      setOfflineTranslationSource(source);
+
+      // Chỉ cache khi dịch trọn vẹn (không có dòng lỗi) — nếu còn dòng giữ nguyên bản
+      // gốc thì KHÔNG cache để lần mở lại (hoặc bấm dịch lại) thử dịch nốt phần lỗi.
+      if (failedLines === 0) {
+        try {
+          await putRawTranslationCache(meetingId, {
+            sourceFingerprint: textFingerprint(source),
+            targetLanguage: meeting?.target_language || "vi",
+            translations: results,
+            expiresAt: Date.now() + RAW_TRANSLATION_CACHE_TTL_MS,
+          });
+        } catch (error) {
+          console.warn("Unable to persist raw translation cache", error);
+          addToast("Không thể lưu bản dịch", "Bản dịch vẫn dùng được trong phiên này.", "warning");
+        }
+      } else {
         addToast(
-          "Không thể lưu bản dịch",
-          "Bản dịch vẫn dùng được trong phiên này.",
+          "Dịch chưa trọn vẹn",
+          `${failedLines}/${total} dòng chưa dịch được (tạm giữ nguyên bản gốc). Mở lại trang rồi bấm "Dịch bản gốc" để thử lại phần còn thiếu.`,
           "warning"
         );
       }
@@ -2079,6 +2126,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
     return `${mins} phút`;
   };
 
+  // Badge loại nguồn — định nghĩa TRƯỚC các early return để màn tiến trình và màn chi
+  // tiết dùng chung một style. Màu khớp với thẻ ngoài màn hình chính (dashboard):
+  // youtube = đỏ, upload = emerald, trực tiếp = xanh dương.
+  const sourceType = meeting?.source_type || "live";
+  const sourceMeta = sourceType === "youtube"
+    ? { label: "YouTube", Icon: Video, className: "border-red-200 bg-red-50 text-red-600 dark:border-red-900/30 dark:bg-red-950/40 dark:text-red-400" }
+    : sourceType === "upload"
+      ? { label: "Tải lên", Icon: Upload, className: "border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900/30 dark:bg-emerald-950/40 dark:text-emerald-400" }
+      : { label: "Trực tiếp", Icon: Radio, className: "border-blue-200 bg-blue-50 text-blue-600 dark:border-blue-900/30 dark:bg-blue-950/40 dark:text-blue-400" };
+  const SourceTypeIcon = sourceMeta.Icon;
+
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans select-none">
@@ -2112,7 +2170,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
   ];
   // Mọi nguồn (kể cả live) ở lại màn tiến trình cho tới khi pipeline hoàn tất.
   // Nhờ vậy nếu người dùng rời trang rồi mở lại, UI không lộ trang chi tiết sớm.
-  const isInPipeline = meeting && processingStatuses.includes(meeting.status);
+  // Chưa tải xong meeting nhưng vừa tạo (?processing=1) → vẫn vào thẳng màn tiến trình.
+  const isInPipeline = meeting
+    ? processingStatuses.includes(meeting.status)
+    : forceProcessingView;
   const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status);
 
   // Show processing UI for pipeline meetings
@@ -2131,11 +2192,11 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
-              {meeting?.source_type && meeting.source_type !== 'live' && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-bold uppercase">
-                  {meeting.source_type}
-                </span>
-              )}
+              {/* Dùng chung badge với màn chi tiết để đồng bộ style & màu */}
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 ${sourceMeta.className}`}>
+                <SourceTypeIcon className="w-3 h-3" />
+                <span>{sourceMeta.label}</span>
+              </span>
             </div>
           </div>
         </header>
@@ -2155,15 +2216,16 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
               <PipelineProgress
                 meetingId={meetingId}
-                initialStatus={meeting.status}
-                initialProgress={meeting.progress}
+                initialStatus={meeting?.status || "queued"}
+                initialProgress={meeting?.progress || { percent: 1, stage: "upload", message: "Đang khởi tạo..." }}
                 onCompleted={() => {
                   // Nạp dữ liệu hoàn tất vào state hiện tại; hard reload sẽ làm
                   // splash "Đang tải cuộc họp" xuất hiện lại và gây nháy UI.
                   void refreshMeetingDataSilently();
                 }}
                 onCancel={() => {
-                  // Status will update via Realtime
+                  // Cuộc họp đã bị xoá sạch → không còn gì để xem, quay về danh sách.
+                  router.replace("/");
                 }}
                 onResume={() => {
                   // Status will update via Realtime
@@ -2182,7 +2244,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       @keyframes detail-enter { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
     `}</style>
     <div
-      className="min-h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans"
+      /* Layout flex cố định theo viewport: trang KHÔNG cuộn, mọi vùng nội dung tự co
+         giãn và cuộn bên trong. Thay cho cách cũ min-h-screen + h-[calc(100dvh-XXXpx)]
+         (số pixel cố định) vốn sai khi đổi độ cao màn hình / khi không có thanh audio.
+         Lưu ý: KHÔNG dùng flex-1 ở đây — body là `min-h-full` (min-height) nên flex-1
+         sẽ để root phình theo nội dung thay vì bị giới hạn. */
+      className="h-dvh overflow-hidden flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans"
       style={{ animation: "detail-enter .45s ease-out" }}
     >
       {/* HEADER */}
@@ -2197,11 +2264,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 ${sourceMeta.className}`}>
+                <SourceTypeIcon className="w-3 h-3" />
+                <span>{sourceMeta.label}</span>
+              </span>
+            </div>
           </div>
 
           {/* Right: Action Buttons */}
-          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+          <div className="hidden sm:flex items-center space-x-1.5 sm:space-x-2 shrink-0">
             <button
               onClick={handleTogglePin}
               className={`p-1.5 sm:p-2 rounded-md border cursor-pointer transition-all duration-200 ${
@@ -2259,6 +2332,79 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </svg>
               <span className="hidden sm:inline">Xuất PDF</span>
             </button>
+          </div>
+
+          {/* Mobile: gom 5 thao tác vào menu để dành chỗ cho tiêu đề và loại cuộc họp */}
+          <div ref={headerMenuRef} className="relative sm:hidden shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowHeaderMenu((open) => !open)}
+              className={`p-1.5 inline-flex items-center justify-center rounded-md transition-colors cursor-pointer ${
+                showHeaderMenu
+                  ? "text-blue-600 dark:text-blue-400"
+                  : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+              aria-label="Mở menu thao tác"
+              aria-expanded={showHeaderMenu}
+            >
+              <MoreVertical className="w-5 h-5" />
+            </button>
+
+            <div
+              className={`absolute right-0 top-full mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl dark:border-slate-700 dark:bg-slate-900 z-50 origin-top-right transition-[opacity,transform,visibility] duration-200 ease-out ${
+                showHeaderMenu
+                  ? "visible opacity-100 scale-100 translate-y-0 pointer-events-auto"
+                  : "invisible opacity-0 scale-95 -translate-y-1 pointer-events-none"
+              }`}
+              aria-hidden={!showHeaderMenu}
+            >
+                <button
+                  type="button"
+                  onClick={() => { setShowHeaderMenu(false); void handleTogglePin(); }}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Pin className={`w-4 h-4 text-blue-500 ${meeting.is_pinned ? "fill-current" : ""}`} />
+                  <span>{meeting.is_pinned ? "Bỏ ghim" : "Ghim cuộc họp"}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowHeaderMenu(false); void handleToggleFavorite(); }}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  <Star className={`w-4 h-4 text-amber-500 ${meeting.is_favorite ? "fill-current" : ""}`} />
+                  <span>{meeting.is_favorite ? "Bỏ yêu thích" : "Thêm yêu thích"}</span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                <button
+                  type="button"
+                  onClick={() => { setShowHeaderMenu(false); void handleExportDocx(); }}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-blue-50 hover:text-blue-600 dark:text-slate-200 dark:hover:bg-blue-950/30 dark:hover:text-blue-400 transition-colors cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-blue-500" />
+                  <span>Xuất Word</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowHeaderMenu(false); handleExportPdf(); }}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-red-50 hover:text-red-600 dark:text-slate-200 dark:hover:bg-red-950/30 dark:hover:text-red-400 transition-colors cursor-pointer"
+                >
+                  <FileText className="w-4 h-4 text-red-500" />
+                  <span>Xuất PDF</span>
+                </button>
+
+                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+                <button
+                  type="button"
+                  onClick={() => { setShowHeaderMenu(false); void handleDeleteMeeting(); }}
+                  className="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Xóa cuộc họp</span>
+                </button>
+            </div>
           </div>
         </div>
 
@@ -2338,11 +2484,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       </header>
  
       {/* CORE CONTAINER */}
-      <main className="flex-1 max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 py-4 pb-24">
-        <div className="space-y-6">
+      <main
+        className={`flex-1 min-h-0 flex flex-col max-w-[1366px] 2xl:max-w-[1600px] w-full mx-auto px-4 pt-4 ${
+          // Chừa chỗ cho thanh audio cố định (cao ~63px) — chỉ khi thanh đó hiển thị.
+          // pb-20 = 80px: đủ hở thanh audio một chút mà không phí khoảng trống.
+          audioSrc ? "pb-20" : "pb-4"
+        }`}
+      >
+        <div className="flex-1 min-h-0 flex flex-col gap-6">
  
           {/* MAIN CONTENT AREA */}
-          <div className={`w-full space-y-6 text-left transition-opacity duration-200 ${(activeTab !== shownTab || transcriptVer !== shownVer) ? "opacity-40" : ""}`}>
+          <div className={`w-full flex-1 min-h-0 flex flex-col gap-6 text-left transition-opacity duration-200 ${(activeTab !== shownTab || transcriptVer !== shownVer) ? "opacity-40" : ""}`}>
 
         {/* Model 2-bản: KHÔNG hiện tiến trình ở màn Hội thoại nữa (theo yêu cầu) — nút "Xử lý lại"
             trong toolbar đã tự có spinner "Đang xử lý..." là đủ. Tiến trình tóm tắt hiển thị riêng
@@ -2754,8 +2906,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
 
         {/* MAIN TAB CONTENT CONTAINER */}
         {shownTab === "ask" ? (
-          <div className="space-y-6 text-left">
-            <div className="flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden h-[600px] xl:h-[800px]">
+          <div className="flex-1 min-h-0 flex flex-col text-left">
+            <div className="flex-1 min-h-0 flex flex-col bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 rounded-xl shadow-sm overflow-hidden">
               <div className="bg-gradient-to-r from-blue-50/80 to-transparent dark:from-blue-950/20 px-5 py-4 border-b border-blue-100/60 dark:border-slate-800">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2.5">
@@ -2985,11 +3137,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             </div>
           </div>
         ) : !showFinalPanel ? (
-          <div className="space-y-6 text-left">
+          <div className="flex-1 min-h-0 flex flex-col text-left">
 
             {/* SUB-TAB CONTENT */}
             {subTabProcessed === "summary" ? (
-              <div className="space-y-5">
+              // Tab Tóm tắt không có khung cố định → tự cuộn bên trong vì trang đã hết cuộn.
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-5 pr-1">
                 {/* Tiến trình TÓM TẮT — hiển thị RIÊNG ở tab Tóm tắt (thay cho stepper tổng đã bỏ) */}
                 
                 {/* Summary mode quick actions */}
@@ -3346,7 +3499,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
               </div>
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className="flex-1 min-h-0 flex flex-col space-y-5">
                 {/* Editing mode quick actions — model 2-bản: bỏ viết-lại-bản-gốc (mode no-op), ẩn panel. */}
                 <div className="hidden">
                   <div className="flex items-center justify-between mb-2.5">
@@ -3420,7 +3573,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                   )}
                 </div>
 
-                <div className="bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 pt-3.5 px-5 pb-5 sm:pt-4 sm:px-6 sm:pb-6 rounded-xl shadow-sm">
+                <div className="flex-1 min-h-0 flex flex-col bg-white border border-slate-200/60 dark:bg-slate-900/40 dark:border-slate-800 pt-3.5 px-5 pb-2.5 sm:pt-4 sm:px-6 sm:pb-3 rounded-xl shadow-sm">
                   {/* Card title */}
                   <div className="flex items-center justify-between mb-4 pb-3.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
                     <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -3500,7 +3653,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </button>
                   </div>
 
-                  <div className="relative w-full h-[calc(100vh-360px)] min-h-[360px] max-h-[720px] overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50/30 shadow-inner dark:border-slate-800 dark:bg-slate-950/20">
+                  <div className="relative w-full flex-1 min-h-0 overflow-hidden rounded-xl border border-slate-200/80 bg-slate-50/30 shadow-inner dark:border-slate-800 dark:bg-slate-950/20">
                     <div ref={rawScrollContainerRef} className={`relative h-full overflow-x-hidden p-4 ${
                       rawLangMode === "translated" && !hasOfflineRawTranslation
                         ? "overflow-y-hidden"
@@ -3541,7 +3694,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         pointerEvents: rawLangMode === "translated" ? "auto" : "none",
                       }}
                     >
-                      {rawLangMode === "translated" && !hasOfflineRawTranslation ? (
+                      {rawLangMode === "translated" && !hasOfflineRawTranslation && rawTranslationLoading ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-center space-y-3 px-6">
+                          <Loader2 className="w-7 h-7 text-indigo-400 dark:text-indigo-500 animate-spin" />
+                          <p className="text-xs text-slate-400">Đang tải bản dịch...</p>
+                        </div>
+                      ) : rawLangMode === "translated" && !hasOfflineRawTranslation ? (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-center space-y-3 px-6">
                           <Languages className="w-8 h-8 text-indigo-400 dark:text-indigo-600 mx-auto" />
                           <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Bản dịch tiếng Việt chưa được tạo</p>
@@ -3555,7 +3713,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold shadow-sm hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                           >
                             <Languages className={`w-4 h-4 ${isTranslatingRaw ? "animate-spin" : ""}`} />
-                            {isTranslatingRaw ? "Đang dịch bản gốc..." : "Dịch bản gốc"}
+                            {isTranslatingRaw
+                              ? `Đang dịch ${rawTranslateProgress.done}/${rawTranslateProgress.total}...`
+                              : "Dịch bản gốc"}
                           </button>
                         </div>
                       ) : offlineRawRows.length > 0 ? (
@@ -3577,7 +3737,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             )}
           </div>
         ) : (
-          <div className="space-y-6 text-left">
+          <div className="flex-1 min-h-0 flex flex-col text-left">
             {/* SUB-TAB CONTENT */}
             {reprocessedTranscripts.length === 0 ? (
               <div className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-8 rounded-xl shadow-sm text-center space-y-2">
@@ -3587,7 +3747,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </p>
               </div>
             ) : (
-              <div className="space-y-6 bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:px-6 sm:pb-6 sm:pt-4 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
+              <div className="flex-1 min-h-0 flex flex-col gap-6 overflow-hidden bg-transparent sm:bg-white border-0 sm:border border-slate-200/60 dark:bg-transparent dark:sm:bg-slate-900/40 dark:border-0 dark:sm:border-slate-800 p-0 sm:px-6 sm:pb-6 sm:pt-4 rounded-none sm:rounded-xl shadow-none sm:shadow-sm">
                 {/* Card title + điều khiển riêng của tab Hội thoại (Phân vai / Xử lý lại) */}
                 <div className="flex items-center justify-between gap-2 pb-2.5 sm:pb-4 border-b border-slate-100 dark:border-slate-800">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
@@ -3721,11 +3881,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
 
                 {/* Raw Transcript — Mobile Cards */}
-                <div className="sm:hidden space-y-2">
+                <div className="sm:hidden flex-1 min-h-0 overflow-y-auto space-y-2">
                   {filteredReprocessedTranscripts.map((t) => {
-                    const isEditing = editingTranscriptId === t.id;
                     const closestRaw = findClosestRawLine(t);
-                    const needsReview = (typeof t.confidence === "number" && t.confidence < 0.8) || (closestRaw && typeof closestRaw.confidence === "number" && closestRaw.confidence < 0.8);
                     const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                     const fmtTime = (ms: number) => {
                       const s = Math.floor(ms / 1000);
@@ -3736,7 +3894,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     return (
                       <div
                         key={t.id}
-                        id={`transcript-row-${t.id}`}
+                        id={`transcript-row-m-${t.id}`}
                         className={`border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 ${
                           activeAudioTranscriptId === t.id
                             ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
@@ -3747,7 +3905,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           <div className="flex items-center gap-2">
                             <span
                               className={`text-[11px] font-mono font-medium text-slate-400 ${
-                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                                audioSrc ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
                               }`}
                               onClick={() => handleSeekToLine(t)}
                             >
@@ -3762,42 +3920,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                           </div>
                         </div>
                         <div className="px-3 py-2.5 space-y-2">
-                          {isEditing ? (
-                            <div className="flex items-start space-x-2">
-                              <textarea
-                                value={editingTextVal}
-                                onChange={(e) => setEditingTextVal(e.target.value)}
-                                onBlur={() => {
-                                  if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                    handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                  } else {
-                                    setEditingTranscriptId(null);
-                                  }
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" && !e.shiftKey) {
-                                    e.preventDefault();
-                                    if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                      handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                    } else {
-                                      setEditingTranscriptId(null);
-                                    }
-                                  } else if (e.key === "Escape") {
-                                    setEditingTranscriptId(null);
-                                  }
-                                }}
-                                autoFocus
-                                className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
-                                rows={3}
-                              />
-                              {isSavingLine && (
-                                <span className="p-1.5 text-slate-400">
-                                  <RefreshCw className="w-4 h-4 animate-spin" />
-                                </span>
-                              )}
-                            </div>
-                          ) : (
-                            <div
+                          <div
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
@@ -3805,8 +3928,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                               }}
                               className="group/cell leading-relaxed cursor-pointer"
                             >
-                              <span className={`text-[13px] text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
-                                {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
+                              <span className="text-[13px] text-slate-900 dark:text-slate-100 font-semibold">
                                 {highlightText(t.correctedText || t.originalText, searchQuery)}
                               </span>
 
@@ -3848,8 +3970,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                   )}
                                 </button>
                               </span>
-                            </div>
-                          )}
+                          </div>
                           {t.translatedText && (
                             <div
                               onClick={(e) => {
@@ -3924,7 +4045,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                 </div>
 
                 {/* Raw Transcript — Desktop Table */}
-                <div className="hidden sm:block overflow-x-auto pr-1">
+                <div className="hidden sm:block flex-1 min-h-0 overflow-auto pr-1">
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
@@ -3987,10 +4108,8 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                       {filteredReprocessedTranscripts.map((t) => {
-                        const isEditing = editingTranscriptId === t.id;
-                        const closestRaw = findClosestRawLine(t);
-                        const needsReview = (typeof t.confidence === "number" && t.confidence < 0.8) || (closestRaw && typeof closestRaw.confidence === "number" && closestRaw.confidence < 0.8);
-                        const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
+                            const closestRaw = findClosestRawLine(t);
+                            const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                         const formatTime = (ms: number) => {
                           const s = Math.floor(ms / 1000);
                           const m = Math.floor(s / 60);
@@ -4001,7 +4120,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                         return (
                           <Fragment key={t.id}>
                             <tr
-                              id={`transcript-row-${t.id}`}
+                              id={`transcript-row-d-${t.id}`}
                               className={`group transition-colors duration-200 ${
                                 activeAudioTranscriptId === t.id
                                   ? "bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
@@ -4010,10 +4129,10 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             >
                             <td
                               className={`py-4 px-4 align-top font-medium whitespace-nowrap text-slate-400 ${
-                                audioBlobUrl ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
+                                audioSrc ? "cursor-pointer hover:text-blue-600 dark:hover:text-blue-400" : ""
                               }`}
                               onClick={() => handleSeekToLine(t)}
-                              title={audioBlobUrl ? "Click để phát từ vị trí này" : undefined}
+                              title={audioSrc ? "Click để phát từ vị trí này" : undefined}
                             >
                               {formatTime(t.startMs)}
                             </td>
@@ -4029,60 +4148,17 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                             </td>
                             <td
                               onClick={() => {
-                                if (!isEditing) {
-                                  setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
-                                  handleSeekToLine(t);
-                                }
+                                setActiveTouchKey(activeTouchKey === `tx_orig_${t.id}` ? null : `tx_orig_${t.id}`);
+                                handleSeekToLine(t);
                               }}
-                              className={`py-4 px-4 align-top group/cell ${!isEditing ? "cursor-pointer" : ""}`}
+                              className="py-4 px-4 align-top group/cell cursor-pointer"
                             >
-                              {isEditing ? (
-                                <div className="flex items-start space-x-2">
-                                  <textarea
-                                    value={editingTextVal}
-                                    onChange={(e) => setEditingTextVal(e.target.value)}
-                                    onBlur={() => {
-                                      if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                        handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                      } else {
-                                        setEditingTranscriptId(null);
-                                      }
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" && !e.shiftKey) {
-                                        e.preventDefault();
-                                        if (editingTextVal.trim() && editingTextVal !== initialEditingTextRef.current) {
-                                          handleSaveTranscriptLine(t.id, editingTextVal, false);
-                                        } else {
-                                          setEditingTranscriptId(null);
-                                        }
-                                      } else if (e.key === "Escape") {
-                                        setEditingTranscriptId(null);
-                                      }
-                                    }}
-                                    autoFocus
-                                    className="flex-1 p-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none disabled:opacity-50"
-                                    rows={2}
-                                  />
-                                  {isSavingLine && (
-                                    <span className="p-1.5 text-slate-400">
-                                      <RefreshCw className="w-4 h-4 animate-spin" />
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="leading-relaxed">
-                                  <span className={`text-slate-900 dark:text-slate-100 font-semibold ${needsReview ? "bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-1.5 py-[1px] rounded border border-dashed border-amber-250 dark:border-amber-900/30 inline" : ""}`}>
-                                    {needsReview && <span className="text-amber-500 text-xs mr-1">⚠️</span>}
+                              <div className="leading-relaxed">
+                                  <span className="text-slate-900 dark:text-slate-100 font-semibold">
                                     {highlightText(t.correctedText || t.originalText, searchQuery)}
                                   </span>
 
-                                  {t.isEdited && (
-                                    <span className="text-[10px] bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 px-1 rounded font-medium ml-1 inline-block align-middle select-none">
-                                      Đã sửa tay
-                                    </span>
-                                  )}
-                                  <span 
+                                  <span
                                     className={`inline-flex items-center ml-2 space-x-1.5 align-middle select-none transition-opacity duration-200 ${
                                       activeTouchKey === `tx_orig_${t.id}`
                                         ? "opacity-100 delay-0"
@@ -4120,8 +4196,7 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
                                       )}
                                     </button>
                                   </span>
-                                </div>
-                              )}
+                              </div>
                             </td>
                             <td
                               onClick={() => {
@@ -4379,10 +4454,12 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
       )}
     </div>
 
-      {/* === AUDIO PLAYER (chỉ hiển khi có blob URL từ phiên upload) === */}
-      {audioBlobUrl && (
+      {/* === AUDIO PLAYER — phát trực tiếp (stream) từ URL server, hiện ngay cùng
+          trang; fallback sang blob IndexedDB nếu server lỗi === */}
+      {audioSrc && (
         <AudioPlayer
-          blobUrl={audioBlobUrl}
+          blobUrl={audioSrc}
+          onError={() => setAudioServerFailed(true)}
           transcripts={transcripts.map(t => ({ id: t.id, start_ms: t.startMs, end_ms: t.endMs }))}
           activeTranscriptId={activeAudioTranscriptId}
           onTimeUpdate={(currentTimeMs: number) => {
@@ -4401,13 +4478,9 @@ export default function HistoryDetail({ params }: HistoryDetailProps) {
             const newId = active?.id || null;
             if (newId !== activeAudioTranscriptId) {
               setActiveAudioTranscriptId(newId);
-              // Auto-scroll đến transcript đang phát
-              if (newId) {
-                const el = document.getElementById(`transcript-row-${newId}`);
-                if (el) {
-                  el.scrollIntoView({ behavior: "smooth", block: "center" });
-                }
-              }
+              // Auto-scroll đến transcript đang phát (chọn đúng element đang hiển thị
+              // → hoạt động cho cả desktop lẫn mobile).
+              if (newId) scrollToTranscriptRow(newId);
             }
           }}
           onSeekToTranscript={(startMs: number) => {
