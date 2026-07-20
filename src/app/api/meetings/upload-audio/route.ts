@@ -71,7 +71,9 @@ export async function POST(request: Request) {
 
     const meetingId = meeting.id;
 
-    // Lưu file âm thanh upload lên server disk tại public/audio/[meetingId].[ext]
+    // Lưu file âm thanh TẠM lên server disk để pipeline Deepgram xử lý.
+    // Không upload lên Supabase Storage: user đã có file gốc trên máy, không cần lưu cloud.
+    // TODO: Xóa file tạm này sau khi pipeline hoàn tất (hiện giữ lại cho debug).
     try {
       const fs = require("fs");
       const path = require("path");
@@ -82,7 +84,7 @@ export async function POST(request: Request) {
       }
       const audioPath = path.join(audioDir, `${meetingId}.${ext}`);
       fs.writeFileSync(audioPath, buffer);
-      console.log(`[Upload Audio] Saved file cache to server: ${audioPath}`);
+      console.log(`[Upload Audio] Saved temp file to server: ${audioPath}`);
     } catch (saveErr) {
       console.error("[Upload Audio] Failed to save audio file to disk:", saveErr);
     }

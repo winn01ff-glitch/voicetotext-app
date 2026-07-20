@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import {
+  uploadMeetingAudio,
+  getSignedAudioUrl,
+} from "@/lib/supabase/supabase-storage";
 
 // MIME type mapping based on file extensions
 const MIME_TYPES: Record<string, string> = {
@@ -21,12 +26,32 @@ export async function GET(
       return NextResponse.json({ error: "Missing meeting ID" }, { status: 400 });
     }
 
-    const audioDir = path.join(process.cwd(), "public", "audio");
-    if (!fs.existsSync(audioDir)) {
-      return NextResponse.json({ error: "Audio directory not found" }, { status: 404 });
+    // 1. Kiểm tra audio_url trong DB → tạo signed URL từ Supabase Storage
+    try {
+      const supabase = await createServerSupabaseClient();
+      const { data: meeting } = await supabase
+        .from("meetings")
+        .select("audio_url")
+        .eq("id", id)
+        .single();
+
+      if (meeting?.audio_url) {
+        const signedUrl = await getSignedAudioUrl(meeting.audio_url);
+        if (signedUrl) {
+          return NextResponse.redirect(signedUrl, 302);
+        }
+        // Signed URL thất bại → fallback sang local disk
+      }
+    } catch (dbErr) {
+      console.warn("[Get Audio] DB/Storage lookup failed, falling back to disk:", dbErr);
     }
 
-    // Find any file that starts with [id].
+    // 2. Fallback: đọc file từ local disk (backward compatible)
+    const audioDir = path.join(process.cwd(), "public", "audio");
+    if (!fs.existsSync(audioDir)) {
+      return NextResponse.json({ error: "Audio not found" }, { status: 404 });
+    }
+
     const files = fs.readdirSync(audioDir);
     const audioFile = files.find((file) => file.startsWith(`${id}.`));
 
@@ -108,6 +133,33 @@ export async function HEAD(
   try {
     const { id } = await params;
     if (!id) return new NextResponse(null, { status: 400 });
+
+    // Kiểm tra Supabase Storage trước
+    try {
+      const supabase = await createServerSupabaseClient();
+      const { data: meeting } = await supabase
+        .from("meetings")
+        .select("audio_url")
+        .eq("id", id)
+        .single();
+
+      if (meeting?.audio_url) {
+        // File tồn tại trên Supabase → trả 200 với content-type ước tính
+        const ext = meeting.audio_url.split(".").pop()?.toLowerCase() || "webm";
+        const mimeType = MIME_TYPES[ext] || "application/octet-stream";
+        return new NextResponse(null, {
+          status: 200,
+          headers: {
+            "Content-Type": mimeType,
+            "Accept-Ranges": "bytes",
+          },
+        });
+      }
+    } catch {
+      // Fallback to local disk
+    }
+
+    // Fallback: check local disk
     const audioDir = path.join(process.cwd(), "public", "audio");
     if (!fs.existsSync(audioDir)) return new NextResponse(null, { status: 404 });
     const audioFile = fs.readdirSync(audioDir).find((file) => file.startsWith(`${id}.`));
@@ -147,19 +199,45 @@ export async function POST(
 
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
+    const ext = file.name.split(".").pop() || "webm";
 
+    // 1. Luôn lưu local disk trước (safety net + backward compatible)
     const audioDir = path.join(process.cwd(), "public", "audio");
     if (!fs.existsSync(audioDir)) {
       fs.mkdirSync(audioDir, { recursive: true });
     }
-
-    // Save with the original extension or fallback to webm
-    const ext = file.name.split(".").pop() || "webm";
     const filePath = path.join(audioDir, `${id}.${ext}`);
     fs.writeFileSync(filePath, buffer);
+    console.log(`[Upload Audio Route] Saved file to local disk: ${filePath}`);
 
-    console.log(`[Upload Audio Route] Saved file to server: ${filePath}`);
-    return NextResponse.json({ success: true });
+    // 2. Upload lên Supabase Storage (non-blocking failure)
+    let cloudUploaded = false;
+    let warning: string | undefined;
+
+    try {
+      const storagePath = await uploadMeetingAudio(id, buffer, ext);
+
+      // Lưu storage path vào DB
+      const supabase = await createServerSupabaseClient();
+      await supabase
+        .from("meetings")
+        .update({ audio_url: storagePath })
+        .eq("id", id);
+
+      cloudUploaded = true;
+      console.log(`[Upload Audio Route] Uploaded to Supabase Storage: ${storagePath}`);
+    } catch (uploadErr: any) {
+      console.warn("[Upload Audio Route] Supabase upload failed:", uploadErr.message);
+      warning = uploadErr.isQuotaError
+        ? "cloud_storage_full"
+        : "cloud_upload_failed";
+    }
+
+    return NextResponse.json({
+      success: true,
+      cloud_uploaded: cloudUploaded,
+      ...(warning ? { warning } : {}),
+    });
   } catch (error: any) {
     console.error("[Post Audio Route Error]:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

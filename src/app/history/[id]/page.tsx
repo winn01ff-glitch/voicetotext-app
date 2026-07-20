@@ -53,6 +53,33 @@ function mdToHtml(src: string): string {
   return html;
 }
 
+// Trích YouTube video ID từ URL (youtube.com/watch?v=xxx, youtu.be/xxx, embed/xxx...)
+function extractYoutubeVideoId(url: string): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    // youtube.com/watch?v=xxx
+    if (u.hostname.includes("youtube.com") && u.searchParams.has("v")) {
+      return u.searchParams.get("v");
+    }
+    // youtu.be/xxx
+    if (u.hostname === "youtu.be") {
+      return u.pathname.slice(1).split("/")[0] || null;
+    }
+    // youtube.com/embed/xxx
+    const embedMatch = u.pathname.match(/\/embed\/([^/?]+)/);
+    if (embedMatch) return embedMatch[1];
+    // youtube.com/v/xxx
+    const vMatch = u.pathname.match(/\/v\/([^/?]+)/);
+    if (vMatch) return vMatch[1];
+  } catch {
+    // URL không hợp lệ — thử regex fallback
+    const match = url.match(/(?:v=|youtu\.be\/|embed\/|\/v\/)([a-zA-Z0-9_-]{11})/);
+    return match?.[1] || null;
+  }
+  return null;
+}
+
 // Map các dòng transcript (đã xử lý) từ DB sang shape UI, gán màu speaker xen kẽ nóng/lạnh.
 function mapTranscriptRows(txs: any[]): any[] {
   const HOT_COLORS = ["#ea580c", "#dc2626", "#d97706", "#db2777"];
@@ -504,9 +531,13 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
   // true nếu phát trực tiếp từ URL server thất bại → chuyển sang fallback blob (IndexedDB).
   const [audioServerFailed, setAudioServerFailed] = useState(false);
-  // Nguồn audio cho player: ƯU TIÊN URL server (phát ngay khi tải nhờ streaming + tua
-  // được nhờ HTTP Range) → player hiện tức thì cùng trang. Blob IndexedDB chỉ dùng khi
+  // Source type helpers
+  const meetingSourceType = meeting?.source_type || "live";
+  const isYoutubeSource = meetingSourceType === "youtube";
+  // Nguồn audio cho player: ƯU TIÊN URL server (API sẽ redirect sang Supabase signed URL
+  // hoặc trả file từ disk) → player hiện tức thì cùng trang. Blob IndexedDB chỉ dùng khi
   // server lỗi/không có file (vd cuộc họp cũ, hoặc audio chỉ có local từ phiên ghi).
+  // YouTube + Upload: audio cũng có trên server disk (pipeline download/lưu), nên dùng chung.
   const audioHasServerFile = !!meeting && (meeting.status === "completed" || meeting.status === "ready");
   const audioSrc = (!audioServerFailed && audioHasServerFile)
     ? `/api/meetings/${meetingId}/audio`
@@ -2270,6 +2301,19 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                 <SourceTypeIcon className="w-3 h-3" />
                 <span>{sourceMeta.label}</span>
               </span>
+              {/* Nút mở YouTube gốc — chỉ hiện khi source_type = youtube */}
+              {isYoutubeSource && meeting?.source_url && (
+                <a
+                  href={meeting.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/50 text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 transition-colors no-underline"
+                  title="Mở video YouTube gốc"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                  <span>Mở YouTube</span>
+                </a>
+              )}
             </div>
           </div>
 
@@ -4454,8 +4498,10 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
       )}
     </div>
 
-      {/* === AUDIO PLAYER — phát trực tiếp (stream) từ URL server, hiện ngay cùng
-          trang; fallback sang blob IndexedDB nếu server lỗi === */}
+      {/* === AUDIO PLAYER — phát trực tiếp (stream) từ Supabase signed URL hoặc server
+          disk, hiện ngay cùng trang; fallback sang blob IndexedDB nếu server/cloud lỗi.
+          Hoạt động cho tất cả source types (live, youtube, upload) vì pipeline đều lưu
+          audio trên server disk. === */}
       {audioSrc && (
         <AudioPlayer
           blobUrl={audioSrc}

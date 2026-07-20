@@ -50,7 +50,7 @@ export interface RecordingResult {
 
 const ARCHIVE_TIMESLICE_MS = 1000;
 // Cố định bitrate archive thay vì nhận default (khác nhau giữa các trình duyệt).
-const ARCHIVE_BITRATE_BPS = 128000;
+const ARCHIVE_BITRATE_BPS = 48000;
 const MAX_RECONNECTS = 5;
 
 interface DeepgramLiveWord {

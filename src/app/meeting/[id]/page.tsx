@@ -95,6 +95,78 @@ function splitCompleteSentences(text: string): { complete: string[]; rest: strin
   return { complete, rest: text.slice(start).trim() };
 }
 
+// Ghi localStorage AN TOÀN cho phiên ghi âm.
+//
+// localStorage chỉ có ~5-10MB và app tích luỹ key theo từng cuộc họp
+// (meeting_transcripts_*, meeting_detail_*, meeting_live_transcript_*...) mà
+// trước đây không bao giờ dọn. Sau vài chục cuộc là đầy, và vì setItem không
+// được bọc try/catch nên QuotaExceededError ném thẳng ra React, làm sập cả trang
+// GIỮA LÚC ĐANG GHI ÂM — mất luôn buổi họp.
+//
+// Chiến lược: đầy thì xoá cache của các cuộc họp KHÁC (cũ nhất trước) rồi thử
+// lại. Vẫn không được thì bỏ qua — cache chỉ là phao phục hồi, không phải nguồn
+// dữ liệu chính (audio đã nằm trong MediaRecorder, transcript sẽ gửi lên server
+// lúc kết thúc). Thà mất phao còn hơn sập buổi ghi.
+const MEETING_CACHE_PREFIXES = [
+  "meeting_detail_",
+  "meeting_transcripts_",
+  "meeting_live_transcript_",
+  "meeting_recording_duration_",
+  "meeting_summary_mode_",
+  "meeting_diarize_mode_",
+];
+
+function evictOtherMeetingCaches(keepMeetingId: string): number {
+  let freed = 0;
+  try {
+    const victims: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      const prefix = MEETING_CACHE_PREFIXES.find((p) => k.startsWith(p));
+      if (!prefix) continue;
+      // Giữ nguyên cache của cuộc họp đang ghi.
+      if (k.slice(prefix.length) === keepMeetingId) continue;
+      victims.push(k);
+    }
+    for (const k of victims) {
+      freed += ((localStorage.getItem(k) || "").length + k.length) * 2;
+      localStorage.removeItem(k);
+    }
+    // cached_meetings (danh sách dashboard) dựng lại được từ server.
+    if (freed === 0) {
+      const list = localStorage.getItem("cached_meetings");
+      if (list) {
+        freed += list.length * 2;
+        localStorage.removeItem("cached_meetings");
+      }
+    }
+  } catch {
+    /* storage bị chặn hoàn toàn */
+  }
+  return freed;
+}
+
+function safeSetItem(key: string, value: string, meetingId: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    const freed = evictOtherMeetingCaches(meetingId);
+    if (freed > 0) {
+      try {
+        localStorage.setItem(key, value);
+        console.warn(`[cache] Đã dọn ${(freed / 1024).toFixed(0)}KB cache cuộc họp cũ để ghi "${key}".`);
+        return true;
+      } catch {
+        /* vẫn không đủ chỗ */
+      }
+    }
+    console.warn(`[cache] Bỏ qua ghi "${key}" — localStorage đầy. Buổi ghi vẫn tiếp tục bình thường.`);
+    return false;
+  }
+}
+
 // Id do client sinh trong lúc live (dòng transcript, speaker "temp-") không phải
 // uuid; ghi thẳng vào Postgres sẽ lỗi cú pháp uuid và trả về object rỗng {}.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -459,7 +531,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         const duration = parseInt(cachedDuration) || 0;
         setRecordingDuration(duration);
         if (duration > 0) {
-          localStorage.setItem("active_meeting_id", meetingId);
+          safeSetItem("active_meeting_id", meetingId, meetingId);
         }
         console.log("Recovered recording duration from localStorage:", cachedDuration);
       }
@@ -560,7 +632,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   useEffect(() => {
     if (meetingId && !loading) {
       if (transcripts.length > 0) {
-        localStorage.setItem(`meeting_transcripts_${meetingId}`, JSON.stringify(transcripts));
+        safeSetItem(`meeting_transcripts_${meetingId}`, JSON.stringify(transcripts), meetingId);
       } else {
         localStorage.removeItem(`meeting_transcripts_${meetingId}`);
       }
@@ -571,7 +643,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   useEffect(() => {
     if (meetingId && !loading) {
       if (liveTranscriptText) {
-        localStorage.setItem(`meeting_live_transcript_${meetingId}`, liveTranscriptText);
+        safeSetItem(`meeting_live_transcript_${meetingId}`, liveTranscriptText, meetingId);
       } else {
         localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
       }
@@ -582,7 +654,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   useEffect(() => {
     if (meetingId && !loading) {
       if (recordingDuration > 0) {
-        localStorage.setItem(`meeting_recording_duration_${meetingId}`, recordingDuration.toString());
+        safeSetItem(`meeting_recording_duration_${meetingId}`, recordingDuration.toString(), meetingId);
       } else {
         localStorage.removeItem(`meeting_recording_duration_${meetingId}`);
       }
@@ -1525,9 +1597,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         duration = transcriptsRef.current[transcriptsRef.current.length - 1].endMs;
       }
 
-      // 3. Upload audio lên server TRƯỚC khi gọi end-meeting để backend có file chạy
-      // pipeline offline (giống hệt luồng upload file). Chỉ fallback sang cache
-      // IndexedDB khi trang bị reload giữa chừng nên không còn blob trong RAM.
+      // 3. Upload audio lên Supabase Storage qua API. API lưu cả local disk (safety)
+      // lẫn Supabase Storage (cloud). Nếu cloud fail → IndexedDB vẫn giữ audio,
+      // toast cảnh báo để user biết audio chỉ khả dụng trên thiết bị này.
       try {
         let audioBlob: Blob | null = recording?.blob || null;
         if (!audioBlob) {
@@ -1542,9 +1614,29 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
             body: audioFormData,
           });
           if (uploadRes.ok) {
-            console.log("[EndMeeting] Uploaded live audio to server successfully!");
+            const uploadData = await uploadRes.json();
+            if (uploadData.warning === "cloud_storage_full") {
+              addToast(
+                "Bộ nhớ cloud đầy",
+                "Audio chỉ khả dụng trên thiết bị này. Hãy xóa bớt cuộc họp cũ để giải phóng dung lượng.",
+                "warning"
+              );
+            } else if (uploadData.warning === "cloud_upload_failed") {
+              addToast(
+                "Lưu cloud thất bại",
+                "Audio chỉ khả dụng trên thiết bị này do lỗi mạng.",
+                "warning"
+              );
+            } else {
+              console.log("[EndMeeting] Audio uploaded to cloud successfully!");
+            }
           } else {
             console.warn("[EndMeeting] Failed to upload audio:", uploadRes.statusText);
+            addToast(
+              "Lưu audio thất bại",
+              "Audio chỉ khả dụng trên thiết bị này.",
+              "warning"
+            );
           }
         }
       } catch (audioErr) {
@@ -1817,7 +1909,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 ) : (
                   <button
                     onClick={() => {
-                      localStorage.setItem("active_meeting_id", meetingId);
+                      safeSetItem("active_meeting_id", meetingId, meetingId);
                       startRecording();
                     }}
                     className="w-5.5 h-5.5 flex items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white transition-all cursor-pointer focus:outline-none focus:ring-0 active:scale-90 shadow-sm"
@@ -1993,7 +2085,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 ) : (
                   <button
                     onClick={() => {
-                      localStorage.setItem("active_meeting_id", meetingId);
+                      safeSetItem("active_meeting_id", meetingId, meetingId);
                       startRecording();
                     }}
                     className="flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl h-11 text-sm font-bold transition-all hover:scale-[1.02] active:scale-[0.98] shadow-md shadow-indigo-500/30 cursor-pointer"
@@ -2292,7 +2384,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
               ) : (
                 <button
                   onClick={() => {
-                    localStorage.setItem("active_meeting_id", meetingId);
+                    safeSetItem("active_meeting_id", meetingId, meetingId);
                     startRecording();
                   }}
                   className="w-7 h-7 flex items-center justify-center rounded-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white transition-all cursor-pointer focus:outline-none focus:ring-0 active:scale-90 shadow-md shadow-indigo-500/20"
