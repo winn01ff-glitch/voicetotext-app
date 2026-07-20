@@ -10,13 +10,14 @@ import { exportToDocx } from "@/lib/docx-helper";
 import { exportToPdf } from "@/lib/pdf-helper";
 import PipelineProgress from "@/components/PipelineProgress";
 import AudioPlayer from "@/components/AudioPlayer";
+import YouTubePlayer from "@/components/YouTubePlayer";
 import { getAudioUrl, deleteAudio } from "@/lib/audio-cache";
 import {
-  ArrowLeft, FileText, Download, Play, RefreshCw, Edit2, Check, X,
-  Search, Pin, Star, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, MessageSquare, Copy, Languages,
-  Volume2, VolumeX, Moon, Sun, Plus, Sparkles, ChevronDown, List, Globe, ChevronUp,
+  ArrowLeft, FileText, Download, Play, AlertCircle, RefreshCw, LogOut, SkipBack, SkipForward, MonitorPlay, CheckCircle2, Check, X, Edit2,
+  Monitor, Video, Upload, Search, Filter, Loader2, Sparkles, MessageSquare, Menu, FileDown, Pin, Star, ExternalLink, Trash2, Calendar, Clock, BookOpen, CheckSquare, Square, Copy, Languages,
+  Volume2, VolumeX, Moon, Sun, Plus, ChevronDown, List, Globe, ChevronUp,
   AlignLeft, ListChecks, PenLine, Briefcase, Maximize2, Minimize2, LayoutList, RotateCcw, Eraser, Zap, Shield,
-  Users, UserCheck, GitMerge, Hash, Loader2, MoreVertical, Upload, Radio, Video
+  Users, UserCheck, GitMerge, Hash, MoreVertical, Radio
 } from "lucide-react";
 
 // Chuyển Markdown (do AI trả về) thành HTML an toàn để hiển thị trong khung chat.
@@ -175,10 +176,17 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
   // ?processing=1 (đặt khi vừa tạo cuộc họp upload/YouTube): hiển thị NGAY màn tiến
   // trình thay vì splash "Đang tải cuộc họp" — ta đã biết chắc nó đang trong pipeline.
   //
-  // Phải đọc từ prop searchParams chứ KHÔNG phải window.location: trên server
-  // `window` không tồn tại nên cờ này luôn false, server render ra splash rồi
-  // client hydrate xong mới đổi — đúng khoảng nháy ~1 giây trước khi vào màn xử lý.
+  // Phải đọc từ prop searchParams chứ KHÔNG phải window.location
   const forceProcessingView = query?.processing === "1";
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+    // Nếu URL có ?processing=1 nhưng cache đã xong -> xoá processing khỏi URL
+    if (query?.processing === "1" && cachedData?.meeting && (cachedData.meeting.status === "completed" || cachedData.meeting.status === "ready" || cachedData.meeting.status === "failed")) {
+      router.replace(`/history/${meetingId}`);
+    }
+  }, [query?.processing, cachedData, meetingId, router]);
 
   // Meeting states
   const [meeting, setMeeting] = useState<any>(cachedData?.meeting || null);
@@ -534,6 +542,10 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
   // Source type helpers
   const meetingSourceType = meeting?.source_type || "live";
   const isYoutubeSource = meetingSourceType === "youtube";
+  // Trích YouTube video ID từ source_url để truyền cho YouTubePlayer
+  const youtubeVideoId = isYoutubeSource && meeting?.source_url
+    ? extractYoutubeVideoId(meeting.source_url)
+    : null;
   // Nguồn audio cho player: ƯU TIÊN URL server (API sẽ redirect sang Supabase signed URL
   // hoặc trả file từ disk) → player hiện tức thì cùng trang. Blob IndexedDB chỉ dùng khi
   // server lỗi/không có file (vd cuộc họp cũ, hoặc audio chỉ có local từ phiên ghi).
@@ -2200,11 +2212,10 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     "queued", "uploading", "transcribing", "processing",
   ];
   // Mọi nguồn (kể cả live) ở lại màn tiến trình cho tới khi pipeline hoàn tất.
-  // Nhờ vậy nếu người dùng rời trang rồi mở lại, UI không lộ trang chi tiết sớm.
-  // Chưa tải xong meeting nhưng vừa tạo (?processing=1) → vẫn vào thẳng màn tiến trình.
-  const isInPipeline = meeting
-    ? processingStatuses.includes(meeting.status)
-    : forceProcessingView;
+  // Đồng bộ hydration: nếu chưa mount, bắt buộc tuân theo forceProcessingView của server
+  const isInPipeline = !isMounted
+    ? forceProcessingView
+    : (meeting ? processingStatuses.includes(meeting.status) : forceProcessingView);
   const isPipelineTerminal = meeting && ["failed", "cancelled"].includes(meeting.status);
 
   // Show processing UI for pipeline meetings
@@ -2250,8 +2261,9 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                 initialStatus={meeting?.status || "queued"}
                 initialProgress={meeting?.progress || { percent: 1, stage: "upload", message: "Đang khởi tạo..." }}
                 onCompleted={() => {
-                  // Nạp dữ liệu hoàn tất vào state hiện tại; hard reload sẽ làm
-                  // splash "Đang tải cuộc họp" xuất hiện lại và gây nháy UI.
+                  // Xoá processing=1 khỏi URL
+                  router.replace(`/history/${meetingId}`);
+                  // Nạp dữ liệu hoàn tất vào state hiện tại
                   void refreshMeetingDataSilently();
                 }}
                 onCancel={() => {
@@ -2297,22 +2309,24 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
             </button>
             <div className="flex items-center gap-2 min-w-0">
               <h1 className="font-bold text-sm sm:text-lg leading-tight truncate" title={meeting?.title}>{meeting?.title}</h1>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 ${sourceMeta.className}`}>
-                <SourceTypeIcon className="w-3 h-3" />
-                <span>{sourceMeta.label}</span>
-              </span>
-              {/* Nút mở YouTube gốc — chỉ hiện khi source_type = youtube */}
-              {isYoutubeSource && meeting?.source_url && (
+              {/* Nếu là YouTube có URL thì biến luôn cái badge thành nút bấm mở video */}
+              {isYoutubeSource && meeting?.source_url ? (
                 <a
                   href={meeting.source_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-900/30 dark:bg-red-950/40 dark:text-red-400 dark:hover:bg-red-900/50 text-[9px] sm:text-[10px] font-bold uppercase tracking-wide shrink-0 transition-colors no-underline"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wide shrink-0 transition-all hover:-translate-y-0.5 hover:shadow-sm hover:brightness-95 cursor-pointer no-underline ${sourceMeta.className}`}
                   title="Mở video YouTube gốc"
                 >
-                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-                  <span>Mở YouTube</span>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+                  <span>{sourceMeta.label}</span>
+                  <ExternalLink className="w-3 h-3 ml-0.5 opacity-70" />
                 </a>
+              ) : (
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wide shrink-0 ${sourceMeta.className}`}>
+                  <SourceTypeIcon className="w-3.5 h-3.5" />
+                  <span>{sourceMeta.label}</span>
+                </span>
               )}
             </div>
           </div>
@@ -4498,23 +4512,16 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
       )}
     </div>
 
-      {/* === AUDIO PLAYER — phát trực tiếp (stream) từ Supabase signed URL hoặc server
-          disk, hiện ngay cùng trang; fallback sang blob IndexedDB nếu server/cloud lỗi.
-          Hoạt động cho tất cả source types (live, youtube, upload) vì pipeline đều lưu
-          audio trên server disk. === */}
-      {audioSrc && (
-        <AudioPlayer
-          blobUrl={audioSrc}
-          onError={() => setAudioServerFailed(true)}
+      {/* === MEDIA PLAYER === */}
+      {/* YouTube meetings: YouTubePlayer (floating mini video + red bar) */}
+      {isYoutubeSource && youtubeVideoId && (
+        <YouTubePlayer
+          videoId={youtubeVideoId}
+          sourceUrl={meeting?.source_url || ""}
           transcripts={transcripts.map(t => ({ id: t.id, start_ms: t.startMs, end_ms: t.endMs }))}
           activeTranscriptId={activeAudioTranscriptId}
           onTimeUpdate={(currentTimeMs: number) => {
-            // Tìm dòng đang phát trong list đang hiển thị (bản gốc hoặc đã xử lý)
-            // để highlight/cuộn khớp với tab người dùng đang xem.
             const activeList = transcriptVer === "ai" ? reprocessedTranscripts : transcripts;
-            // Dòng đang phát = dòng có startMs lớn nhất mà vẫn <= thời điểm hiện tại.
-            // Dùng "startMs gần nhất" thay vì "range chứa currentTime" để tránh bắt nhầm
-            // khi các dòng có khoảng thời gian chồng lấn (find sẽ trả dòng trước đó).
             let active: any = null;
             for (const t of activeList) {
               if (currentTimeMs >= t.startMs && (!active || t.startMs > active.startMs)) {
@@ -4524,14 +4531,34 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
             const newId = active?.id || null;
             if (newId !== activeAudioTranscriptId) {
               setActiveAudioTranscriptId(newId);
-              // Auto-scroll đến transcript đang phát (chọn đúng element đang hiển thị
-              // → hoạt động cho cả desktop lẫn mobile).
               if (newId) scrollToTranscriptRow(newId);
             }
           }}
-          onSeekToTranscript={(startMs: number) => {
-            // Handled by __audioPlayerSeekTo global
+          onSeekToTranscript={(startMs: number) => {}}
+        />
+      )}
+      {/* Live/Upload: AudioPlayer (phát từ server disk / Supabase signed URL) */}
+      {!isYoutubeSource && audioSrc && (
+        <AudioPlayer
+          blobUrl={audioSrc}
+          onError={() => setAudioServerFailed(true)}
+          transcripts={transcripts.map(t => ({ id: t.id, start_ms: t.startMs, end_ms: t.endMs }))}
+          activeTranscriptId={activeAudioTranscriptId}
+          onTimeUpdate={(currentTimeMs: number) => {
+            const activeList = transcriptVer === "ai" ? reprocessedTranscripts : transcripts;
+            let active: any = null;
+            for (const t of activeList) {
+              if (currentTimeMs >= t.startMs && (!active || t.startMs > active.startMs)) {
+                active = t;
+              }
+            }
+            const newId = active?.id || null;
+            if (newId !== activeAudioTranscriptId) {
+              setActiveAudioTranscriptId(newId);
+              if (newId) scrollToTranscriptRow(newId);
+            }
           }}
+          onSeekToTranscript={(startMs: number) => {}}
         />
       )}
 
