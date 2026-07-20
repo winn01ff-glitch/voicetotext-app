@@ -704,7 +704,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const processTranscriptBlock = async (block: any) => {
     try {
       setTranscripts(prev => prev.map(t => t.id === block.id ? { ...t, status: "processing" } : t));
-      const res = await fetch("/api/process-transcript", {
+      const res = await fetch("/api/ai-handler?action=process-transcript", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -835,7 +835,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const runLineAI = async (blocks: any[]) => {
     if (blocks.length === 0) return;
     try {
-      const res = await fetch("/api/translate-line", {
+      const res = await fetch("/api/ai-handler?action=translate-line", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1080,7 +1080,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     const last_transcript = completedTranscripts.length > 0 ? completedTranscripts[completedTranscripts.length - 1] : null;
 
     try {
-      const res = await fetch("/api/process-transcript-batch", {
+      const res = await fetch("/api/ai-handler?action=process-transcript-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1136,7 +1136,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           ...newBlocks.map((b: any) => ({ speaker_name: b.speakerName, text: b.text })),
         ];
         summarizedUpToCountRef.current = newCompletedCount;
-        fetch("/api/summarize-rolling", {
+        fetch("/api/ai-handler?action=summarize-rolling", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ previous_summary: rollingSummaryRef.current, new_lines: linesForSummary }),
@@ -1164,7 +1164,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       prev.map((t) => (t.id === blockId ? { ...t, status: "processing" } : t))
     );
     try {
-      const res = await fetch("/api/process-transcript-batch", {
+      const res = await fetch("/api/ai-handler?action=process-transcript-batch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

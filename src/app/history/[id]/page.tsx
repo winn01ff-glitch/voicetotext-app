@@ -772,7 +772,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
         ? overrideData.action_items
         : actionItems.map((item: any) => item.description);
 
-      const res = await fetch("/api/translate-text", {
+      const res = await fetch("/api/ai-handler?action=translate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -856,7 +856,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     }));
 
     try {
-      const res = await fetch("/api/summarize-line", {
+      const res = await fetch("/api/ai-handler?action=summarize-line", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1980,7 +1980,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     const runOne = async (chunk: { start: number; texts: string[] }) => {
       let translated: string[] | null = null;
       try {
-        const res = await fetch("/api/translate-text", {
+        const res = await fetch("/api/ai-handler?action=translate-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
