@@ -74,7 +74,18 @@ ${inputLines.map((l, i) => `${i + 1}. ${JSON.stringify(l)}`).join("\n")}
     for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
       try {
         const raw = await runWithGeminiClient(async (client) => {
-          const model = client.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+          const model = client.getGenerativeModel({
+            model: "gemini-3.1-flash-lite",
+            // Sửa lỗi ASR + dịch là việc "có đáp án đúng", không phải sáng tác:
+            // lấy mẫu tất định để cùng một câu cho ra cùng một bản dịch. Không đặt
+            // thì Gemini dùng mặc định (nhiệt độ cao), mỗi lần chạy lại ra khác một
+            // chút — khớp với các pass hậu kỳ vốn đã dùng temperature 0.
+            generationConfig: {
+              responseMimeType: "application/json",
+              temperature: 0,
+              topP: 1,
+            },
+          });
           const result = await model.generateContent(prompt);
           return result.response.text().trim();
         });

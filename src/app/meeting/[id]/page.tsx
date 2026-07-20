@@ -25,10 +25,15 @@ interface MeetingRoomProps {
 // ================================================================
 const LINE_FLUSH_GAP_MS = 1200;
 const LINE_MAX_CHARS = 120;
-// Số câu gom vào một request dịch. Hạn mức free của Gemini chặn theo request/ngày
-// nên gộp giúp chạy được nhiều cuộc hơn hẳn; token cũng giảm vì prompt dùng chung.
-const TRANSLATE_BATCH_SIZE = 4;
-// Chờ tối đa bấy nhiêu ms cho đủ nhóm rồi bắn luôn dù chưa đủ.
+// Số câu gom vào một request dịch.
+// = 1: dịch NGAY từng câu khi chốt nhịp — độ trễ thấp nhất, câu nào xong hiện
+//      câu đó (người dùng chọn chế độ này sau khi so sánh thực tế).
+// > 1: gộp nhóm để tiết kiệm hạn mức free của Gemini vốn chặn theo request/ngày
+//      (cuộc 35 phút: 305 request khi =1, ~77 khi =4 → 4 vs 19 cuộc/ngày với 3 key).
+//      Đổi một hằng số này là chuyển chế độ, không cần sửa gì khác.
+const TRANSLATE_BATCH_SIZE = 1;
+// Chờ tối đa bấy nhiêu ms cho đủ nhóm rồi bắn luôn dù chưa đủ (chỉ có tác dụng
+// khi TRANSLATE_BATCH_SIZE > 1).
 const TRANSLATE_BATCH_WAIT_MS = 3000;
 
 // Dấu kết câu: full-width CJK luôn cắt; chấm half-width chỉ cắt khi theo sau là
@@ -262,7 +267,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   const [selectedVoice, setSelectedVoice] = useState("");
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [activeSpeech, setActiveSpeech] = useState<{ id: string; type: "original" | "translated" } | null>(null);
-  const [lastSavedTime, setLastSavedTime] = useState<string>("");
   const [isFinishing, setIsFinishing] = useState(false);
   const hasNavigatedToHistoryRef = useRef(false);
 
@@ -557,8 +561,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     if (meetingId && !loading) {
       if (transcripts.length > 0) {
         localStorage.setItem(`meeting_transcripts_${meetingId}`, JSON.stringify(transcripts));
-        const now = new Date();
-        setLastSavedTime(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`);
       } else {
         localStorage.removeItem(`meeting_transcripts_${meetingId}`);
       }
@@ -570,8 +572,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
     if (meetingId && !loading) {
       if (liveTranscriptText) {
         localStorage.setItem(`meeting_live_transcript_${meetingId}`, liveTranscriptText);
-        const now = new Date();
-        setLastSavedTime(`${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}:${now.getSeconds().toString().padStart(2, "0")}`);
       } else {
         localStorage.removeItem(`meeting_live_transcript_${meetingId}`);
       }
@@ -1904,16 +1904,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           </div>
         </div>
 
-        {/* Auto Save Status & Actions */}
+        {/* Actions — chỉ báo "Đã lưu tự động" đã bỏ theo yêu cầu: autosave vẫn chạy
+            ngầm như cũ, nhưng mốc giờ không mang thông tin gì hữu ích cho người dùng. */}
         <div className="flex items-center space-x-1.5 sm:space-x-3 text-xs shrink-0">
-          {lastSavedTime && (
-            <span className="text-slate-400 font-medium flex items-center space-x-1 min-w-0 mr-1">
-              <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
-              <span className="hidden md:inline">Đã lưu tự động lúc {lastSavedTime} ✓</span>
-              <span className="inline md:hidden">{lastSavedTime} ✓</span>
-            </span>
-          )}
-
           {/* Toggle Control Sidebar (Maximize/Minimize layout) */}
           <button
             onClick={() => setIsMaximized(!isMaximized)}
