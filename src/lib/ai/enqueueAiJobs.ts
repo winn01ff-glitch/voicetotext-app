@@ -14,14 +14,20 @@ export async function enqueueAiJobs(
 
   const { data: existing } = await supabase
     .from("ai_jobs")
-    .select("type")
+    .select("type, status")
     .eq("meeting_id", meetingId)
     .in("type", jobTypes);
 
-  const existingTypes = new Set((existing || []).map((j: { type: string }) => j.type));
-
-  const typesToReset = jobTypes.filter((t) => existingTypes.has(t));
-  const typesToInsert = jobTypes.filter((t) => !existingTypes.has(t));
+  // Phân loại: đang processing/queued → bỏ qua (tránh 2 worker chạy cùng job),
+  // đã tồn tại nhưng idle/completed/failed/cancelled → reset, chưa có → insert.
+  const existingMap = new Map(
+    (existing || []).map((j: { type: string; status: string }) => [j.type, j.status])
+  );
+  const inFlightStatuses = new Set(["processing", "queued"]);
+  const typesToReset = jobTypes.filter(
+    (t) => existingMap.has(t) && !inFlightStatuses.has(existingMap.get(t)!)
+  );
+  const typesToInsert = jobTypes.filter((t) => !existingMap.has(t));
 
   if (typesToReset.length > 0) {
     const { error } = await supabase

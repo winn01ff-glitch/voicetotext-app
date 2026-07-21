@@ -1334,12 +1334,77 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     }
   };
 
-  // Auto-poll every 1.5s while any AI job is still queued/processing or summary is generating
+  // Light poll: chỉ query ai_jobs + meetings.progress (2 query thay vì 6).
+  // Khi tất cả jobs hoàn tất mới gọi refreshMeetingDataSilently() 1 lần để tải đầy đủ data.
+  const pollJobProgress = async () => {
+    try {
+      const { data: jobs } = await supabase
+        .from("ai_jobs").select("*").eq("meeting_id", meetingId)
+        .order("created_at", { ascending: true });
+      setAiJobs(jobs || []);
+
+      const { data: m } = await supabase
+        .from("meetings").select("progress, status").eq("id", meetingId).single();
+      if (m) setMeeting((prev: any) => prev ? { ...prev, progress: m.progress, status: m.status } : prev);
+
+      // Cập nhật summary job status (giữ nguyên logic)
+      if (jobs) {
+        const summaryJob = jobs.find((j: any) => j.type === "summary");
+        if (summaryJob) {
+          if (summaryJob.status === "completed") {
+            if (!isGeneratingSummaryRef.current || summaryJob.mode === activeSummaryModeRef.current) {
+              setActiveSummaryMode(summaryJob.mode);
+              setIsGeneratingSummary(false);
+              if (summaryJob.mode) {
+                localStorage.setItem(`meeting_summary_mode_${meetingId}`, summaryJob.mode);
+              }
+            }
+          } else if (summaryJob.status === "queued" || summaryJob.status === "processing") {
+            setActiveSummaryMode(summaryJob.mode);
+            setIsGeneratingSummary(true);
+          } else {
+            if (!isGeneratingSummaryRef.current || summaryJob.mode === activeSummaryModeRef.current) {
+              const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+              setActiveSummaryMode(cachedMode || null);
+              setIsGeneratingSummary(false);
+            }
+          }
+        } else {
+          if (!isGeneratingSummaryRef.current) {
+            const cachedMode = localStorage.getItem(`meeting_summary_mode_${meetingId}`);
+            setActiveSummaryMode(cachedMode || null);
+            setIsGeneratingSummary(false);
+          }
+        }
+      }
+
+      // Khi tất cả jobs xong → fetch full data 1 lần duy nhất
+      const allDone = (jobs || []).every((j: any) =>
+        j.status === "completed" || j.status === "failed" || j.status === "cancelled"
+      );
+      if (allDone) {
+        await refreshMeetingDataSilently();
+        setIsReprocessingLocal(false);
+      }
+    } catch (err) {
+      console.error("Poll error:", err);
+    }
+  };
+
+  // Auto-poll while any AI job is still queued/processing or summary is generating.
+  // Dùng recursive setTimeout thay cho setInterval để tránh chồng lần khi fetch chậm.
   const hasActiveJobs = aiJobs.some((j) => j.status === "queued" || j.status === "processing") || isGeneratingSummary;
   useEffect(() => {
     if (!hasActiveJobs) return;
-    const interval = setInterval(refreshMeetingDataSilently, 1500);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (cancelled) return;
+      await pollJobProgress();
+      if (!cancelled) timerId = setTimeout(tick, 2500);
+    };
+    timerId = setTimeout(tick, 1200); // lần đầu nhanh hơn
+    return () => { cancelled = true; clearTimeout(timerId); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasActiveJobs]);
 
@@ -2111,6 +2176,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
   // Chạy lại xử lý AI đầy đủ (per-tab). jobs: ["process","summary"] = làm lại toàn bộ.
   const rerunProcess = async (jobs: string[], mode?: string | null, toastMsg?: string) => {
     setShowSpeakerMenu(false);
+    setIsReprocessingLocal(true); // Khoá nút ngay lập tức, tránh bấm trùng
     try {
       const res = await fetch("/api/meetings/reprocess/run-queue", {
         method: "POST",
@@ -2118,11 +2184,13 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
         body: JSON.stringify({ meetingId, jobTypes: jobs, mode: mode ?? null }),
       });
       if (res.ok) {
-        refreshMeetingDataSilently();
+        await pollJobProgress(); // Light poll ngay để phát hiện job mới (không fetch full)
       } else {
+        setIsReprocessingLocal(false);
         addToast("Lỗi", "Không thể bắt đầu xử lý.", "error");
       }
     } catch {
+      setIsReprocessingLocal(false);
       addToast("Lỗi", "Lỗi kết nối khi bắt đầu xử lý.", "error");
     }
   };
