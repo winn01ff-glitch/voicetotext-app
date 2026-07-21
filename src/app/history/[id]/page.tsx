@@ -250,6 +250,9 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  // Cuộn tự động
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
+
   // UI state
   // 3 tab: transcript (có công tắc Bản gốc/Đã xử lý) | summary | ask.
   const [activeTab, setActiveTab] = useState<"transcript" | "summary" | "ask">("transcript");
@@ -637,35 +640,6 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     };
   }, []);
 
-  // Cuộn tới dòng transcript đang phát.
-  // Mỗi dòng được render Ở HAI NƠI: card cho mobile (`...-m-<id>`, ẩn từ breakpoint sm)
-  // và row bảng cho desktop (`...-d-<id>`, ẩn dưới sm). Trước đây cả hai dùng CHUNG một
-  // id nên getElementById luôn trả về card mobile — trên PC nó display:none khiến
-  // scrollIntoView không làm gì (PC không tự cuộn). Ở đây chọn đúng element ĐANG HIỂN THỊ.
-  const scrollToTranscriptRow = useCallback((lineId: string) => {
-    // Hoãn tới sau khi React commit xong (đổi dòng active khiến hàng trăm dòng
-    // re-render). Dùng setTimeout thay vì requestAnimationFrame vì rAF không chạy
-    // khi tab không được paint (nền/ẩn) — sẽ khiến cuộn im lặng không xảy ra.
-    setTimeout(() => {
-      const candidates = [
-        document.getElementById(`transcript-row-d-${lineId}`),
-        document.getElementById(`transcript-row-m-${lineId}`),
-      ];
-      const visible = candidates.find((el) => el && el.offsetParent !== null);
-      if (!visible) return;
-
-      // Nhảy xa (do seek trên thanh audio) → cuộn TỨC THÌ cho dứt khoát; đang phát
-      // tuần tự sang dòng kế → cuộn mượt cho dễ theo dõi.
-      const rect = visible.getBoundingClientRect();
-      const isFarJump =
-        rect.bottom < -window.innerHeight * 0.5 || rect.top > window.innerHeight * 1.5;
-
-      visible.scrollIntoView({
-        behavior: isFarJump ? "auto" : "smooth",
-        block: "center",
-      });
-    });
-  }, []);
 
   // Keyboard Shortcuts (Space to play/pause, ArrowUp/ArrowDown to switch lines)
   useEffect(() => {
@@ -839,20 +813,6 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     return closest;
   }, [transcripts]);
 
-  // Nhấp vào một dòng hội thoại: highlight dòng đó và tua audio tới đúng thời điểm ghi âm.
-  // Việc phát (nếu có audio) sẽ khiến onTimeUpdate tự cuộn tới dòng đang phát.
-  const handleSeekToLine = useCallback(
-    (line: { id: string; startMs: number }) => {
-      setActiveAudioTranscriptId(line.id);
-      if (audioSrc && typeof (window as any).__audioPlayerSeekTo === "function") {
-        (window as any).__audioPlayerSeekTo(line.startMs);
-      } else {
-        // Không có audio -> vẫn cuộn tới dòng được chọn cho rõ ràng.
-        scrollToTranscriptRow(line.id);
-      }
-    },
-    [audioSrc, scrollToTranscriptRow]
-  );
 
   const [lineSummaries, setLineSummaries] = useState<Record<string, { originalSummary: string, translatedSummary: string, loading?: boolean }>>({});
 
@@ -2255,6 +2215,67 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     estimateSize: () => 72,
     overscan: 5,
   });
+
+  // Cuộn tới dòng transcript đang phát.
+  // Kỹ thuật "Teleport & Brake" (Dịch chuyển & Hãm phanh):
+  // Khi tua quá xa, nếu bắt virtualizer cuộn mượt qua hàng trăm dòng sẽ cực kỳ giật lag.
+  // Ta sẽ "Dịch chuyển tức thì" đến sát dòng đích (cách 4 dòng), sau đó mới bắt đầu
+  // "Cuộn mượt" nốt 4 dòng cuối. Hiệu ứng này tạo ảo giác gia tốc cực nhanh nhưng hạ cánh êm ái.
+  const scrollToTranscriptRow = useCallback((lineId: string) => {
+    const activeList = transcriptVer === "ai" ? filteredReprocessedTranscripts : filteredTranscripts;
+    const idx = activeList.findIndex((t) => t.id === lineId);
+    if (idx !== -1) {
+      const virtualItems = desktopVirtualizer.getVirtualItems();
+      if (virtualItems.length > 0) {
+        const first = virtualItems[0].index;
+        const last = virtualItems[virtualItems.length - 1].index;
+        
+        let teleportIdx = -1;
+        if (idx > last + 5) {
+          teleportIdx = Math.max(0, idx - 1); // Tua tới -> nhảy tới cách đích 1 dòng
+        } else if (idx < first - 5) {
+          teleportIdx = Math.min(activeList.length - 1, idx + 1); // Tua lùi -> nhảy tới cách đích 1 dòng
+        }
+
+        if (teleportIdx !== -1) {
+          // BƯỚC 1: Dịch chuyển TỨC THÌ (auto) tới sát vị trí đích
+          desktopVirtualizer.scrollToIndex(teleportIdx, { align: "center", behavior: "auto" });
+          mobileVirtualizer.scrollToIndex(teleportIdx, { align: "center", behavior: "auto" });
+          
+          // BƯỚC 2: Chờ trình duyệt render xong vị trí mới (khoảng 2 frames),
+          // rồi mới trượt mượt (smooth) nốt đoạn cuối để tạo gia tốc hãm phanh.
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              desktopVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+              mobileVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+            });
+          });
+          return;
+        }
+      }
+
+      // Trượt mượt bình thường nếu chỉ nhảy gần (<= 5 dòng)
+      desktopVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+      mobileVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
+    }
+  }, [transcriptVer, filteredReprocessedTranscripts, filteredTranscripts, desktopVirtualizer, mobileVirtualizer]);
+
+  // Nhấp vào một dòng hội thoại: highlight dòng đó và tua audio tới đúng thời điểm ghi âm.
+  // Việc phát (nếu có audio) sẽ khiến onTimeUpdate tự cuộn tới dòng đang phát.
+  const handleSeekToLine = useCallback(
+    (line: { id: string; startMs: number }) => {
+      setActiveAudioTranscriptId(line.id);
+      if (audioSrc && typeof (window as any).__audioPlayerSeekTo === "function") {
+        (window as any).__audioPlayerSeekTo(line.startMs);
+      } else {
+        // Không có audio -> vẫn cuộn tới dòng được chọn cho rõ ràng.
+        scrollToTranscriptRow(line.id);
+      }
+    },
+    [audioSrc, scrollToTranscriptRow]
+  );
+
+
 
   // Phím tắt: Space = phát/dừng đọc toàn bộ, Esc = dừng. Bỏ qua khi đang gõ trong ô nhập.
   useEffect(() => {
@@ -4011,7 +4032,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                     );
                   })()}
                 </div>
-                {/* Internal Search */}
+                {/* Internal Search & Controls */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -4036,7 +4057,21 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                       </button>
                     )}
                   </div>
-
+                  
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsAutoScrollEnabled(!isAutoScrollEnabled)}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full border transition-all cursor-pointer select-none
+                        ${isAutoScrollEnabled 
+                          ? "bg-blue-50 border-blue-200 text-blue-600 dark:bg-blue-900/30 dark:border-blue-800/50 dark:text-blue-400 shadow-sm" 
+                          : "bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"
+                        }`}
+                      title="Bật/tắt tự động cuộn đến đoạn hội thoại đang phát"
+                    >
+                      <div className={`w-2 h-2 rounded-full transition-colors ${isAutoScrollEnabled ? "bg-blue-500" : "bg-slate-400"}`} />
+                      Cuộn theo audio
+                    </button>
+                  </div>
                 </div>
 
                 {/* Raw Transcript — Mobile Cards */}
@@ -4064,10 +4099,10 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                       >
                       <div
                         id={`transcript-row-m-${t.id}`}
-                        className={`border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 mb-2 ${
+                        className={`border rounded-xl overflow-hidden shadow-sm transition-all duration-300 ease-out mb-2 ${
                           activeAudioTranscriptId === t.id
-                            ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
-                            : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900"
+                            ? "border-blue-500 dark:border-blue-400 bg-blue-50/90 dark:bg-blue-950/40 ring-2 ring-blue-300/50 dark:ring-blue-700/50 shadow-md scale-[1.005]"
+                            : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900 opacity-95"
                         }`}
                       >
                         <div className="flex items-center justify-between px-3 py-2 bg-slate-50/80 dark:bg-slate-900/80 border-b border-slate-200 dark:border-slate-700/80">
@@ -4315,10 +4350,10 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                               ref={desktopVirtualizer.measureElement}
                               data-index={virtualRow.index}
                               id={`transcript-row-d-${t.id}`}
-                              className={`group transition-colors duration-200 ${
+                              className={`group transition-all duration-300 ease-out ${
                                 activeAudioTranscriptId === t.id
-                                  ? "bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-inset ring-blue-200 dark:ring-blue-800"
-                                  : "hover:bg-slate-50/50 dark:hover:bg-slate-900/50"
+                                  ? "bg-blue-500/10 dark:bg-blue-500/15 shadow-[inset_3px_0_0_0_#3b82f6] dark:shadow-[inset_3px_0_0_0_#60a5fa] font-medium"
+                                  : "hover:bg-slate-50/70 dark:hover:bg-slate-900/50"
                               }`}
                             >
                             <td
@@ -4673,7 +4708,9 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
             const newId = active?.id || null;
             if (newId !== activeAudioTranscriptId) {
               setActiveAudioTranscriptId(newId);
-              if (newId) scrollToTranscriptRow(newId);
+              if (newId && isAutoScrollEnabled) {
+                scrollToTranscriptRow(newId);
+              }
             }
           }}
           onSeekToTranscript={(startMs: number) => {}}
@@ -4697,7 +4734,9 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
             const newId = active?.id || null;
             if (newId !== activeAudioTranscriptId) {
               setActiveAudioTranscriptId(newId);
-              if (newId) scrollToTranscriptRow(newId);
+              if (newId && isAutoScrollEnabled) {
+                scrollToTranscriptRow(newId);
+              }
             }
           }}
           onSeekToTranscript={(startMs: number) => {}}
