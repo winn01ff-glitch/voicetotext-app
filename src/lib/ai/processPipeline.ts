@@ -1,3 +1,4 @@
+import "server-only";
 // ================================================================
 // Pipeline xử lý HỢP NHẤT (model 2-bản)
 // ----------------------------------------------------------------
@@ -193,8 +194,14 @@ DANH SÁCH TỪ (word-level), mỗi từ có: "i" = chỉ số toàn cục, "w" 
 (0-indexed) từ phân tách âm thanh của Deepgram.
 
 Nhiệm vụ (LÀM TẤT CẢ trong 1 lượt, đọc toàn bộ để hiểu ngữ cảnh):
-1. CẮT DÒNG (segment): gộp/tách các từ thành các lượt thoại tự nhiên theo NGỮ CẢNH và NGƯỜI NÓI.
-   - Được phép gộp nhiều câu liên tiếp cùng người thành 1 dòng, hoặc tách 1 chuỗi thành nhiều dòng.
+1. CẮT DÒNG (segment): tách các từ thành các lượt thoại tự nhiên theo NGỮ CẢNH và NGƯỜI NÓI.
+   - Mỗi lượt thoại nên ngắn gọn, 1-2 câu (TỐI ĐA ~35 từ hoặc ~70 ký tự). Nếu 1 người nói dài, TÁCH thành nhiều dòng.
+   - XỬ LÝ TỪ CHÊM GIAO TIẾP (Aizuchi / Backchanneling) THEO NGÔN NGỮ:
+     + Tiếng Nhật (JA): Các từ chêm như "うん", "はい", "そうですね", "なるほど", "そうそう", "ええ", "ほんと", "まじで" PHẢI tách thành dòng riêng nếu "s" đổi hoặc người nghe chêm vào. KHÔNG gộp từ chêm vào câu nói của người kia.
+     + Tiếng Anh (EN): Tách riêng các từ chêm: "Yeah", "Yup", "Uh-huh", "Right", "Okay", "Oh", "Really".
+     + Tiếng Việt (VI): Tách riêng các từ chêm: "Ừ", "Vâng", "Đúng rồi", "Thế à", "Dạ", "Ồ", "Vậy hả".
+   - QUAN TRỌNG VỀ ĐỔI NGƯỜI NÓI: khi gợi ý "s" thay đổi HOẶC nội dung cho thấy người khác đang nói (đại từ đổi, câu hỏi → trả lời, register thay đổi), BẮT BUỘC tách dòng mới với speaker_tag khác.
+   - KHÔNG BAO GIỜ gộp lượt thoại của 2 người khác nhau vào cùng 1 dòng.
 2. PHÂN VAI: gán speaker_tag ("speaker_1", "speaker_2"...) cho mỗi dòng. Dùng gợi ý "s" nhưng VERIFY
    bằng nội dung (đại từ, cách xưng hô, register). speaker_name = tên thật nếu suy ra được, nếu không thì "Speaker N".
 3. SỬA CHÍNH TẢ: sửa lỗi ASR rõ ràng, thêm dấu câu hợp lý cho dòng "text" (GIỮ NGÔN NGỮ GỐC).
@@ -322,8 +329,19 @@ function stitch(chunkResults: ProcessedLine[][]): ProcessedLine[] {
   for (const lines of chunkResults) {
     for (const line of lines) {
       const prev = merged[merged.length - 1];
-      // Gộp nếu cùng speaker và khoảng cách < 2s (thường là 1 câu bị cắt ở ranh giới chunk).
-      if (prev && prev.speaker_tag === line.speaker_tag && line.start_ms - prev.end_ms < 2000 && line.start_ms >= prev.start_ms) {
+      const prevText = prev?.original_text || "";
+      const endsWithSentencePunct = /[.!?。！？…]$/.test(prevText);
+      const isTooLong = prevText.length > 70 || prevText.split(/\s+/).length > 25;
+
+      // Gộp nếu: cùng speaker, khoảng cách < 1500ms, câu trước chưa ngắt bằng dấu chấm và chưa quá dài.
+      if (
+        prev &&
+        prev.speaker_tag === line.speaker_tag &&
+        line.start_ms - prev.end_ms < 1500 &&
+        line.start_ms >= prev.start_ms &&
+        !endsWithSentencePunct &&
+        !isTooLong
+      ) {
         prev.original_text = `${prev.original_text} ${line.original_text}`.trim();
         prev.translated_text = `${prev.translated_text} ${line.translated_text}`.trim();
         prev.end_ms = Math.max(prev.end_ms, line.end_ms);
@@ -420,11 +438,13 @@ export async function saveProcessedTranscripts(
 // Orchestrator — xử lý toàn bộ transcript của 1 meeting
 // ================================================================
 
+const PROMPT_VERSION = "v3_multilingual_aizuchi_fix";
+
 function getChunkHash(words: DgWord[], chunk: WordChunk, config: PipelineConfig, mode: string | null | undefined): string {
   const chunkWords = words.slice(chunk.startIdx, chunk.endIdx).map(w => w.w).join(" ");
   const glossaryStr = JSON.stringify(config.glossary || []);
   const speakersStr = JSON.stringify(config.speakers || []);
-  const raw = `${chunk.contextText}::${chunkWords}::${config.sourceLanguage}::${config.targetLanguage}::${mode || ""}::${glossaryStr}::${speakersStr}`;
+  const raw = `${PROMPT_VERSION}::${chunk.contextText}::${chunkWords}::${config.sourceLanguage}::${config.targetLanguage}::${mode || ""}::${glossaryStr}::${speakersStr}`;
   return createHash("sha256").update(raw).digest("hex");
 }
 

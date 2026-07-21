@@ -13,6 +13,11 @@ export async function POST(req: Request) {
 
     const supabase = await createServerSupabaseClient();
 
+    // Clear old AI chunk cache if reprocessing "process" job to ensure fresh Gemini run
+    if (jobTypes.includes("process")) {
+      await supabase.from("pipeline_cache").delete().eq("meeting_id", meetingId);
+    }
+
     // Reset status of ai_summaries if summary is queued
     if (jobTypes.includes("summary")) {
       await supabase.from("ai_summaries").update({ status: "Draft" }).eq("meeting_id", meetingId);

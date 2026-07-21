@@ -3,6 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import { useState, useEffect, use, Fragment, useMemo, useRef, useCallback, useDeferredValue } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getRawTranslationCache, putRawTranslationCache } from "@/lib/translation-cache";
@@ -423,6 +424,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
   }, [transcripts.length, reprocessedTranscripts.length]);
   // AI jobs + Ask AI chat state
   const [aiJobs, setAiJobs] = useState<any[]>(cachedData?.aiJobs || []);
+  const aiJobsSnapshotRef = useRef(""); // Fix G: bail-out khi data poll không đổi
   const [showReprocessMenu, setShowReprocessMenu] = useState(false);
   const [reprocessTab, setReprocessTab] = useState<"spellcheck" | "speaker" | "translate" | "editing">("spellcheck");
   const [chatMessages, setChatMessages] = useState<any[]>(cachedData?.chatMessages || []);
@@ -1341,11 +1343,18 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
       const { data: jobs } = await supabase
         .from("ai_jobs").select("*").eq("meeting_id", meetingId)
         .order("created_at", { ascending: true });
-      setAiJobs(jobs || []);
+
+      // Fix G: chỉ setState khi data thực sự thay đổi → tránh re-render 476 rows vô ích
+      const snapshot = (jobs || []).map((j: any) => `${j.id}:${j.status}:${j.progress}`).join("|");
+      const jobsChanged = snapshot !== aiJobsSnapshotRef.current;
+      if (jobsChanged) {
+        aiJobsSnapshotRef.current = snapshot;
+        setAiJobs(jobs || []);
+      }
 
       const { data: m } = await supabase
         .from("meetings").select("progress, status").eq("id", meetingId).single();
-      if (m) setMeeting((prev: any) => prev ? { ...prev, progress: m.progress, status: m.status } : prev);
+      if (m && jobsChanged) setMeeting((prev: any) => prev ? { ...prev, progress: m.progress, status: m.status } : prev);
 
       // Cập nhật summary job status (giữ nguyên logic)
       if (jobs) {
@@ -2229,6 +2238,22 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     const trans = norm(t.translatedText || "");
     const query = norm(searchQuery);
     return txt.includes(query) || trans.includes(query);
+  });
+
+  // Fix D: Virtualization — chỉ render ~10-15 dòng nhìn thấy thay vì toàn bộ 238+ dòng
+  const mobileScrollRef = useRef<HTMLDivElement>(null);
+  const desktopScrollRef = useRef<HTMLDivElement>(null);
+  const mobileVirtualizer = useVirtualizer({
+    count: filteredReprocessedTranscripts.length,
+    getScrollElement: () => mobileScrollRef.current,
+    estimateSize: () => 100,
+    overscan: 5,
+  });
+  const desktopVirtualizer = useVirtualizer({
+    count: filteredReprocessedTranscripts.length,
+    getScrollElement: () => desktopScrollRef.current,
+    estimateSize: () => 72,
+    overscan: 5,
   });
 
   // Phím tắt: Space = phát/dừng đọc toàn bộ, Esc = dừng. Bỏ qua khi đang gõ trong ô nhập.
@@ -3956,7 +3981,13 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                             }`}
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${busy ? "animate-spin" : ""}`} />
-                          <span className="hidden sm:inline">Xử lý lại</span>
+                          <span className="hidden sm:inline">Xử lý lại{busy ? (() => {
+                            const prog = meeting?.progress as any;
+                            if (prog?.stage === "process" && prog?.chunk_total) {
+                              return ` ${prog.chunk_current || 0}/${prog.chunk_total}`;
+                            }
+                            return "...";
+                          })() : ""}</span>
                         </button>
                         {busy && (
                           <button
@@ -4012,8 +4043,13 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                 </div>
 
                 {/* Raw Transcript — Mobile Cards */}
-                <div className="sm:hidden flex-1 min-h-0 overflow-y-auto space-y-2">
-                  {filteredReprocessedTranscripts.map((t) => {
+                <div ref={mobileScrollRef} className="sm:hidden flex-1 min-h-0 overflow-y-auto">
+                  {filteredReprocessedTranscripts.length === 0 ? (
+                    <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.</p>
+                  ) : (
+                  <div style={{ height: `${mobileVirtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+                    {mobileVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const t = filteredReprocessedTranscripts[virtualRow.index];
                     const closestRaw = findClosestRawLine(t);
                     const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                     const fmtTime = (ms: number) => {
@@ -4025,8 +4061,13 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                     return (
                       <div
                         key={t.id}
+                        data-index={virtualRow.index}
+                        ref={mobileVirtualizer.measureElement}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualRow.start}px)` }}
+                      >
+                      <div
                         id={`transcript-row-m-${t.id}`}
-                        className={`border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 ${
+                        className={`border rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300 mb-2 ${
                           activeAudioTranscriptId === t.id
                             ? "border-blue-400 dark:border-blue-600 bg-blue-50/80 dark:bg-blue-950/30 ring-1 ring-blue-200 dark:ring-blue-800"
                             : "border-slate-300 dark:border-slate-700/80 bg-white dark:bg-slate-900"
@@ -4168,15 +4209,15 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                           </div>
                         )}
                       </div>
+                      </div>
                     );
                   })}
-                  {filteredReprocessedTranscripts.length === 0 && (
-                    <p className="py-12 text-center text-slate-400 italic text-sm">Không tìm thấy nội dung hội thoại nào khớp với từ khóa tìm kiếm.</p>
+                  </div>
                   )}
                 </div>
 
                 {/* Raw Transcript — Desktop Table */}
-                <div className="hidden sm:block flex-1 min-h-0 overflow-auto pr-1">
+                <div ref={desktopScrollRef} className="hidden sm:block flex-1 min-h-0 overflow-auto pr-1">
                   <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-sm">
                     <thead>
                       <tr className="bg-slate-50 dark:bg-slate-950 text-slate-500 font-semibold text-xs uppercase tracking-wider">
@@ -4256,7 +4297,12 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-                      {filteredReprocessedTranscripts.map((t) => {
+                      {/* Top spacer for virtual scroll */}
+                      {desktopVirtualizer.getVirtualItems().length > 0 && desktopVirtualizer.getVirtualItems()[0].start > 0 && (
+                        <tr><td colSpan={5} style={{ height: `${desktopVirtualizer.getVirtualItems()[0].start}px`, padding: 0, border: 'none' }} /></tr>
+                      )}
+                      {desktopVirtualizer.getVirtualItems().map((virtualRow) => {
+                            const t = filteredReprocessedTranscripts[virtualRow.index];
                             const closestRaw = findClosestRawLine(t);
                             const hasDiff = closestRaw && (closestRaw.correctedText || closestRaw.originalText) !== (t.correctedText || t.originalText);
                         const formatTime = (ms: number) => {
@@ -4269,6 +4315,8 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                         return (
                           <Fragment key={t.id}>
                             <tr
+                              ref={desktopVirtualizer.measureElement}
+                              data-index={virtualRow.index}
                               id={`transcript-row-d-${t.id}`}
                               className={`group transition-colors duration-200 ${
                                 activeAudioTranscriptId === t.id
@@ -4477,6 +4525,12 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                         </Fragment>
                         );
                       })}
+                      {/* Bottom spacer for virtual scroll */}
+                      {desktopVirtualizer.getVirtualItems().length > 0 && (() => {
+                        const lastItem = desktopVirtualizer.getVirtualItems()[desktopVirtualizer.getVirtualItems().length - 1];
+                        const bottomSpace = desktopVirtualizer.getTotalSize() - (lastItem ? lastItem.end : 0);
+                        return bottomSpace > 0 ? <tr><td colSpan={5} style={{ height: `${bottomSpace}px`, padding: 0, border: 'none' }} /></tr> : null;
+                      })()}
                       {filteredReprocessedTranscripts.length === 0 && (
                         <tr>
                           <td colSpan={5} className="py-12 text-center text-slate-400 italic">
