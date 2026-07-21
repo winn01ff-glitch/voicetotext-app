@@ -154,17 +154,11 @@ function buildChunks(words: DgWord[]): WordChunk[] {
 function getSpeakerModeInstruction(mode: string | null | undefined): string {
   switch (mode) {
     case "by_name":
-      return `\nPHÂN VAI — CHẾ ĐỘ THEO TÊN: tích cực suy ra TÊN THẬT của người nói từ nội dung (xưng hô, giới thiệu, gọi tên). Ưu tiên tên thật thay vì "Speaker N".`;
-    case "single_speaker_split":
-      return `\nPHÂN VAI — CHẾ ĐỘ ĐỘC THOẠI (1 người nói): TẤT CẢ dòng gán chung "speaker_1", speaker_name = "Diễn giả". KHÔNG gộp thành 1 khối lớn — giữ các dòng ngắn theo câu để dễ đọc.`;
-    case "numbered":
-      return `\nPHÂN VAI — CHẾ ĐỘ ĐÁNH SỐ: KHÔNG đoán tên thật. Dùng "Speaker 1", "Speaker 2"... Tập trung phân tách CHÍNH XÁC ai nói câu nào.`;
+      return `\nPHÂN VAI — CHẾ ĐỘ THEO TÊN: Tích cực phân tích nội dung (tên gọi, xưng hô, câu chào, giới thiệu) để suy ra TÊN THẬT của từng người nói. Gán tên thật vào speaker_name (ví dụ: Haruka, Shun, Nam, Mai...). Nếu hoàn toàn không có manh mối tên thật thì dùng "Speaker N". Bắt buộc phân tách chính xác lượt thoại khi đổi người nói.`;
     case "by_role":
-      return `\nPHÂN VAI — CHẾ ĐỘ THEO VAI TRÒ: gán speaker_name theo vai trò (Quản lý, Nhân viên, Khách hàng, Phỏng vấn viên, Ứng viên...) suy từ nội dung; nếu không rõ dùng "Người tham gia N".`;
-    case "merge_speakers":
-      return `\nPHÂN VAI — CHẾ ĐỘ GỘP: tích cực gộp các speaker có thể là cùng 1 người (ASR tách nhầm). So sánh register/từ vựng/chủ đề; ưu tiên gộp khi không chắc.`;
+      return `\nPHÂN VAI — CHẾ ĐỘ THEO VAI TRÒ: Gán speaker_name theo VAI TRÒ trong cuộc hội thoại (ví dụ: Người phỏng vấn, Ứng viên, Host, Khách mời, Quản lý, Nhân viên...) suy luận từ ngữ cảnh; nếu không rõ vai trò thì dùng "Người tham gia N". Đảm bảo tách lượt thoại chuẩn xác.`;
     default:
-      return ``; // mặc định: dùng speaker đã đăng ký + ngữ cảnh (như prompt gốc)
+      return `\nPHÂN VAI — CHẾ ĐỘ MẶC ĐỊNH: Dùng thông tin người nói đã đăng ký và ngữ cảnh. Đối chiếu gợi ý người nói "s" với nội dung hội thoại để phân vai chính xác. Tách dòng chuẩn theo từng lượt phát biểu.`;
   }
 }
 

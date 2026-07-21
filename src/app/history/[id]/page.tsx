@@ -3951,10 +3951,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                               {([
                                 { label: "Mặc định (theo họp)", mode: null, desc: "Người nói đã đăng ký + ngữ cảnh", icon: UserCheck },
                                 { label: "Theo tên (AI)", mode: "by_name", desc: "Suy tên thật từ nội dung", icon: Sparkles },
-                                { label: "Độc thoại 1 người", mode: "single_speaker_split", desc: "Video/bài giảng 1 người nói", icon: AlignLeft },
-                                { label: "Đánh số đơn giản", mode: "numbered", desc: "Speaker 1, 2, 3...", icon: Hash },
                                 { label: "Theo vai trò", mode: "by_role", desc: "Quản lý, Nhân viên, Khách hàng...", icon: Briefcase },
-                                { label: "Gộp người nói", mode: "merge_speakers", desc: "Gộp speaker bị tách nhầm", icon: GitMerge },
                               ] as { label: string; mode: string | null; desc: string; icon: any }[]).map((opt) => (
                                 <button
                                   key={opt.label}
