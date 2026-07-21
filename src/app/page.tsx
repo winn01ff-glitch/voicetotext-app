@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { validateAudioFile } from "@/lib/ai/audio-validator";
 import { putAudio, deleteAudio } from "@/lib/audio-cache";
+import { AUDIO_PROCESSING_LABELS, AUDIO_PROCESSING_NOTE } from "@/components/AudioProcessingSettings";
 
 export default function Dashboard() {
   const router = useRouter();
@@ -2131,22 +2132,23 @@ export default function Dashboard() {
                       <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${echoCancellation ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Hủy tiếng vọng</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">{AUDIO_PROCESSING_LABELS.echo}</span>
                     </label>
                     <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={noiseSuppression} onChange={(e) => setNoiseSuppression(e.target.checked)} className="hidden" />
                       <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${noiseSuppression ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Chống ồn</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">{AUDIO_PROCESSING_LABELS.noise}</span>
                     </label>
                     <label className="flex items-center gap-3 cursor-pointer group">
                       <input type="checkbox" checked={autoGainControl} onChange={(e) => setAutoGainControl(e.target.checked)} className="hidden" />
                       <div className={`flex items-center justify-center w-5 h-5 rounded-md transition-colors ${autoGainControl ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-950 border-2 border-blue-200 dark:border-slate-800 text-transparent'}`}>
                         <Check className="w-3.5 h-3.5 stroke-[3]" />
                       </div>
-                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">Tự động chỉnh âm (AGC)</span>
+                      <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-300 group-hover:text-blue-700 dark:group-hover:text-blue-400 transition-colors">{AUDIO_PROCESSING_LABELS.agc}</span>
                     </label>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">{AUDIO_PROCESSING_NOTE}</p>
                   </div>
 
                   <div className="flex items-center justify-between bg-white/80 dark:bg-slate-950/60 p-3 rounded-xl border border-white dark:border-slate-800/60 mt-auto">

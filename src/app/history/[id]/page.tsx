@@ -1024,6 +1024,30 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
     setTimeout(() => setCopiedKey(""), 2000);
   };
 
+  // Sao chép cả cột (bản gốc hoặc bản dịch) của TOÀN BỘ hội thoại đang hiển thị.
+  // Bám theo `filteredReprocessedTranscripts` nên đang lọc từ khóa thì chỉ chép
+  // phần đang thấy — đúng với những gì người dùng nhìn trên bảng.
+  // Kèm mốc giây + tên người nói vì bảng cũng có hai cột đó; dòng rỗng bị bỏ qua
+  // để bản dịch chưa tạo không để lại một loạt dòng trống.
+  const handleCopyColumn = (column: "original" | "translated") => {
+    const lines = filteredReprocessedTranscripts
+      .map((t) => {
+        const text = column === "original" ? (t.correctedText || t.originalText) : t.translatedText;
+        if (!text || !String(text).trim()) return null;
+        const totalSeconds = Math.floor((t.startMs || 0) / 1000);
+        const stamp = `${String(Math.floor(totalSeconds / 60)).padStart(2, "0")}:${String(totalSeconds % 60).padStart(2, "0")}`;
+        return `[${stamp}] ${t.speakerName || "?"}: ${String(text).trim()}`;
+      })
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      addToast("Không có gì để sao chép", "Cột này chưa có nội dung.", "warning");
+      return;
+    }
+    handleCopyText(lines.join("\n"), `all_${column}`);
+    addToast("Đã sao chép", `${lines.length} dòng ${column === "original" ? "bản gốc" : "bản dịch"}.`, "success");
+  };
+
   const toggleTheme = () => {
     const nextTheme = !isDarkMode;
     setIsDarkMode(nextTheme);
@@ -3891,7 +3915,7 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                     );
                   })()}
                 </div>
-                {/* Internal Search & Voice selector */}
+                {/* Internal Search */}
                 <div className="flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center pb-4 border-b border-slate-200 dark:border-slate-800">
                   <div className="relative w-full sm:max-w-xs md:max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -3900,7 +3924,11 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                       placeholder="Lọc từ khóa trong cuộc hội thoại..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none shadow-sm"
+                      /* ring-inset: ô này rộng đúng bằng khung cha có overflow-hidden,
+                         nên vòng focus vẽ ra NGOÀI viền sẽ bị cắt cụt hai bên trái/phải.
+                         Vẽ vào trong thì vừa hết bị cắt, vừa giữ ô thẳng hàng với các
+                         thẻ hội thoại bên dưới (không phải bóp nhỏ ô lại để chừa chỗ). */
+                      className="w-full pl-9 pr-8 h-9 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-full text-xs focus:ring-1 focus:ring-inset focus:ring-blue-500 focus:outline-none shadow-sm"
                     />
                     {searchQuery && (
                       <button
@@ -3913,29 +3941,6 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                     )}
                   </div>
 
-                  <div className="flex items-center space-x-3 text-xs w-full sm:w-auto justify-between sm:justify-start">
-                    <span className="text-slate-400 font-medium shrink-0">Giọng đọc:</span>
-                    <div className="relative flex-1 sm:flex-initial max-w-[240px] sm:max-w-[200px] w-full">
-                      <select
-                        value={selectedVoice}
-                        onChange={(e) => setSelectedVoice(e.target.value)}
-                        className="h-9 pl-3 pr-8 w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700/80 rounded-xl focus:ring-1 focus:ring-blue-500 focus:outline-none appearance-none truncate cursor-pointer shadow-sm font-semibold text-slate-700 dark:text-slate-200"
-                      >
-                        {allAvailableVoices.length > 0 ? (
-                          allAvailableVoices.map((v) => (
-                            <option key={v.value} value={v.value}>
-                              {v.name}
-                            </option>
-                          ))
-                        ) : (
-                          <option value="">Giọng mặc định hệ thống</option>
-                        )}
-                      </select>
-                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
-                    </div>
-
-
-                  </div>
                 </div>
 
                 {/* Raw Transcript — Mobile Cards */}
@@ -4133,6 +4138,15 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                                 <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
                               )}
                             </button>
+                            <button
+                              onClick={() => handleCopyColumn("original")}
+                              className="p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                              title="Sao chép toàn bộ bản gốc"
+                            >
+                              {copiedKey === "all_original"
+                                ? <Check className="w-3 h-3 text-green-500" />
+                                : <Copy className="w-3 h-3" />}
+                            </button>
                           </div>
                         </th>
                         <th className="py-3 px-4 text-left style-none w-[40%]">
@@ -4158,6 +4172,15 @@ export default function HistoryDetail({ params, searchParams }: HistoryDetailPro
                               ) : (
                                 <Play className="w-3 h-3 fill-slate-450 dark:fill-slate-500" />
                               )}
+                            </button>
+                            <button
+                              onClick={() => handleCopyColumn("translated")}
+                              className="p-0.5 rounded transition-all duration-200 cursor-pointer inline-flex items-center justify-center bg-slate-50 dark:bg-slate-950 border border-transparent hover:border-slate-200 dark:hover:border-slate-800 hover:shadow-sm text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                              title="Sao chép toàn bộ bản dịch"
+                            >
+                              {copiedKey === "all_translated"
+                                ? <Check className="w-3 h-3 text-green-500" />
+                                : <Copy className="w-3 h-3" />}
                             </button>
                           </div>
                         </th>

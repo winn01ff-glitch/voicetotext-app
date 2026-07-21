@@ -32,11 +32,28 @@ const TOP_BOTTOM_SIZES = [
   { maxW: 1280, maxH: 0.46 },
 ] as const;
 
-function getClampedCornerSize(base: { w: number; h: number }) {
+// ---- Riêng cho mobile ----
+// Trên màn hẹp, ba mốc px cố định ở trên đều bị kẹp về cùng một bề ngang nên S/M/L
+// gần như không khác nhau, còn top/bottom thì tràn sát mép màn hình. Ở mobile ta
+// tính bề ngang theo TỈ LỆ của vùng nội dung (viewport trừ 32px lề, đúng bằng bề
+// ngang thẻ hội thoại vì layout dùng px-4) — nên L luôn khớp mép thẻ hội thoại,
+// không bao giờ tràn full màn hình. Desktop không đi qua nhánh này.
+const MOBILE_BREAKPOINT = 768;
+const MOBILE_WIDTH_RATIOS = [0.55, 0.78, 1] as const;
+
+// Bề ngang thẻ hội thoại: layout nội dung là max-w-[1366px] mx-auto px-4.
+function getContentWidth() {
+  return document.documentElement.clientWidth - 32;
+}
+
+function getClampedCornerSize(idx: number) {
+  const base = CORNER_SIZES[idx];
   if (typeof window === "undefined") return base;
-  const maxW = document.documentElement.clientWidth - 32;
+  const contentW = getContentWidth();
   const maxH = window.innerHeight - 120;
-  let w = Math.min(base.w, maxW);
+  let w = document.documentElement.clientWidth < MOBILE_BREAKPOINT
+    ? Math.round(contentW * (MOBILE_WIDTH_RATIOS[idx] ?? 1))
+    : Math.min(base.w, contentW);
   let h = Math.round(w * 9 / 16);
   if (h > maxH) { h = maxH; w = Math.round(h * 16 / 9); }
   return { w: Math.max(160, w), h: Math.max(90, h) };
@@ -80,7 +97,7 @@ export default function YouTubePlayer({
 
   const cornerSize = useMemo(() => {
     if (!mounted) return CORNER_SIZES[cornerSizeIdx];
-    return getClampedCornerSize(CORNER_SIZES[cornerSizeIdx]);
+    return getClampedCornerSize(cornerSizeIdx);
   }, [cornerSizeIdx, mounted]);
 
   // Drag (corner only)
@@ -100,7 +117,7 @@ export default function YouTubePlayer({
 
   useEffect(() => {
     if (dragPos && position === "corner") {
-      const s = getClampedCornerSize(CORNER_SIZES[cornerSizeIdx]);
+      const s = getClampedCornerSize(cornerSizeIdx);
       const maxX = document.documentElement.clientWidth - s.w - 16;
       const maxY = window.innerHeight - s.h - 72; // 72px để hở đều như khi nhấn nút Bottom
       setDragPos({ x: Math.max(16, Math.min(maxX, dragPos.x)), y: Math.max(16, Math.min(maxY, dragPos.y)) });
@@ -230,12 +247,71 @@ export default function YouTubePlayer({
     return () => { delete (window as any).__audioPlayerSeekTo; delete (window as any).__audioPlayerTogglePlay; };
   }, [seekTo, togglePlay]);
 
-  const handleProgressClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const ratioFromClientX = (clientX: number) => {
     const bar = progressRef.current;
-    if (!bar || !isReady || effectiveDuration <= 0) return;
+    if (!bar || !isReady || effectiveDuration <= 0) return null;
     const rect = bar.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    seekTo(ratio * effectiveDuration * 1000);
+    if (rect.width === 0) return null;
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
+
+  // ---- Nhấn để tua + kéo thả để tua (chuột lẫn ngón tay) ----
+  //
+  // Dùng Pointer Events chứ không tách mouse/touch: một bộ handler chạy cho cả
+  // chuột thật, ngón tay, lẫn chế độ giả lập mobile của trình duyệt desktop
+  // (chế độ đó phát pointer/mouse chứ KHÔNG phát touch, nên bản touch-only
+  // trước đây không kéo được).
+  //
+  // setPointerCapture: kéo ra ngoài thanh — kể cả ra ngoài cửa sổ — vẫn nhận
+  // được move/up, nên không bị "kẹt" ở trạng thái đang kéo.
+  // touch-action: none: nhường cử chỉ ngang cho việc tua thay vì cuộn trang.
+  //
+  // Trong lúc kéo chỉ cập nhật `scrubRatio` để vẽ thanh + chấm tròn + đồng hồ;
+  // seek thật chỉ gọi MỘT lần khi thả tay, tránh bắn hàng chục lệnh vào player.
+  //
+  // Giá trị kéo giữ song song ở ref: nhấn-thả thật nhanh thì pointerdown và
+  // pointerup rơi vào CÙNG một tick, React chưa kịp render lại nên closure của
+  // handler cuối vẫn thấy state cũ (null) và thoát sớm — thanh sẽ kẹt ở vị trí
+  // kéo vĩnh viễn. Ref luôn là giá trị mới nhất nên quyết định dựa vào nó.
+  const [scrubRatio, setScrubRatio] = useState<number | null>(null);
+  const scrubRatioRef = useRef<number | null>(null);
+  const isScrubbingRef = useRef(false);
+  const setScrub = (value: number | null) => {
+    scrubRatioRef.current = value;
+    setScrubRatio(value);
+  };
+
+  const handleScrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // bỏ qua chuột phải / chuột giữa
+    const ratio = ratioFromClientX(e.clientX);
+    if (ratio === null) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* trình duyệt cũ */ }
+    isScrubbingRef.current = true;
+    setScrub(ratio);
+  };
+
+  const handleScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    const ratio = ratioFromClientX(e.clientX);
+    if (ratio !== null) setScrub(ratio);
+  };
+
+  const handleScrubEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isScrubbingRef.current) return;
+    isScrubbingRef.current = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* đã nhả rồi */ }
+    const ratio = scrubRatioRef.current;
+    setScrub(null);
+    // Nhấn một phát rồi thả tại chỗ cũng đi qua đây — thành ra "nhấn để tua".
+    if (ratio !== null) seekTo(ratio * effectiveDuration * 1000);
+  };
+
+  const scrubHandlers = {
+    onPointerDown: handleScrubDown,
+    onPointerMove: handleScrubMove,
+    onPointerUp: handleScrubEnd,
+    onPointerCancel: handleScrubEnd,
+    style: { touchAction: "none" as const },
   };
 
   const cycleSpeed = () => {
@@ -284,7 +360,7 @@ export default function YouTubePlayer({
       if (!isDraggingRef.current) return;
       const cx = "touches" in ev ? ev.touches[0].clientX : ev.clientX;
       const cy = "touches" in ev ? ev.touches[0].clientY : ev.clientY;
-      const s = getClampedCornerSize(CORNER_SIZES[cornerSizeIdx]);
+      const s = getClampedCornerSize(cornerSizeIdx);
       const maxX = document.documentElement.clientWidth - s.w - 16;
       const maxY = window.innerHeight - s.h - 72; // 72px để hở đều như khi nhấn nút Bottom
       setDragPos({
@@ -307,14 +383,31 @@ export default function YouTubePlayer({
   }, [position, cornerSizeIdx]);
 
   const cyclePosition = () => {
-    setPosition((prev) => prev === "corner" ? "top" : prev === "top" ? "bottom" : "corner");
+    // "Thu nhỏ góc" (bottom -> corner) luôn trả về size S. Giữ nguyên size lớn
+    // khi thu về góc thì video vẫn choán chỗ, đúng thứ mà nút này định tránh.
+    if (position === "bottom") {
+      setCornerSizeIdx(0);
+      setPosition("corner");
+      return;
+    }
+    // Mobile: đưa video lên trên thì mở luôn size L (rộng bằng thẻ hội thoại) —
+    // màn hẹp nên size nhỏ nằm giữa trông lạc lõng. Xuống dưới thì giữ nguyên
+    // size người dùng đang chọn. Desktop không đổi size ở cả hai hướng.
+    if (position === "corner" && windowSize.w > 0 && windowSize.w < MOBILE_BREAKPOINT) {
+      setCornerSizeIdx(CORNER_SIZES.length - 1);
+    }
+    setPosition(position === "corner" ? "top" : "bottom");
   };
 
   const cycleCornerSize = () => {
     setCornerSizeIdx((prev) => (prev + 1) % CORNER_SIZES.length);
   };
 
-  const progressPercent = effectiveDuration > 0 ? (currentTime / effectiveDuration) * 100 : 0;
+  // Đang kéo thì thanh và đồng hồ bám theo ngón tay, không bám theo player.
+  const displayTime = scrubRatio !== null ? scrubRatio * effectiveDuration : currentTime;
+  const progressPercent = scrubRatio !== null
+    ? scrubRatio * 100
+    : (effectiveDuration > 0 ? (currentTime / effectiveDuration) * 100 : 0);
 
   // Position button UI
   // Icon size: nhỏ hơn ở corner mode
@@ -349,8 +442,14 @@ export default function YouTubePlayer({
     
     // Top / Bottom
     const tbConf = TOP_BOTTOM_SIZES[cornerSizeIdx] || TOP_BOTTOM_SIZES[2];
-    const maxW = sw >= 1536 ? tbConf.maxW : Math.min(1366, tbConf.maxW);
-    let topBottomW = Math.min(sw, maxW);
+    const isMobile = sw < MOBILE_BREAKPOINT;
+    // Mobile: bám tỉ lệ vùng nội dung — L rộng đúng bằng thẻ hội thoại (sw - 32),
+    // không lấy Math.min(sw, ...) nữa vì mốc px cố định luôn lớn hơn màn hình
+    // điện thoại nên video bị kéo tràn sát hai mép.
+    const maxW = isMobile
+      ? Math.round((sw - 32) * (MOBILE_WIDTH_RATIOS[cornerSizeIdx] ?? 1))
+      : (sw >= 1536 ? tbConf.maxW : Math.min(1366, tbConf.maxW));
+    let topBottomW = Math.min(sw - (isMobile ? 32 : 0), maxW);
     let topBottomH = topBottomW / (16 / 9);
 
     // Cân đối lại: Chiều cao tối đa phụ thuộc vào size (35%, 50%, 65% màn hình)
@@ -471,22 +570,30 @@ export default function YouTubePlayer({
           {/* Progress bar */}
           <div
             ref={progressRef}
-            onClick={handleProgressClick}
-            className="w-full h-1.5 bg-slate-200 dark:bg-slate-800 cursor-pointer group hover:h-2.5 transition-all"
+            {...scrubHandlers}
+            className={`w-full h-1.5 bg-slate-200 dark:bg-slate-800 cursor-pointer group transition-all ${scrubRatio !== null ? "h-2.5" : "hover:h-2.5"}`}
           >
             <div
-              className="h-full bg-gradient-to-r from-red-500 to-red-600 rounded-r-full relative transition-[width] duration-100"
+              className={`h-full bg-gradient-to-r from-red-500 to-red-600 rounded-r-full relative ${scrubRatio === null ? "transition-[width] duration-100" : ""}`}
               style={{ width: `${progressPercent}%` }}
             >
-              <div className="absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-red-500 dark:border-red-400 rounded-full shadow-md scale-90 group-hover:scale-125 transition-transform cursor-pointer z-10" />
+              {/* Chấm tròn bám theo vị trí đang tua. To sẵn trên mobile vì ở đó
+                  không có hover để phóng to, và to hơn nữa trong lúc đang kéo. */}
+              <div className={`absolute right-0 top-1/2 translate-x-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white border-2 border-red-500 dark:border-red-400 rounded-full shadow-md ${scrubRatio !== null ? "scale-150 md:scale-150" : "scale-125 md:scale-90"} group-hover:scale-125 transition-transform cursor-pointer z-10`} />
             </div>
           </div>
+
+          {/* Vùng bắt cử chỉ mở rộng — CHỈ mobile (md:hidden). Thanh chỉ cao 6px,
+              ngón tay rất khó trúng, nên phủ thêm một dải trong suốt cao 20px.
+              Desktop không cần (chuột trỏ chính xác) và cũng không nên có, vì
+              dải này che mất hover làm thanh dày lên. */}
+          <div className="md:hidden absolute left-0 right-0 -top-1.5 h-5 z-20" {...scrubHandlers} />
 
           {/* Controls */}
           <div className="flex items-center justify-between px-4 py-2">
             {/* Left: time */}
             <div className="flex items-center gap-2 text-xs font-mono text-slate-500 dark:text-slate-400 w-24">
-              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(displayTime)}</span>
               <span>/</span>
               <span>{effectiveDuration > 0 ? formatTime(effectiveDuration) : "--:--"}</span>
             </div>

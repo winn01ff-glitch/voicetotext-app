@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useDeepgramLive } from "@/hooks/useDeepgramLive";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import PipelineProgress from "@/components/PipelineProgress";
+import { AudioProcessingSettings } from "@/components/AudioProcessingSettings";
 import {
   Mic, Square, Pause, Settings, RefreshCw, Volume2, Save, HelpCircle, Play,
   Maximize2, Minimize2, Edit, VolumeX, CheckCircle, ArrowLeft, Merge, X, Sparkles, Copy, Trash2, RotateCcw, StopCircle, PhoneOff, ChevronUp,
@@ -414,6 +415,36 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
   // Dynamic speaker colors mapping
   const speakerColorsRef = useRef<{ [key: string]: string }>({});
 
+  // Số hiển thị của người nói, KHÁC với chỉ số thô trong speaker_tag.
+  //
+  // speaker_tag mang chỉ số cụm của Deepgram: nó không tuần tự (mỗi reconnect
+  // WebSocket đánh cụm lại từ 0) và có thể khuyết (một cụm chỉ xuất hiện ở các
+  // mẩu thiểu số thì không bao giờ thắng takeDominantSpeaker để thành nhãn của
+  // dòng nào). Hệ quả cũ: sidebar hiện "Speaker 3" khi chưa có "Speaker 2".
+  //
+  // Ở đây tag vẫn là ĐỊNH DANH ổn định (dùng cho DB, gộp, đổi tên), còn số cho
+  // người dùng thấy được cấp tuần tự theo thứ tự tag đó thực sự xuất hiện.
+  const speakerNumbersRef = useRef<{ [tag: string]: number }>({});
+  // max + 1 chứ không phải count + 1: sau khi gộp người, số của người bị gộp
+  // vẫn nằm trong map, dùng count sẽ cấp trùng số cho người kế tiếp.
+  const nextSpeakerNumber = () =>
+    Math.max(0, ...Object.values(speakerNumbersRef.current)) + 1;
+  const speakerNumberFor = useCallback((tag: string) => {
+    const existing = speakerNumbersRef.current[tag];
+    if (existing) return existing;
+    const next = nextSpeakerNumber();
+    speakerNumbersRef.current[tag] = next;
+    return next;
+  }, []);
+  // Tra số đã cấp mà KHÔNG cấp mới — dùng cho các đường hiển thị tạm (interim,
+  // fallback tên) để chúng không chiếm mất số của người nói thật.
+  // Chỉ gọi trong callback/effect: đọc ref lúc render là vi phạm React Compiler,
+  // nên phần hiển thị dùng trường `display_number` gắn sẵn trên từng speaker.
+  const peekSpeakerNumber = useCallback(
+    (tag: string) => speakerNumbersRef.current[tag] ?? nextSpeakerNumber(),
+    []
+  );
+
   // Speaker mapping & merge states
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [showEndConfirmationModal, setShowEndConfirmationModal] = useState(false);
@@ -510,13 +541,13 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       setMeeting(m);
       setSelectedTargetLang(m.target_language);
 
-      const fetchedSpeakers = speakersRes.data || [];
-      setSpeakers(fetchedSpeakers);
-
-      // Map colors
-      fetchedSpeakers.forEach((s: any) => {
+      // Map colors + cấp số hiển thị theo đúng thứ tự người nói đã có trong DB,
+      // để phiên phục hồi đánh số tiếp chứ không bắt đầu lại từ 1.
+      const fetchedSpeakers = (speakersRes.data || []).map((s: any) => {
         speakerColorsRef.current[s.speaker_tag] = s.color_hex;
+        return { ...s, display_number: speakerNumberFor(s.speaker_tag) };
       });
+      setSpeakers(fetchedSpeakers);
 
       // Fetch live transcript text from cache
       const cachedLive = localStorage.getItem(`meeting_live_transcript_${meetingId}`);
@@ -732,7 +763,8 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
           }
           const filtered = prev.filter((s) => s.speaker_tag !== data.speaker.speaker_tag);
           speakerColorsRef.current[data.speaker.speaker_tag] = data.speaker.color_hex;
-          return [...filtered, data.speaker];
+          // Server không biết số hiển thị — giữ lại số đã cấp cho tag này.
+          return [...filtered, { ...data.speaker, display_number: speakerNumberFor(data.speaker.speaker_tag) }];
         });
       }
 
@@ -952,7 +984,9 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       // đảm nhiệm, nên sidebar luôn khớp đúng những gì đang hiển thị.
       const resolveSpeakerName = (tag: string) => {
         const sp = speakers.find((s) => s.speaker_tag === tag);
-        return sp ? sp.display_name : tag.replace("speaker_", "Speaker ");
+        // Chưa đăng ký → dùng số hiển thị dự kiến, KHÔNG dùng chỉ số thô trong
+        // tag (nó có thể là 5 trong khi mới có 2 người trong khung hội thoại).
+        return sp ? sp.display_name : `Speaker ${peekSpeakerNumber(tag)}`;
       };
 
       // Get speaker tag from Deepgram
@@ -1038,7 +1072,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       }
       setPendingLineText(lineBufRef.current?.text || "");
     },
-    [speakers, meeting]
+    [speakers, meeting, peekSpeakerNumber]
   );
 
   const handleRawFinal = useCallback((text: string) => {
@@ -1318,14 +1352,25 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
         speakerColorsRef.current[tag] = colors[existingCount % colors.length];
       }
       const newColor = speakerColorsRef.current[tag] || "#cbd5e1";
-      const name = tag === "speaker_1" ? "Speaker 1" : tag.replace("speaker_", "Speaker ");
+      // Số cấp tại ĐÂY — nơi tag lần đầu thực sự có dòng hiển thị — nên dãy số
+      // luôn liền mạch 1, 2, 3... dù chỉ số thô của Deepgram nhảy cóc.
+      const number = speakerNumberFor(tag);
 
       setSpeakers((prev) => {
         if (prev.some((s) => s.speaker_tag === tag)) return prev;
-        return [...prev, { id: `temp-${tag}`, speaker_tag: tag, display_name: name, color_hex: newColor }];
+        return [
+          ...prev,
+          {
+            id: `temp-${tag}`,
+            speaker_tag: tag,
+            display_name: `Speaker ${number}`,
+            display_number: number,
+            color_hex: newColor,
+          },
+        ];
       });
     });
-  }, [transcripts, speakers, loading, meetingId]);
+  }, [transcripts, speakers, loading, meetingId, speakerNumberFor]);
 
   // Lưới an toàn: luồng live mới không sinh block "draft" nữa (mỗi câu vào thẳng
   // hàng đợi dịch), nhưng dữ liệu cũ hoặc phiên phục hồi vẫn có thể còn sót.
@@ -1423,7 +1468,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
       );
 
       setShowMergeModal(false);
-      addToast("Gộp thành công", `Đã gộp Speaker ${speakerToMergeSrc.replace("speaker_", "")} vào ${destSpeaker.display_name}.`, "success");
+      addToast("Gộp thành công", `Đã gộp ${srcSpeaker.display_name} vào ${destSpeaker.display_name}.`, "success");
     } catch (err) {
       console.error("Merge speakers error:", err);
       addToast("Lỗi gộp người", "Không thể gộp người nói.", "error");
@@ -2158,7 +2203,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                       onSave={(newName) => handleRenameSpeaker(s.speaker_tag, newName)}
                     />
                     <span className="text-[10px] uppercase font-bold text-slate-400 select-none bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-md">
-                      {s.speaker_tag.replace("speaker_", "")}
+                      {s.display_number}
                     </span>
                   </div>
                 </div>
@@ -2191,32 +2236,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     <span>Không thể thay đổi cấu hình khi đang ghi âm. Vui lòng tạm dừng cuộc họp để chỉnh sửa.</span>
                   </div>
                 )}
-
-                {/* Voice select */}
-                <div className="space-y-2">
-                  <label className={`text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>Giọng đọc (Phát âm)</label>
-                  <div className="relative w-full">
-                    <select
-                      value={selectedVoice}
-                      onChange={(e) => setSelectedVoice(e.target.value)}
-                      disabled={status === "recording"}
-                      className="w-full h-10 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none truncate cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {allAvailableVoices.length > 0 ? (
-                        allAvailableVoices.map((v) => (
-                          <option key={v.value} value={v.value}>
-                            {v.name}
-                          </option>
-                        ))
-                      ) : (
-                        <option value="">Giọng mặc định hệ thống</option>
-                      )}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
-                  </div>
-                </div>
-
-                <div className="border-t border-slate-100 dark:border-slate-800/60 my-2"></div>
 
                 {/* Silence timeout (Deepgram Endpointing) */}
                 <div className="space-y-1.5">
@@ -2278,82 +2297,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   </p>
                 </div>
 
-                {/* Audio parameters toggles */}
-                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Xử lý âm thanh micro</label>
-                  
-                  <div className="flex items-center justify-between text-xs py-1">
-                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Khử tiếng vang (Echo)</span>
-                    <input
-                      type="checkbox"
-                      checked={echoCancellation}
-                      onChange={(e) => {
-                        const val = e.target.checked;
-                        setEchoCancellation(val);
-                        localStorage.setItem("meeting_echo_cancellation", String(val));
-                      }}
-                      disabled={status === "recording"}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs py-1">
-                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Lọc nhiễu (Noise)</span>
-                    <input
-                      type="checkbox"
-                      checked={noiseSuppression}
-                      onChange={(e) => {
-                        const val = e.target.checked;
-                        setNoiseSuppression(val);
-                        localStorage.setItem("meeting_noise_suppression", String(val));
-                      }}
-                      disabled={status === "recording"}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between text-xs py-1">
-                    <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Tự chỉnh độ nhạy (AGC)</span>
-                    <input
-                      type="checkbox"
-                      checked={autoGainControl}
-                      onChange={(e) => {
-                        const val = e.target.checked;
-                        setAutoGainControl(val);
-                        localStorage.setItem("meeting_auto_gain_control", String(val));
-                      }}
-                      disabled={status === "recording"}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  </div>
-                </div>
-
-                {/* Diarization toggle */}
-                <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                  <label className="text-[10px] uppercase font-bold text-slate-400">Nhận dạng người nói</label>
-                  
-                  <div className="flex items-center justify-between text-xs py-1">
-                    <div className="flex-1 pr-2">
-                      <span className={`font-medium ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Phân biệt giọng nói (Diarize)</span>
-                      <p className="text-[10px] text-slate-400 leading-normal mt-0.5">
-                        {diarizationEnabled 
-                          ? "BẬT: Dùng sóng âm để gợi ý + AI thẩm định người nói."
-                          : "TẮT: AI phân vai 100% dựa trên ngữ cảnh hội thoại."
-                        }
-                      </p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={diarizationEnabled}
-                      onChange={(e) => {
-                        const val = e.target.checked;
-                        setDiarizationEnabled(val);
-                      }}
-                      disabled={status === "recording"}
-                      className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  </div>
-                </div>
+                <AudioProcessingSettings
+                  disabled={status === "recording"}
+                  echoCancellation={echoCancellation}
+                  setEchoCancellation={setEchoCancellation}
+                  noiseSuppression={noiseSuppression}
+                  setNoiseSuppression={setNoiseSuppression}
+                  autoGainControl={autoGainControl}
+                  setAutoGainControl={setAutoGainControl}
+                  diarizationEnabled={diarizationEnabled}
+                  setDiarizationEnabled={setDiarizationEnabled}
+                />
 
                 <button
                   onClick={handleResetSettings}
@@ -2806,7 +2760,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                   <option value="">-- Chọn Speaker nguồn --</option>
                   {speakers.map((s) => (
                     <option key={s.id} value={s.speaker_tag}>
-                      {s.display_name} ({s.speaker_tag.toUpperCase()})
+                      {s.display_name} (#{s.display_number})
                     </option>
                   ))}
                 </select>
@@ -2824,7 +2778,7 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                     .filter((s) => s.speaker_tag !== speakerToMergeSrc)
                     .map((s) => (
                       <option key={s.id} value={s.speaker_tag}>
-                        {s.display_name} ({s.speaker_tag.toUpperCase()})
+                        {s.display_name} (#{s.display_number})
                       </option>
                     ))}
                 </select>
@@ -2946,32 +2900,6 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 </div>
               )}
 
-              {/* Voice select */}
-              <div className="space-y-2">
-                <label className={`text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>Giọng đọc (Phát âm)</label>
-                <div className="relative w-full">
-                  <select
-                    value={selectedVoice}
-                    onChange={(e) => setSelectedVoice(e.target.value)}
-                    disabled={status === "recording"}
-                    className="w-full h-10 pl-3 pr-10 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500/50 focus:outline-none transition-all appearance-none truncate cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {allAvailableVoices.length > 0 ? (
-                      allAvailableVoices.map((v) => (
-                        <option key={v.value} value={v.value}>
-                          {v.name}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="">Giọng mặc định hệ thống</option>
-                    )}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
-                </div>
-              </div>
-
-              <div className="border-t border-slate-100 dark:border-slate-800/60 my-2"></div>
-
               {/* Silence timeout (Deepgram Endpointing) */}
               <div className="space-y-1.5">
                 <div className={`flex justify-between items-center text-xs font-bold ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-500 dark:text-slate-400"}`}>
@@ -3032,82 +2960,17 @@ export default function MeetingRoom({ params }: MeetingRoomProps) {
                 </p>
               </div>
 
-              {/* Audio parameters toggles */}
-              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <label className="text-[10px] uppercase font-bold text-slate-400">Xử lý âm thanh micro</label>
-                
-                <div className="flex items-center justify-between text-xs py-1">
-                  <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Khử tiếng vang (Echo)</span>
-                  <input
-                    type="checkbox"
-                    checked={echoCancellation}
-                    onChange={(e) => {
-                      const val = e.target.checked;
-                      setEchoCancellation(val);
-                      localStorage.setItem("meeting_echo_cancellation", String(val));
-                    }}
-                    disabled={status === "recording"}
-                    className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-xs py-1">
-                  <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Lọc nhiễu (Noise)</span>
-                  <input
-                    type="checkbox"
-                    checked={noiseSuppression}
-                    onChange={(e) => {
-                      const val = e.target.checked;
-                      setNoiseSuppression(val);
-                      localStorage.setItem("meeting_noise_suppression", String(val));
-                    }}
-                    disabled={status === "recording"}
-                    className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-xs py-1">
-                  <span className={`${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Tự chỉnh độ nhạy (AGC)</span>
-                  <input
-                    type="checkbox"
-                    checked={autoGainControl}
-                    onChange={(e) => {
-                      const val = e.target.checked;
-                      setAutoGainControl(val);
-                      localStorage.setItem("meeting_auto_gain_control", String(val));
-                    }}
-                    disabled={status === "recording"}
-                    className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-              </div>
-
-              {/* Diarization toggle */}
-              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <label className="text-[10px] uppercase font-bold text-slate-400">Nhận dạng người nói</label>
-                
-                <div className="flex items-center justify-between text-xs py-1">
-                  <div className="flex-1 pr-2">
-                    <span className={`font-medium ${status === "recording" ? "text-slate-400 dark:text-slate-500" : "text-slate-600 dark:text-slate-350"}`}>Phân biệt giọng nói (Diarize)</span>
-                    <p className="text-[10px] text-slate-400 leading-normal mt-0.5">
-                      {diarizationEnabled 
-                        ? "BẬT: Dùng sóng âm để gợi ý + AI thẩm định người nói."
-                        : "TẮT: AI phân vai 100% dựa trên ngữ cảnh hội thoại."
-                      }
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={diarizationEnabled}
-                    onChange={(e) => {
-                      const val = e.target.checked;
-                      setDiarizationEnabled(val);
-                    }}
-                    disabled={status === "recording"}
-                    className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-              </div>
+              <AudioProcessingSettings
+                disabled={status === "recording"}
+                echoCancellation={echoCancellation}
+                setEchoCancellation={setEchoCancellation}
+                noiseSuppression={noiseSuppression}
+                setNoiseSuppression={setNoiseSuppression}
+                autoGainControl={autoGainControl}
+                setAutoGainControl={setAutoGainControl}
+                diarizationEnabled={diarizationEnabled}
+                setDiarizationEnabled={setDiarizationEnabled}
+              />
 
               <button
                 onClick={handleResetSettings}

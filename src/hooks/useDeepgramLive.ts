@@ -161,6 +161,9 @@ export function useDeepgramLive({
   // batch nhận audio chưa qua WebRTC APM. Null nếu không mở được → archive dùng
   // chung audioStreamRef (hành vi cũ).
   const archiveStreamRef = useRef<MediaStream | null>(null);
+  // Chữ ký constraint đã dùng để mở audioStreamRef — để phát hiện người dùng đổi
+  // thiết bị hoặc echo/noise/AGC giữa hai lần ghi và mở lại mic cho đúng.
+  const appliedConstraintsRef = useRef<string>("");
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -322,6 +325,7 @@ export function useDeepgramLive({
       audioStreamRef.current.getTracks().forEach((track) => track.stop());
       audioStreamRef.current = null;
     }
+    appliedConstraintsRef.current = "";
     if (archiveStreamRef.current) {
       archiveStreamRef.current.getTracks().forEach((track) => track.stop());
       archiveStreamRef.current = null;
@@ -613,10 +617,25 @@ export function useDeepgramLive({
     setStatus("recording");
     onStatusChange("recording");
 
-    // 1. Lấy hoặc tái sử dụng mic stream
+    // 1. Lấy hoặc tái sử dụng mic stream.
+    //
+    // Constraint chỉ có hiệu lực tại thời điểm getUserMedia. Trước đây stream còn
+    // sống là dùng lại vô điều kiện, nên đổi echo/noise/AGC trong lúc TẠM DỪNG
+    // rồi ghi tiếp thì cài đặt mới bị bỏ qua trong im lặng. Giờ so với constraint
+    // đã dùng để mở stream: khác thì đóng và mở lại.
+    const wantedConstraints = `${selectedDeviceId}|${echoCancellation}|${noiseSuppression}|${autoGainControl}`;
     let stream = audioStreamRef.current;
     const streamAlive = !!stream && stream.getAudioTracks().some((t) => t.readyState === "live");
-    if (!streamAlive) {
+    const constraintsChanged = appliedConstraintsRef.current !== wantedConstraints;
+    if (stream && (!streamAlive || constraintsChanged)) {
+      if (streamAlive) {
+        console.log("[MediaRecorder] Audio constraints changed, reopening the microphone stream");
+      }
+      stream.getTracks().forEach((t) => t.stop());
+      audioStreamRef.current = null;
+      stream = null;
+    }
+    if (!stream) {
       try {
         console.log("[Deepgram WS] Getting microphone stream...");
         const constraints: MediaStreamConstraints = {
@@ -629,6 +648,7 @@ export function useDeepgramLive({
         };
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         audioStreamRef.current = stream;
+        appliedConstraintsRef.current = wantedConstraints;
         // Lần đầu được cấp quyền: giờ enumerateDevices mới trả về label thật.
         if (inputDevices.length === 0) {
           refreshDevices().catch(() => {});
